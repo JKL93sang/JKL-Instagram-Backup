@@ -9,10 +9,6 @@ on:
       - 'tests/**'
       - '.github/workflows/ci.yml'
   pull_request:
-    paths:
-      - 'JKL_Instagram_Backup.user.js'
-      - 'tests/**'
-      - '.github/workflows/ci.yml'
 
 permissions:
   contents: read
