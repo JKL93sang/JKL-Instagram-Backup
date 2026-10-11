@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.58 — Media-Anchored Solo Button
+
+- UI-only update: place the opened-media solo download button over its visible image/video container instead of the native action bar or browser viewport corner.
+- Prefer on-screen media by visible area and centrality, with extra weight for video in Reel/Story viewers.
+- Hide the opened-media button when no reliable bounded host is available rather than leaving a remote or misleading control.
+- Keep working solo download transport, event capture, profile-grid buttons, entire backup engine and public Tampermonkey metadata unchanged.
+- Extend single-download UI placement regression tests. Live Instagram validation is still required.
+
+
 ## 1.5.57 — First Public Release
 
 - First release distributed from the public `JKL-Instagram-Backup` repository.

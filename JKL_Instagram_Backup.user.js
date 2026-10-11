@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.57
+// @version      1.5.58
 // @description  Instagram archive hardened: exhaustive accessible scan, immutable completeness guard, anti-loss local archive, feedback circuit breaker.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.57', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.58', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -13474,14 +13474,20 @@
     }
 
     function currentSingleDownloadTarget() {
-        return (
+        const direct =
             singleDownloadTargetFromUrl(
                 location.href
-            ) ||
-            singleDownloadTargetFromRoot(
-                currentMediaRoot()
-            )
-        );
+            );
+
+        if (direct) {
+            return direct;
+        }
+
+        // Profile-grid links are not an active media target.
+        const root = currentMediaRoot();
+        return root?.matches?.('div[role="dialog"]')
+            ? singleDownloadTargetFromRoot(root)
+            : null;
     }
 
     function applySingleDownloadTarget(
@@ -14289,6 +14295,11 @@
             return dialog;
         }
 
+        if (storyPermalinkInfo(location.href)) {
+            return document.querySelector('main') ||
+                document.body;
+        }
+
         const articles =
             [
                 ...document.querySelectorAll(
@@ -14347,193 +14358,106 @@
         );
     }
 
-    function instagramActionRow(
-        root
-    ) {
-        if (!root) {
-            return null;
-        }
+    function largestCurrentMedia(root) {
+        if (!root) return null;
 
-        const labelledButtons =
-            [
-                ...root.querySelectorAll(
-                    'button'
-                ),
-            ]
-                .filter(
-                    button => {
-                        const svg =
-                            button.querySelector(
-                                'svg'
-                            );
-
-                        if (!svg) {
-                            return false;
-                        }
-
-                        const label =
-                            [
-                                button.getAttribute(
-                                    'aria-label'
-                                ),
-                                button.title,
-                                svg.getAttribute(
-                                    'aria-label'
-                                ),
-                                svg.querySelector(
-                                    'title'
-                                )
-                                    ?.textContent,
-                            ]
-                                .filter(Boolean)
-                                .join(' ')
-                                .toLowerCase();
-
-                        return /aime|like|comment|partag|share|enregistr|save/.test(
-                            label
-                        );
-                    }
-                );
-
-        const seeds =
-            labelledButtons.length
-                ? labelledButtons
-                : [
-                    ...root.querySelectorAll(
-                        'button:has(svg)'
-                    ),
-                ];
-
-        const candidates =
-            new Map();
-
-        for (
-            const button
-            of seeds
-        ) {
-            let el =
-                button.parentElement;
-
-            for (
-                let depth = 0;
-                el &&
-                depth < 5;
-                depth++,
-                el = el.parentElement
-            ) {
-                if (
-                    el === root ||
-                    !root.contains(el)
-                ) {
-                    break;
-                }
-
-                const buttons =
-                    el.querySelectorAll(
-                        ':scope button, button'
-                    ).length;
-
-                if (
-                    buttons < 2 ||
-                    buttons > 12
-                ) {
-                    continue;
-                }
-
-                const rect =
-                    el.getBoundingClientRect();
-
-                if (
-                    rect.height < 24 ||
-                    rect.height > 90 ||
-                    rect.width < 100
-                ) {
-                    continue;
-                }
-
-                const score =
-                    (
-                        labelledButtons
-                            .filter(
-                                b => el.contains(b)
-                            )
-                            .length *
-                        100
-                    ) +
-                    buttons *
-                    10 -
-                    rect.height;
-
-                const previous =
-                    candidates.get(el);
-
-                if (
-                    previous === undefined ||
-                    score > previous
-                ) {
-                    candidates.set(
-                        el,
-                        score
-                    );
-                }
-            }
-        }
-
-        return (
-            [...candidates.entries()]
-                .sort(
-                    (a, b) =>
-                        b[1] - a[1]
-                )[0]
-                ?.[0] ||
-            null
+        const width = Math.max(
+            1, window.innerWidth ||
+                document.documentElement.clientWidth
         );
+        const height = Math.max(
+            1, window.innerHeight ||
+                document.documentElement.clientHeight
+        );
+
+        return [...root.querySelectorAll('video,img')]
+            .map(media => {
+                const rect = media.getBoundingClientRect();
+                const style = getComputedStyle(media);
+
+                if (
+                    !media.getClientRects().length ||
+                    media.closest?.(
+                        '#jkl-igb,[aria-hidden="true"]'
+                    ) ||
+                    style.display === 'none' ||
+                    style.visibility === 'hidden' ||
+                    rect.width < 180 ||
+                    rect.height < 180
+                ) return null;
+
+                const visibleW = Math.max(
+                    0, Math.min(width,rect.right) -
+                        Math.max(0,rect.left)
+                );
+                const visibleH = Math.max(
+                    0, Math.min(height,rect.bottom) -
+                        Math.max(0,rect.top)
+                );
+                if (
+                    visibleW < 140 ||
+                    visibleH < 140
+                ) return null;
+
+                const dx = (
+                    rect.left + rect.width / 2 -
+                    width / 2
+                ) / (width / 2);
+                const dy = (
+                    rect.top + rect.height / 2 -
+                    height / 2
+                ) / (height / 2);
+                const offCenter = Math.min(
+                    1, Math.hypot(dx,dy) / Math.SQRT2
+                );
+                const videoBonus =
+                    /\/reel\/|\/stories\//.test(
+                        location.pathname
+                    ) &&
+                    media.tagName?.toLowerCase() ===
+                        'video' ? 1.1 : 1;
+
+                return {
+                    media,
+                    score:visibleW * visibleH *
+                        (1 - offCenter * 0.35) *
+                        videoBonus,
+                };
+            })
+            .filter(Boolean)
+            .sort((a,b)=>b.score-a.score)
+            [0]?.media || null;
     }
 
-    function largestCurrentMedia(
-        root
-    ) {
-        if (!root) {
-            return null;
+    function currentMediaOverlayHost(media, root) {
+        if (!media || !root) return null;
+        const rect = media.getBoundingClientRect();
+
+        for (
+            let host=media.parentElement, depth=0;
+            host && depth<7;
+            host=host.parentElement, depth++
+        ) {
+            if (
+                host === document.body ||
+                host === document.documentElement
+            ) break;
+
+            // Do not nest an interactive button inside a link.
+            if (!host.matches?.('a,button')) {
+                const box=host.getBoundingClientRect();
+                if (
+                    box.width >= rect.width-8 &&
+                    box.height >= rect.height-8 &&
+                    box.width <= rect.width +
+                        Math.max(44,rect.width*0.16) &&
+                    box.height <= rect.height +
+                        Math.max(44,rect.height*0.16)
+                ) return host;
+            }
+            if (host === root) break;
         }
-
-        return (
-            [
-                ...root.querySelectorAll(
-                    'video,img'
-                ),
-            ]
-                .filter(
-                    media => {
-                        const rect =
-                            media.getBoundingClientRect();
-
-                        return (
-                            media.getClientRects()
-                                .length &&
-                            rect.width >= 180 &&
-                            rect.height >= 180
-                        );
-                    }
-                )
-                .sort(
-                    (a, b) => {
-                        const ar =
-                            a.getBoundingClientRect();
-
-                        const br =
-                            b.getBoundingClientRect();
-
-                        return (
-                            br.width *
-                            br.height -
-                            ar.width *
-                            ar.height
-                        );
-                    }
-                )[0] ||
-            null
-        );
+        return null;
     }
 
     function ensureCurrentDownloadButton() {
@@ -14571,117 +14495,54 @@
         return button;
     }
 
-    function placeCurrentDownloadButton(
-        button,
-        root
-    ) {
-        const actionRow =
-            instagramActionRow(
-                root
-            );
-
-        if (actionRow) {
-            button.classList.remove(
-                'jkl-media-download-fallback'
-            );
-
-            button.classList.add(
-                'jkl-action-download'
-            );
-
-            if (
-                button.parentElement !==
-                actionRow
-            ) {
-                actionRow.appendChild(
-                    button
-                );
-            }
-
-            return 'action-row';
-        }
-
-        const media =
-            largestCurrentMedia(
-                root
-            );
-
-        const host =
-            media?.parentElement;
-
-        if (host) {
-            const computed =
-                getComputedStyle(host);
-
-            if (
-                computed.position ===
-                'static'
-            ) {
-                host.style.position =
-                    'relative';
-            }
-
-            button.classList.remove(
-                'jkl-action-download'
-            );
-
-            button.classList.add(
-                'jkl-media-download-fallback'
-            );
-
-            if (
-                button.parentElement !==
-                host
-            ) {
-                host.appendChild(
-                    button
-                );
-            }
-
-            return 'media-fallback';
-        }
-
-        button.classList.remove(
-            'jkl-action-download',
-            'jkl-media-download-fallback'
+    function placeCurrentDownloadButton(button, root) {
+        const host = currentMediaOverlayHost(
+            largestCurrentMedia(root),
+            root
         );
+        if (!host) {
+            button.remove();
+            return 'unavailable';
+        }
+        if (
+            getComputedStyle(host).position ===
+            'static'
+        ) host.style.position = 'relative';
 
-        document.body.appendChild(
-            button
+        button.classList.add(
+            'jkl-media-download-overlay'
         );
-
-        return 'fixed-fallback';
+        if (button.parentElement !== host) {
+            host.appendChild(button);
+        }
+        return 'media-overlay';
     }
+
     function refreshCurrentDownloadButton() {
-        const target =
-            currentSingleDownloadTarget();
-    
-        const existing =
-            document.getElementById(
-                'jkl-current-download'
-            );
-    
+        const target = currentSingleDownloadTarget();
+        const existing = document.getElementById(
+            'jkl-current-download'
+        );
         if (!target) {
             existing?.remove();
             return;
         }
-    
-        const button =
-            ensureCurrentDownloadButton();
-    
-        applySingleDownloadTarget(
-            button,
-            target
-        );
-    
-        const root =
-            currentMediaRoot();
-    
-        button.dataset.placement =
-            placeCurrentDownloadButton(
-                button,
+
+        const root = currentMediaRoot();
+        if (
+            !currentMediaOverlayHost(
+                largestCurrentMedia(root),
                 root
-            );
+            )
+        ) {
+            existing?.remove();
+            return;
+        }
+
+        const button=ensureCurrentDownloadButton();
+        applySingleDownloadTarget(button,target);
+        button.dataset.placement =
+            placeCurrentDownloadButton(button,root);
     }
 
     function refreshSingleDownloadUi() {
@@ -15325,65 +15186,30 @@
                 transform:scale(1.04);
             }
 
-            #jkl-current-download.jkl-action-download {
-                position:relative;
-                z-index:auto;
-                flex:0 0 auto;
-                width:40px;
-                height:40px;
-                margin:0;
-                border:0;
-                border-radius:0;
-                background:transparent;
-                color:inherit;
-                box-shadow:none;
-                backdrop-filter:none;
-                opacity:1;
-                transition:opacity .15s ease, transform .15s ease;
-            }
-
-            #jkl-current-download.jkl-action-download:hover {
-                opacity:.55;
-            }
-
-            #jkl-current-download.jkl-action-download:active {
-                transform:scale(.92);
-            }
-
-            #jkl-current-download.jkl-action-download svg {
-                width:24px;
-                height:24px;
-            }
-
-            #jkl-current-download.jkl-media-download-fallback {
+            #jkl-current-download.jkl-media-download-overlay {
                 position:absolute;
                 z-index:31;
                 top:10px;
                 right:10px;
-                width:38px;
-                height:38px;
+                width:36px;
+                height:36px;
                 border:1px solid rgba(255,255,255,.30);
                 border-radius:50%;
                 background:rgba(15,15,15,.84);
                 color:#fff;
                 box-shadow:0 2px 10px rgba(0,0,0,.38);
                 backdrop-filter:blur(4px);
-                opacity:.92;
+                opacity:.78;
+                transition:opacity .15s ease,
+                    transform .15s ease;
             }
-
-            #jkl-current-download:not(.jkl-action-download):not(.jkl-media-download-fallback) {
-                position:fixed;
-                z-index:2147483645;
-                top:18px;
-                right:18px;
-                width:38px;
-                height:38px;
-                border:1px solid rgba(255,255,255,.30);
-                border-radius:50%;
-                background:rgba(15,15,15,.84);
-                color:#fff;
-                box-shadow:0 2px 10px rgba(0,0,0,.38);
-                backdrop-filter:blur(4px);
+            #jkl-current-download.jkl-media-download-overlay:hover,
+            #jkl-current-download.jkl-media-download-overlay:focus-visible {
+                opacity:1;
+                transform:scale(1.04);
+            }
+            #jkl-current-download.jkl-media-download-overlay:active {
+                transform:scale(.96);
             }
 
             .jkl-single-download.busy,

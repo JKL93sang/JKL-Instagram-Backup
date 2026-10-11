@@ -2,7 +2,7 @@
 
 A Tampermonkey userscript for backing up Instagram media that is **already accessible to the signed-in browser session**.
 
-Current public version: **1.5.57**
+Current public version: **1.5.58**
 
 ## Install
 
@@ -61,6 +61,10 @@ If a safety cap is reached without a valid end proof, the scan remains **INCOMPL
 ## Local archive verification
 
 Use **SCAN LOCAL FOLDER** before relying on historical archive state. Persisted ledger history is advisory until the selected local archive has been indexed and its canonical media IDs verified.
+
+## Media-anchored solo download button
+
+On an opened post, Reel or Story, the single download button is anchored to the **visible media** (top-right overlay) rather than Instagram's changing native action bar or the browser's top-right corner. If a reliable bounded media container is not available, the button is hidden until the viewer is rendered. Grid thumbnail download buttons are unchanged.
 
 ## Standalone media download
 
