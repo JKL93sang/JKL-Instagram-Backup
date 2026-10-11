@@ -1,0 +1,62 @@
+name: Userscript CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'JKL_Instagram_Backup.user.js'
+      - 'tests/**'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    paths:
+      - 'JKL_Instagram_Backup.user.js'
+      - 'tests/**'
+      - '.github/workflows/ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: userscript-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: JavaScript syntax
+        run: node --check JKL_Instagram_Backup.user.js
+
+      - name: Identity and static regression tests
+        run: node tests/identity-regression.test.mjs
+
+      - name: UI geometry regression tests
+        run: node tests/ui-geometry-regression.test.mjs
+
+      - name: UI intrinsic width regression tests
+        run: node tests/ui-intrinsic-width-regression.test.mjs
+
+      - name: Owned discovery semantics regression tests
+        run: node tests/owned-discovery-regression.test.mjs
+
+      - name: PROFILE completion proof regression tests
+        run: node tests/profile-completion-regression.test.mjs
+
+      - name: Large account safety regression tests
+        run: node tests/large-account-safety-regression.test.mjs
+
+      - name: Single download controller regression tests
+        run: node tests/single-download-regression.test.mjs
+
+      - name: Public distribution metadata regression tests
+        run: node tests/public-distribution-regression.test.mjs
