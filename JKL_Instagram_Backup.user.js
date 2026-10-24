@@ -5058,7 +5058,12 @@
                 'Profile HTML: Instagram returned HTTP 429.'
             );
         }
-        if (feedbackRequiredIn(body)) {
+        // An HTML app shell may mention feedback_required as
+        // static JavaScript; detect it only in actual API JSON.
+        if (
+            /^\s*[\[{]/.test(body) &&
+            feedbackRequiredIn(body)
+        ) {
             throw feedbackCircuitBreak(
                 'Profile HTML: Instagram returned feedback_required.'
             );
@@ -5066,11 +5071,30 @@
         if (!response.ok) {
             const error = new Error('Profile HTML: HTTP ' + http);
             error.status = http;
+            if (http === 401 || http === 403) {
+                error.code = 'IG_PROFILE_ACCESS';
+            }
+            throw error;
+        }
+
+        // A login/checkpoint redirect is an access problem,
+        // not a cue to hammer an alternate Instagram API.
+        const finalUrl = response.url || url;
+        const final = new URL(finalUrl, location.origin);
+        if (
+            !/^(?:www\.)?instagram\.com$/i.test(final.hostname) ||
+            final.pathname.replace(/^\/+|\/+$/g, '')
+                .toLowerCase() !== cleanUser(username).toLowerCase()
+        ) {
+            const error = new Error(
+                'Profile HTML redirected away from the requested profile; check Instagram session.'
+            );
+            error.code = 'IG_PROFILE_REDIRECT';
             throw error;
         }
 
         const info = profileMetadataFromHtml(
-            body, username, response.url || url
+            body, username, finalUrl
         );
         if (!info) {
             throw new Error(
@@ -5109,6 +5133,12 @@
             }
             catch (e) {
                 throwIfInstagramStop(e, 'Profile HTML');
+                if (
+                    e?.code === 'IG_PROFILE_REDIRECT' ||
+                    e?.code === 'IG_PROFILE_ACCESS'
+                ) {
+                    throw e;
+                }
                 log('Profile HTML unavailable: ' + e.message, 'warn');
             }
         }
