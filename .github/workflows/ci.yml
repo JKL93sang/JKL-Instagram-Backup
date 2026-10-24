@@ -59,3 +59,6 @@ jobs:
 
       - name: Profile HTML identity fallback regression tests
         run: node tests/profile-html-identity-regression.test.mjs
+
+      - name: Safe GraphQL response diagnostic regression tests
+        run: node tests/json-endpoint-diagnostic-regression.test.mjs
