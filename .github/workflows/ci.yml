@@ -56,3 +56,6 @@ jobs:
 
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
+
+      - name: Profile HTML identity fallback regression tests
+        run: node tests/profile-html-identity-regression.test.mjs
