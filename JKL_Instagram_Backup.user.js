@@ -4528,6 +4528,59 @@
         return h;
     }
 
+    function summarizeJsonEndpointResponse(response, payload) {
+        // Diagnostics deliberately avoid response bodies, URLs with
+        // query parameters, cookies, tokens and session identifiers.
+        const rawType = String(
+            response?.headers?.get?.('content-type') || ''
+        ).toLowerCase().split(';')[0].trim();
+        const type = /^(application\/json|text\/html|text\/plain|application\/javascript)$/.test(rawType)
+            ? rawType : (rawType ? 'other' : 'unknown');
+
+        const content = String(payload || '');
+        const leading = content.trimStart().slice(0, 120);
+        const bodyKind = !leading
+            ? 'empty'
+            : /^(?:<!doctype\s+html|<html\b|<head\b|<body\b)/i.test(leading)
+                ? 'html'
+                : /^[\[{]/.test(leading)
+                    ? 'json-like'
+                    : 'other';
+
+        let destination = 'unavailable';
+        try {
+            const u = new URL(
+                response?.url || '',
+                location.origin
+            );
+            // Fixed categories only; no usernames or request params.
+            if (
+                /^\/accounts\/login(?:\/|$)/.test(u.pathname)
+            ) destination = 'login';
+            else if (
+                /^\/(?:challenge|checkpoint)(?:\/|$)/.test(
+                    u.pathname
+                )
+            ) destination = 'checkpoint';
+            else if (u.pathname === '/') destination = 'home';
+            else if (
+                /^\/(?:api\/)?graphql(?:\/|$)/.test(
+                    u.pathname
+                )
+            ) destination = 'graphql';
+            else destination = 'other';
+        }
+        catch {}
+
+        return (
+            'type=' + type +
+            ', body=' + bodyKind +
+            ', destination=' + destination +
+            ', redirected=' +
+                (response?.redirected === true ? 'yes' : 'no')
+        );
+    }
+
     async function fetchJson(
         url,
         opt = {},
@@ -4603,7 +4656,8 @@
                     !data
                 ) {
                     throw apiUnhealthyError(
-                        `${label}: Instagram JSON endpoint returned HTTP 200 non-JSON; scan stopped.`
+                        `${label}: Instagram JSON endpoint returned HTTP 200 non-JSON (` +
+                        `${summarizeJsonEndpointResponse(r, text)}); scan stopped.`
                     );
                 }
 
@@ -7855,9 +7909,15 @@
                     APP.PROFILE_FALLBACK_DOC
                 );
 
+        const observedDoc = String(
+            net.gridDocByUser.get(userKey) || ''
+        );
+
         log(
             `PROFILE GraphQL completion starting: ` +
-            `current=${startOwned}, reason=${reason}, doc=${docId}.`,
+            `current=${startOwned}, reason=${reason}, doc=${docId}, ` +
+            `native_doc=${observedDoc || '-'}, ` +
+            `native_doc_differs=${!!observedDoc && observedDoc !== docId}.`,
             'warn'
         );
 
