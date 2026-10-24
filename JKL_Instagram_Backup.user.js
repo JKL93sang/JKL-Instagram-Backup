@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.58
+// @version      1.5.59
 // @description  Instagram archive hardened: exhaustive accessible scan, immutable completeness guard, anti-loss local archive, feedback circuit breaker.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.58', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.59', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -5001,6 +5001,85 @@
         }
     }
 
+    function profileMetadataFromHtml(html, username, finalUrl) {
+        const wanted = cleanUser(username).toLowerCase();
+        if (!wanted || !html || !finalUrl) return null;
+        let page;
+        try {
+            page = new URL(finalUrl, location.origin);
+        }
+        catch { return null; }
+        if (
+            !/^(?:www\.)?instagram\.com$/i.test(page.hostname) ||
+            page.pathname.replace(/^\/+|\/+$/g,'').toLowerCase() !== wanted
+        ) return null;
+
+        const source = String(html);
+        const canonical = source.match(
+            /<meta\b(?=[^>]*\bproperty\s*=\s*["']og:url["'])(?=[^>]*\bcontent\s*=\s*["']([^"']+)["'])[^>]*>/i
+        )?.[1]?.replace(/&amp;/g,'&');
+        if (canonical) {
+            try {
+                const link = new URL(canonical, location.origin);
+                if (
+                    !/^(?:www\.)?instagram\.com$/i.test(link.hostname) ||
+                    link.pathname.replace(/^\/+|\/+$/g,'').toLowerCase() !== wanted
+                ) return null;
+            }
+            catch { return null; }
+        }
+
+        // Never guess IDs from unrelated suggestions or comments.
+        const identifiers = [
+            source.match(
+                /<meta\b(?=[^>]*\b(?:property|name)\s*=\s*["']instapp:owner_user_id["'])(?=[^>]*\bcontent\s*=\s*["'](\d+)["'])[^>]*>/i
+            )?.[1],
+            source.match(/"page_id"\s*:\s*"profilePage_(\d+)"/)?.[1],
+            source.match(/"profile_id"\s*:\s*"(\d+)"/)?.[1],
+        ].filter(Boolean);
+        const id = String(identifiers[0] || '');
+        if (!/^[1-9]\d{0,19}$/.test(id)) return null;
+        return { pk:id, id, username:cleanUser(username) };
+    }
+
+    async function fetchProfilePageMetadata(username) {
+        const url = 'https://www.instagram.com/' +
+            encodeURIComponent(username) + '/';
+        const response = await fetch(url, {
+            credentials:'include',
+            redirect:'follow',
+            headers:{Accept:'text/html'},
+        });
+        const body = await response.text();
+        const http = Number(response.status || 0);
+
+        if (http === 429) {
+            throw rateLimitCircuitBreak(
+                'Profile HTML: Instagram returned HTTP 429.'
+            );
+        }
+        if (feedbackRequiredIn(body)) {
+            throw feedbackCircuitBreak(
+                'Profile HTML: Instagram returned feedback_required.'
+            );
+        }
+        if (!response.ok) {
+            const error = new Error('Profile HTML: HTTP ' + http);
+            error.status = http;
+            throw error;
+        }
+
+        const info = profileMetadataFromHtml(
+            body, username, response.url || url
+        );
+        if (!info) {
+            throw new Error(
+                'Profile HTML: no verified profile ID.'
+            );
+        }
+        return info;
+    }
+
     async function resolveProfile(username) {
         status(
             `Resolving @${username}…`
@@ -5012,67 +5091,44 @@
 
         let user = null;
 
-        try {
-            const d =
-                await fetchJson(
-                    `https://www.instagram.com/web/search/topsearch/?query=${encodeURIComponent(username)}`,
-                    {},
-                    'Profile search',
-                    1
-                );
-
-            user =
-                (d?.users || [])
-                    .map(
-                        x =>
-                            x?.user ||
-                            x
-                    )
-                    .find(
-                        x =>
-                            String(
-                                x?.username ||
-                                ''
-                            )
-                                .toLowerCase() ===
-                            username
-                                .toLowerCase()
-                    ) ||
-                null;
-        }
-
-        catch (e) {
-            throwIfInstagramStop(e, 'Profile search: Instagram returned feedback_required.');
-
-            log(
-                `Top search unavailable: ${e.message}`,
-                'warn'
+        // Reuse the displayed profile metadata if present.
+        if (
+            currentProfile().toLowerCase() === username.toLowerCase()
+        ) {
+            user = profileMetadataFromHtml(
+                document.documentElement.outerHTML,
+                username, location.href
             );
         }
 
+        // At most one normal HTML request, not a retired API call.
         if (!user) {
             try {
-                const d =
-                    await fetchJson(
-                        `https://www.instagram.com/api/v1/feed/user/${encodeURIComponent(username)}/username/?count=1`,
-                        {},
-                        'Profile fallback',
-                        1
-                    );
-
-                user =
-                    d?.user ||
-                    d?.items?.[0]?.user ||
-                    null;
+                user = await fetchProfilePageMetadata(username);
+                log('Profile ID resolved from profile HTML.');
             }
-
             catch (e) {
-                throwIfInstagramStop(e, 'Profile fallback: Instagram returned feedback_required.');
+                throwIfInstagramStop(e, 'Profile HTML');
+                log('Profile HTML unavailable: ' + e.message, 'warn');
+            }
+        }
 
-                log(
-                    `Profile fallback unavailable: ${e.message}`,
-                    'warn'
+        // Last resort: a single topsearch request, no retries.
+        if (!user) {
+            try {
+                const data = await fetchJson(
+                    'https://www.instagram.com/web/search/topsearch/?query=' +
+                        encodeURIComponent(username),
+                    {}, 'Profile search', 1
                 );
+                user = (data?.users || [])
+                    .map(x => x?.user || x)
+                    .find(x => String(x?.username || '')
+                        .toLowerCase() === username.toLowerCase()) || null;
+            }
+            catch (e) {
+                throwIfInstagramStop(e, 'Profile search');
+                log('Top search unavailable: ' + e.message, 'warn');
             }
         }
 
