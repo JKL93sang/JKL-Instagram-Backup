@@ -2,7 +2,7 @@
 
 A Tampermonkey userscript for backing up Instagram media that is **already accessible to the signed-in browser session**.
 
-Current public version: **1.5.58**
+Current public version: **1.5.59**
 
 ## Install
 
@@ -13,6 +13,14 @@ https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instag
 The userscript contains its own `@updateURL` and `@downloadURL`, so Tampermonkey can check this repository for later versions automatically.
 
 > Existing installs that were previously copied manually from the private development repository must install **1.5.57 once** from the public Raw URL. After that, future version checks use this public repository.
+
+## Profile identity resilience (v1.5.59)
+
+Profile resolution first checks the open profile page, then makes at most **one normal authenticated page request** to obtain profile-specific metadata. A single legacy topsearch request is retained as a last resort. The feed/user endpoint that returned redirected HTML is no longer used for identity resolution.
+
+The script **never bypasses login, private content or platform restrictions**. HTTP 429, `feedback_required`, HTTP 401/403 and login/checkpoint redirects still stop the attempt. If Instagram's current page no longer exposes the ID, the scan stops rather than guessing. The entire scan engine remains unchanged.
+
+**Release caution:** this candidate requires a real browser/profile smoke test before publication; static CI checks do not prove compatibility with Instagram's current HTML.
 
 ## What it backs up
 
