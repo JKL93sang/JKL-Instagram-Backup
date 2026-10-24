@@ -20,7 +20,7 @@ Profile resolution first checks the open profile page, then makes at most **one 
 
 The script **never bypasses login, private content or platform restrictions**. HTTP 429, `feedback_required`, HTTP 401/403 and login/checkpoint redirects still stop the attempt. If Instagram's current page no longer exposes the ID, the scan stops rather than guessing. The entire scan engine remains unchanged.
 
-**Release caution:** this candidate requires a real browser/profile smoke test before publication; static CI checks do not prove compatibility with Instagram's current HTML.
+**Release caution:** this candidate requires a real browser/profile smoke test before publication; static CI checks do not prove compatibility with Instagram's current HTML. If a GraphQL profile-completion request still returns HTTP 200 non-JSON, the log will now show only safe diagnostics (response MIME, HTML classification, destination category, redirect yes/no, and whether the native captured query ID differs from the fixed fallback). It does **not** log response bodies, sensitive URLs, cookies or tokens; it makes no additional retry requests. The profile scan remains incomplete and stops.
 
 ## What it backs up
 
