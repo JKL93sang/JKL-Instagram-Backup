@@ -8,7 +8,7 @@
 - Retain a single search request only as last resort; remove the redirected feed/user fallback.
 - Do not retry on HTTP 429, feedback_required, 401/403 or login redirects.
 - No change to the scan engine, downloading, ledger or solo-download controls.
-- Add dedicated profile HTML identity and guard regression tests. Browser smoke test remains required before publishing.
+- Add dedicated profile HTML identity and guard regression tests, plus non-sensitive diagnostic classification of non-JSON GraphQL responses (MIME, body type, redirect category) and native GraphQL doc-ID comparison. No extra diagnostic requests. Browser smoke test remains required before publishing.
 
 
 ## 1.5.58 — Media-Anchored Solo Button
