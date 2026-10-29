@@ -255,6 +255,7 @@
         gridPageInfo: new Map(),
         gridDocByUser: new Map(),
         gridQueryByUser: new Map(),
+        gridNativeAuditByUser: new Map(),
 
         reelsByUserId: new Map(),
         reelPageInfo: new Map(),
@@ -3818,12 +3819,38 @@
             return;
         }
 
-        const c =
-            gridConn(data);
+        const c = gridConn(data);
+        if (
+            !c ||
+            (Array.isArray(data?.errors) && data.errors.length)
+        ) return;
 
-        if (!c) {
-            return;
-        }
+        const variables = meta?.variables || {};
+        const isRoot =
+            Object.prototype.hasOwnProperty.call(variables,'after');
+        const isNested =
+            !isRoot &&
+            variables.data &&
+            Object.prototype.hasOwnProperty.call(variables.data,'after');
+        const cursorLocation = isRoot ? 'root' :
+            isNested ? 'nested' : 'absent';
+        const cursor = isRoot ? variables.after :
+            isNested ? variables.data.after : null;
+
+        // Only successful real browser traffic reaches this
+        // observer. Store safe structural evidence separately
+        // from request bodies, cookies and tokens.
+        const audit = net.gridNativeAuditByUser.get(user) || {
+            initial:0, continuation:0,
+            cursorLocation:'absent', lastHasNext:'unknown',
+        };
+        if (cursor) audit.continuation++;
+        else audit.initial++;
+        audit.cursorLocation = cursorLocation;
+        audit.lastHasNext = c?.page_info?.has_next_page === true
+            ? 'true' : c?.page_info?.has_next_page === false
+                ? 'false' : 'unknown';
+        net.gridNativeAuditByUser.set(user,audit);
 
         const map =
             net.gridByUser.get(user) ||
@@ -4605,6 +4632,52 @@
         );
     }
 
+    function summarizeGraphQlErrors(errors) {
+        const list = Array.isArray(errors) ? errors : [];
+        if (!list.length) return 'count=0, kind=none';
+
+        const kinds = new Set();
+        const codes = new Set();
+        const severity = new Set();
+
+        for (const error of list.slice(0,10)) {
+            const message = String(error?.message || '');
+            const kind =
+                /missing_required_variable_value/i.test(message)
+                    ? 'missing_required_variable'
+                    : /execution error|server error|internal error/i.test(message)
+                        ? 'server_execution'
+                        : /invalid request|malformed variables/i.test(message)
+                            ? 'invalid_request'
+                            : /invalid|malformed|expired/i.test(message) &&
+                                /cursor/i.test(message)
+                                ? 'invalid_cursor'
+                                : /throttl|rate.limit|too many/i.test(message)
+                                    ? 'rate_limited'
+                                    : /not authorized|unauthorized|permission/i.test(message)
+                                        ? 'access_denied'
+                                        : 'unclassified';
+            kinds.add(kind);
+
+            // Report numeric error category only; never log the
+            // raw message, mids, fbtrace_id, debug URL or session.
+            if (
+                Number.isSafeInteger(error?.code) &&
+                error.code >= 0 &&
+                error.code <= 999999999
+            ) codes.add(error.code);
+            const level = String(error?.severity || '').toUpperCase();
+            if (['CRITICAL','ERROR','WARNING'].includes(level)) {
+                severity.add(level);
+            }
+        }
+
+        return 'count=' + list.length +
+            ', kind=' + [...kinds].sort().join('+') +
+            ', code=' + ([...codes].sort((a,b)=>a-b).join('+') || '-') +
+            ', severity=' + ([...severity].sort().join('+') || '-');
+    }
+
     async function fetchJson(
         url,
         opt = {},
@@ -4627,8 +4700,15 @@
             }
 
             try {
+                // Requests originating from this userscript must
+                // not be mistaken for native Instagram network
+                // traffic by the fetch/XHR observation layer.
+                const transport =
+                    net.nativeFetch ||
+                    window.fetch.bind(window);
+
                 const r =
-                    await fetch(
+                    await transport(
                         url,
                         {
                             credentials:
@@ -4706,23 +4786,10 @@
                 // A 200 response containing GraphQL errors is
                 // NOT a valid empty page.
                 if (Array.isArray(data?.errors) && data.errors.length) {
-                    // Report only known error categories, never arbitrary
-                    // API messages, private IDs or debug links.
-                    const errorText = data.errors
-                        .map(error => String(error?.message || ''))
-                        .join(' ');
-                    const category =
-                        /missing_required_variable_value/i.test(errorText)
-                            ? 'missing_required_variable'
-                            : /(?:invalid|malformed|expired)[^\n]{0,40}cursor/i.test(errorText)
-                                ? 'invalid_cursor'
-                                : /(?:permission|not authorized|unauthorized)/i.test(errorText)
-                                    ? 'access_denied'
-                                    : 'other';
-
                     throw apiUnhealthyError(
-                        label + ': Instagram GraphQL rejected the request ' +
-                        '(category=' + category + '); scan stopped.'
+                        label + ': Instagram GraphQL rejected the request (' +
+                        summarizeGraphQlErrors(data.errors) +
+                        '); scan stopped.'
                     );
                 }
 
@@ -7941,7 +8008,13 @@
     }
     function profileNativeCompletionRequest(userKey) {
         const native = net.gridQueryByUser.get(userKey);
+        const audit = net.gridNativeAuditByUser.get(userKey);
+        // A successful first-page request does not establish the
+        // shape of a forward-pagination query. The continuation
+        // contract must have succeeded natively at least once.
         if (
+            !audit ||
+            audit.continuation < 1 ||
             !native ||
             !GRID_NAMES.has(native.friendly) ||
             !/^\d+$/.test(native.docId) ||
@@ -7979,6 +8052,9 @@
             Object.prototype.hasOwnProperty.call(vars.data,'after') &&
             !Object.prototype.hasOwnProperty.call(vars,'after')
         );
+        const root =
+            Object.prototype.hasOwnProperty.call(vars,'after');
+        if (!nested && !root) return null;
         const params = nested ? vars.data : vars;
         const pageSize = Number(
             params.first ||
@@ -8011,16 +8087,23 @@
         const observedDoc = String(
             net.gridDocByUser.get(userKey) || ''
         );
+        const audit = net.gridNativeAuditByUser.get(userKey);
+        log(
+            'PROFILE native provenance: initial=' + (audit?.initial || 0) +
+            ', continuation=' + (audit?.continuation || 0) +
+            ', cursor_schema=' + (audit?.cursorLocation || 'absent') +
+            ', last_has_next=' + (audit?.lastHasNext || 'unknown') + '.'
+        );
 
         if (!native) {
             log(
-                'PROFILE completion: no verified native Relay ' +
+                'PROFILE completion: no verified native continuation ' +
                 'contract; grid remains INCOMPLETE.',
                 'warn'
             );
             return {
                 ended:false, pages:0, edges:0, recovered:0,
-                endReason:'native_contract_unavailable', docId:'',
+                endReason:'native_continuation_unavailable', docId:'',
             };
         }
 
@@ -10455,6 +10538,9 @@
                 state.username.toLowerCase()
             );
             net.gridQueryByUser.delete(
+                state.username.toLowerCase()
+            );
+            net.gridNativeAuditByUser.delete(
                 state.username.toLowerCase()
             );
             net.reelsByUserId.set(
