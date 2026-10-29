@@ -34,7 +34,9 @@ No outgoing request is added merely to obtain diagnostics.
 
 `net.gridQueryByUser` stores the most recent target-scoped successful native response contract.
 
-`net.gridNativeContinuationByUser` is the separate successful native continuation contract. A later initial-page re-entry cannot overwrite it.
+`net.gridNativeInitialByUser` retains the native first-page query separately. A first-page request and continuation request may use different persisted document IDs, body fields, and variable shapes. Never replay the continuation contract for the initial page.
+
+`net.gridNativeContinuationByUser` is the separate successful native continuation contract. Once both initial and continuation requests are confirmed for the target, independent verification uses the exact first-page template for page 1 and the exact native continuation template for later pages. Only the already-observed `after` field is replaced by the new cursor; other variables are preserved. A later initial-page re-entry cannot overwrite it.
 
 A native continuation can be replayed only when it has already succeeded for the current target. The script refuses to invent a cursor field for an initial-page-only contract. When no such verified continuation exists, return `ended=false` and `native_continuation_unavailable`. A synthetic first page or generic document ID does not establish provenance.
 
