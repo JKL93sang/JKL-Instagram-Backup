@@ -399,9 +399,9 @@ assert.ok(
 
 assert.ok(
     fallbackSource.includes(
-        'count: 12'
+        'profileCompletionVariables('
     ),
-    'PROFILE fallback page size changed unexpectedly'
+    'PROFILE fallback no longer reuses the observed native page size'
 );
 
 assert.ok(
@@ -420,7 +420,7 @@ assert.ok(
 
 assert.ok(
     fallbackSource.includes(
-        "throwIfInstagramStop(e, 'PROFILE GraphQL completion')"
+        "throwIfInstagramStop(error, 'PROFILE native Relay completion')"
     ),
     'PROFILE fallback lost feedback/rate-limit fail-fast'
 );

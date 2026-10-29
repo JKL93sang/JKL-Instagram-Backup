@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.5.60 — Instagram profile resolution and native Relay pagination
+
+- Investigates Instagram 404 from topsearch and HTTP 200 HTML from the older feed/user fallback.
+- Resolve a profile ID from currently displayed page metadata when available, or fetch its ordinary authenticated profile HTML once.
+- Validate requested username, final profile route and optional canonical URL before accepting only explicit profile ID metadata.
+- Retain a single search request only as last resort; remove the redirected feed/user fallback.
+- Do not retry on HTTP 429, feedback_required, 401/403 or login redirects.
+- Native PROFILE pagination is fixed to replay a successfully captured GraphQL request (document ID, profile-scoped variables, endpoint, body and headers) through the already existing Relay client; it no longer sends an incomplete hand-built POST. A missing native template leaves the scan incomplete rather than sending a guessed query.
+- GraphQL HTTP 200 JSON error payloads now trip the API safety stop instead of being treated as a blank page. The rest of the scan engine, downloading, ledger and solo-download controls remain unchanged.
+- Add dedicated profile HTML identity and guard regression tests, plus non-sensitive diagnostic classification of non-JSON GraphQL responses (MIME, body type, redirect category) and native GraphQL doc-ID comparison. No extra diagnostic requests. Automated CI tests pass; browser smoke testing on the updated Instagram interface remains pending.
+
+
 ## 1.5.58 — Media-Anchored Solo Button
 
 - UI-only update: place the opened-media solo download button over its visible image/video container instead of the native action bar or browser viewport corner.

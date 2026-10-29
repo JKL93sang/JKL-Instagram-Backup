@@ -2,7 +2,7 @@
 
 A Tampermonkey userscript for backing up Instagram media that is **already accessible to the signed-in browser session**.
 
-Current public version: **1.5.58**
+Current public version: **1.5.60**
 
 ## Install
 
@@ -13,6 +13,16 @@ https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instag
 The userscript contains its own `@updateURL` and `@downloadURL`, so Tampermonkey can check this repository for later versions automatically.
 
 > Existing installs that were previously copied manually from the private development repository must install **1.5.57 once** from the public Raw URL. After that, future version checks use this public repository.
+
+## Profile identity resilience (v1.5.60)
+
+Profile resolution first checks the open profile page, then makes at most **one normal authenticated page request** to obtain profile-specific metadata. A single legacy topsearch request is retained as a last resort. The feed/user endpoint that returned redirected HTML is no longer used for identity resolution.
+
+The script **never bypasses login, private content or platform restrictions**. HTTP 429, `feedback_required`, HTTP 401/403 and login/checkpoint redirects still stop the attempt. If Instagram's current page no longer exposes the ID, the scan stops rather than guessing. The entire scan engine remains unchanged.
+
+**PROFILE pagination update:** the candidate now uses only a successful, profile-matched native Instagram Relay query to paginate the profile, preserving its observed document ID, variables and request envelope. It refuses to guess when the capture is missing and still requires explicit `page_info.has_next_page === false` for a complete scan. JSON GraphQL errors also stop safely. No additional fallback retries or unauthorized access are introduced.
+
+**Validation caution:** automated tests pass, but full compatibility with Instagram's live Relay interface still requires a real browser/profile smoke test. Stop if Instagram displays login, checkpoint or account-limitation notices. If a GraphQL profile-completion request still returns HTTP 200 non-JSON, the log will now show only safe diagnostics (response MIME, HTML classification, destination category, redirect yes/no, and whether the native captured query ID differs from the fixed fallback). It does **not** log response bodies, sensitive URLs, cookies or tokens; it makes no additional retry requests. The profile scan remains incomplete and stops.
 
 ## What it backs up
 
