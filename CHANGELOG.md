@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.62 — PR #8 experimental test-channel build
+
+- **Not a public release.** Exposes the native PROFILE discovery architecture from PR #8 for controlled browser validation.
+- Bump the userscript metadata and internal version together to `1.5.62`, so Tampermonkey recognizes it as newer than public `1.5.61`.
+- Pin `@source`, `@updateURL` and `@downloadURL` to the PR #8 test branch, preventing the experimental installation from updating against stable `main`.
+- Preserve `@name`, `@namespace` and the complete runtime behavior unchanged. Subsequent browser validation is still necessary.
+- Returning to the stable channel requires installing the `main` version explicitly.
+
+
 ## 1.5.61 — PROFILE pagination connection arguments
 
 - Supply four explicit forward-pagination parameters on the second and subsequent native Relay pages: after, before=null, first and last=null.
