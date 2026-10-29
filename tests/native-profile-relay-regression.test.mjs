@@ -37,7 +37,7 @@ assert.ok(!fallbackSource.includes('APP.PROFILE_FALLBACK_DOC'));
 assert.ok(!fallbackSource.includes('await gql('));
 assert.ok(fallbackSource.includes('page_info?.has_next_page === false'));
 assert.ok(fallbackSource.includes('native_continuation_unavailable'));
-assert.ok(fallbackSource.includes('native.template'));
+assert.ok(fallbackSource.includes('nativeTemplate:contract.template'));
 assert.ok(fallbackSource.includes('contracts.initial'));
 assert.ok(fallbackSource.includes('contracts.continuation'));
 assert.ok(fallbackSource.includes('contract.variables'));
