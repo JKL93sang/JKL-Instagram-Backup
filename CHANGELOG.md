@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.5.65 — Stable native PROFILE discovery and verified cross-surface coverage
+
+- Promote reviewed PR #8 architecture following positive browser tests on two different public profiles, including a successful download for the 24-public/13-native/12-overlap case reconciling 25 POSTS.
+- Keep website-native capture isolated from requests issued by the userscript. Track successful native initial and continuation contracts separately; refuse guessed GraphQL continuation fields.
+- Retain strict coverage evidence: complete public timeline and verified identity/counter/owned sets, or complete public/native timelines with exact root-ID union and overlap, plus full REELS, empty CONNECTED hidden and successful OWNED hydration.
+- No extra API retries or weakened login/feedback/rate-limit stops. Maintain solo downloads, archive and all unrelated scan categories.
+- Reset userscript source/update/download URLs to the public main branch. Increment to v1.5.65 so Tampermonkey recognizes the release as newer than the experimental v1.5.64.
+- Automated CI and targeted browser feedback do not guarantee universal compatibility with Instagram.
+
+## 1.5.64 — Experimental PROFILE public/native union proof
+
+- Reconcile profiles where PUBLIC SHADOW ends with fewer roots than the verified authenticated profile counter, but a target-matched native PROFILE continuation separately ends and adds the missing root IDs.
+- Require exact numeric-ID union equal to the authenticated profile count, at least one ID shared by both independent sources, native continuation with explicit final `page_info.has_next_page=false`, all native and public IDs verified owned, REELS complete, CONNECTED hidden empty, and hydration complete.
+- For example, 24 public roots plus 13 native roots, 12 overlapping, yields 25 independently verified roots. If any condition fails, PROFILE stays INCOMPLETE.
+- No request retries or additional API traffic; retains the previous exact-public matching path unchanged.
+- Add simulated positive and negative cases for both complete-public and union paths. This remains a test-channel build pending live confirmation.
+
+## 1.5.63 — Experimental cross-surface PROFILE completion proof
+
+- Introduce independent identity-scoped PROFILE coverage for public profiles when Instagram's native PROFILE hook is unavailable.
+- Require a fully paginated PUBLIC SHADOW (has_next_page=false), exact profile root count, and verified membership of all public POST/REEL IDs.
+- Require non-private status, no exclusive feed, complete REELS, empty verified CONNECTED hidden, and complete OWNED hydration. Missing evidence remains INCOMPLETE.
+- Evaluate once after all selected scan phases, without any added API requests; preserve all safety stops and download guards.
+- Keep experimental branch auto-update channel and increment both version markers for Tampermonkey.
+- Add extensive positive/negative test fixtures. Real browser verification remains required.
+
+
+## 1.5.62 — PR #8 experimental test-channel build
+
+- **Not a public release.** Exposes the native PROFILE discovery architecture from PR #8 for controlled browser validation.
+- Bump the userscript metadata and internal version together to `1.5.62`, so Tampermonkey recognizes it as newer than public `1.5.61`.
+- Pin `@source`, `@updateURL` and `@downloadURL` to the PR #8 test branch, preventing the experimental installation from updating against stable `main`.
+- Preserve `@name`, `@namespace` and the complete runtime behavior unchanged. Subsequent browser validation is still necessary.
+- Returning to the stable channel requires installing the `main` version explicitly.
+
+
 ## 1.5.61 — PROFILE pagination connection arguments
 
 - Supply four explicit forward-pagination parameters on the second and subsequent native Relay pages: after, before=null, first and last=null.

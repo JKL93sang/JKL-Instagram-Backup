@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.61
-// @description  Instagram archive hardened: exhaustive accessible scan, immutable completeness guard, anti-loss local archive, feedback circuit breaker.
+// @version      1.5.65
+// @description  Instagram backup: verified public/native profile coverage, archive integrity, and safe pagination handling.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.61', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.65', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -169,6 +169,11 @@
             postRoots: 0,
             extras: 0,
             pages: 0,
+            profileId: '',
+            pageInfoEnded: false,
+            rootIds: new Set(),
+            postIds: new Set(),
+            reelIds: new Set(),
         },
 
         hydration: {
@@ -255,6 +260,9 @@
         gridPageInfo: new Map(),
         gridDocByUser: new Map(),
         gridQueryByUser: new Map(),
+        gridNativeAuditByUser: new Map(),
+        gridNativeContinuationByUser: new Map(),
+        gridNativeInitialByUser: new Map(),
 
         reelsByUserId: new Map(),
         reelPageInfo: new Map(),
@@ -958,6 +966,11 @@
         state.shadow.postRoots = 0;
         state.shadow.extras = 0;
         state.shadow.pages = 0;
+        state.shadow.profileId = '';
+        state.shadow.pageInfoEnded = false;
+        state.shadow.rootIds = new Set();
+        state.shadow.postIds = new Set();
+        state.shadow.reelIds = new Set();
 
         state.hidden.pages = 0;
         state.hidden.candidates = 0;
@@ -3818,12 +3831,38 @@
             return;
         }
 
-        const c =
-            gridConn(data);
+        const c = gridConn(data);
+        if (
+            !c ||
+            (Array.isArray(data?.errors) && data.errors.length)
+        ) return;
 
-        if (!c) {
-            return;
-        }
+        const variables = meta?.variables || {};
+        const isRoot =
+            Object.prototype.hasOwnProperty.call(variables,'after');
+        const isNested =
+            !isRoot &&
+            variables.data &&
+            Object.prototype.hasOwnProperty.call(variables.data,'after');
+        const cursorLocation = isRoot ? 'root' :
+            isNested ? 'nested' : 'absent';
+        const cursor = isRoot ? variables.after :
+            isNested ? variables.data.after : null;
+
+        // Only successful real browser traffic reaches this
+        // observer. Store safe structural evidence separately
+        // from request bodies, cookies and tokens.
+        const audit = net.gridNativeAuditByUser.get(user) || {
+            initial:0, continuation:0,
+            cursorLocation:'absent', lastHasNext:'unknown',
+        };
+        if (cursor) audit.continuation++;
+        else audit.initial++;
+        audit.cursorLocation = cursorLocation;
+        audit.lastHasNext = c?.page_info?.has_next_page === true
+            ? 'true' : c?.page_info?.has_next_page === false
+                ? 'false' : 'unknown';
+        net.gridNativeAuditByUser.set(user,audit);
 
         const map =
             net.gridByUser.get(user) ||
@@ -3875,7 +3914,7 @@
                 GRID_NAMES.has(String(meta.friendly || ''))
             ) {
                 try {
-                    net.gridQueryByUser.set(user, {
+                    const verifiedContract = {
                         docId:String(meta.docId),
                         friendly:String(meta.friendly),
                         endpoint:meta.endpoint === 'api' ? 'api' : 'query',
@@ -3884,7 +3923,21 @@
                             body:JSON.parse(JSON.stringify(meta.bodyFields || {})),
                             headers:JSON.parse(JSON.stringify(meta.relayHeaders || {})),
                         },
-                    });
+                    };
+                    net.gridQueryByUser.set(user,verifiedContract);
+
+                    if (cursor) {
+                        // Keep native continuation schema distinct
+                        // from the native first-page request schema.
+                        net.gridNativeContinuationByUser.set(
+                            user,verifiedContract
+                        );
+                    }
+                    else {
+                        net.gridNativeInitialByUser.set(
+                            user,verifiedContract
+                        );
+                    }
                 }
                 catch {
                     net.gridQueryByUser.delete(user);
@@ -4605,6 +4658,52 @@
         );
     }
 
+    function summarizeGraphQlErrors(errors) {
+        const list = Array.isArray(errors) ? errors : [];
+        if (!list.length) return 'count=0, kind=none';
+
+        const kinds = new Set();
+        const codes = new Set();
+        const severity = new Set();
+
+        for (const error of list.slice(0,10)) {
+            const message = String(error?.message || '');
+            const kind =
+                /missing_required_variable_value/i.test(message)
+                    ? 'missing_required_variable'
+                    : /execution error|server error|internal error/i.test(message)
+                        ? 'server_execution'
+                        : /invalid request|malformed variables/i.test(message)
+                            ? 'invalid_request'
+                            : /invalid|malformed|expired/i.test(message) &&
+                                /cursor/i.test(message)
+                                ? 'invalid_cursor'
+                                : /throttl|rate.limit|too many/i.test(message)
+                                    ? 'rate_limited'
+                                    : /not authorized|unauthorized|permission/i.test(message)
+                                        ? 'access_denied'
+                                        : 'unclassified';
+            kinds.add(kind);
+
+            // Report numeric error category only; never log the
+            // raw message, mids, fbtrace_id, debug URL or session.
+            if (
+                Number.isSafeInteger(error?.code) &&
+                error.code >= 0 &&
+                error.code <= 999999999
+            ) codes.add(error.code);
+            const level = String(error?.severity || '').toUpperCase();
+            if (['CRITICAL','ERROR','WARNING'].includes(level)) {
+                severity.add(level);
+            }
+        }
+
+        return 'count=' + list.length +
+            ', kind=' + [...kinds].sort().join('+') +
+            ', code=' + ([...codes].sort((a,b)=>a-b).join('+') || '-') +
+            ', severity=' + ([...severity].sort().join('+') || '-');
+    }
+
     async function fetchJson(
         url,
         opt = {},
@@ -4627,8 +4726,15 @@
             }
 
             try {
+                // Requests originating from this userscript must
+                // not be mistaken for native Instagram network
+                // traffic by the fetch/XHR observation layer.
+                const transport =
+                    net.nativeFetch ||
+                    window.fetch.bind(window);
+
                 const r =
-                    await fetch(
+                    await transport(
                         url,
                         {
                             credentials:
@@ -4706,23 +4812,10 @@
                 // A 200 response containing GraphQL errors is
                 // NOT a valid empty page.
                 if (Array.isArray(data?.errors) && data.errors.length) {
-                    // Report only known error categories, never arbitrary
-                    // API messages, private IDs or debug links.
-                    const errorText = data.errors
-                        .map(error => String(error?.message || ''))
-                        .join(' ');
-                    const category =
-                        /missing_required_variable_value/i.test(errorText)
-                            ? 'missing_required_variable'
-                            : /(?:invalid|malformed|expired)[^\n]{0,40}cursor/i.test(errorText)
-                                ? 'invalid_cursor'
-                                : /(?:permission|not authorized|unauthorized)/i.test(errorText)
-                                    ? 'access_denied'
-                                    : 'other';
-
                     throw apiUnhealthyError(
-                        label + ': Instagram GraphQL rejected the request ' +
-                        '(category=' + category + '); scan stopped.'
+                        label + ': Instagram GraphQL rejected the request (' +
+                        summarizeGraphQlErrors(data.errors) +
+                        '); scan stopped.'
                     );
                 }
 
@@ -6980,6 +7073,11 @@
         state.shadow.postRoots = 0;
         state.shadow.extras = 0;
         state.shadow.pages = 0;
+        state.shadow.profileId = '';
+        state.shadow.pageInfoEnded = false;
+        state.shadow.rootIds = new Set();
+        state.shadow.postIds = new Set();
+        state.shadow.reelIds = new Set();
 
         if (state.profileInfo?.is_private === true) {
             state.shadow.applicable = false;
@@ -7265,6 +7363,10 @@
                 const p = String(root.product_type || '').toLowerCase();
                 return p !== 'clips' && p !== 'reels';
             });
+            const publicReels = allRoots.filter(root => {
+                const p = String(root.product_type || '').toLowerCase();
+                return p === 'clips' || p === 'reels';
+            });
 
             const before = ownedIds();
             const extras = publicPosts.filter(root => !before.has(root.pk));
@@ -7342,6 +7444,18 @@
             }
 
             state.coverage.publicShadow = ended && hydrated === extras.length;
+
+            // Preserve the identity-scoped set of ALL public grid
+            // roots, including clips that are not hydrated by the
+            // POST-only public shadow pass. It is only eligible as
+            // proof if the pagination explicitly ended.
+            if (state.coverage.publicShadow) {
+                state.shadow.profileId = String(state.userId || '');
+                state.shadow.pageInfoEnded = pageInfo?.has_next_page === false;
+                state.shadow.rootIds = new Set(roots.keys());
+                state.shadow.postIds = new Set(publicPosts.map(r => r.pk));
+                state.shadow.reelIds = new Set(publicReels.map(r => r.pk));
+            }
 
             updateStats();
 
@@ -7940,66 +8054,70 @@
         return { attempted: true, captured: false, method: 'reentry-missed', roots: 0, pageInfo: null };
     }
     function profileNativeCompletionRequest(userKey) {
-        const native = net.gridQueryByUser.get(userKey);
+        const initial = net.gridNativeInitialByUser.get(userKey);
+        const continuation =
+            net.gridNativeContinuationByUser.get(userKey);
+        const audit = net.gridNativeAuditByUser.get(userKey);
+
+        // A first-page request and a cursor request may be
+        // different persisted queries with different arguments.
+        // Both must have succeeded on this target natively.
+        function validNative(request) {
+            return !!(
+                request &&
+                GRID_NAMES.has(request.friendly) &&
+                /^\d+$/.test(request.docId) &&
+                request.variables &&
+                typeof request.variables === 'object' &&
+                request.template &&
+                requestTargetsCurrentProfile({
+                    variables:request.variables,
+                })
+            );
+        }
+
         if (
-            !native ||
-            !GRID_NAMES.has(native.friendly) ||
-            !/^\d+$/.test(native.docId) ||
-            !native.variables ||
-            typeof native.variables !== 'object' ||
-            !native.template ||
-            !requestTargetsCurrentProfile({ variables:native.variables })
+            !audit ||
+            audit.initial < 1 ||
+            audit.continuation < 1 ||
+            !validNative(initial) ||
+            !validNative(continuation) ||
+            !/^(?:root|nested)$/.test(audit.cursorLocation)
         ) return null;
-        return native;
+
+        return { initial, continuation };
     }
 
-    function profileCompletionVariables(nativeVariables, cursor = null) {
+    function profileCompletionVariables(nativeVariables,cursor=null) {
         const vars = JSON.parse(
             JSON.stringify(nativeVariables || {})
         );
 
-        // First page: retain the exact observed request variables.
-        // Only discard an inherited cursor from an earlier native
-        // request, to start an independent completion traversal.
-        if ('after' in vars) vars.after = null;
-        if ('before' in vars) vars.before = null;
-        if (vars.data && typeof vars.data === 'object') {
-            if ('after' in vars.data) vars.data.after = null;
-            if ('before' in vars.data) vars.data.before = null;
-        }
-
-        if (!cursor) return vars;
-
-        // A *next-page* Relay query has a distinct connection
-        // argument contract. An initial grid request can omit
-        // first/before/last, while pagination requires them.
+        const root =
+            Object.prototype.hasOwnProperty.call(vars,'after');
         const nested = !!(
             vars.data &&
             typeof vars.data === 'object' &&
-            Object.prototype.hasOwnProperty.call(vars.data,'after') &&
-            !Object.prototype.hasOwnProperty.call(vars,'after')
-        );
-        const params = nested ? vars.data : vars;
-        const pageSize = Number(
-            params.first ||
-            vars.first ||
-            vars.data?.first ||
-            vars.data?.count ||
-            0
+            Object.prototype.hasOwnProperty.call(vars.data,'after')
         );
 
-        // Never guess a page size or invent continuation requests
-        // if the original native query did not advertise one.
-        if (
-            !Number.isSafeInteger(pageSize) ||
-            pageSize < 1 ||
-            pageSize > 100
-        ) return null;
+        // The native initial page should contain no active
+        // continuation cursor. Do not manufacture a reset shape.
+        if (!cursor) {
+            if (
+                (root && vars.after) ||
+                (nested && vars.data.after)
+            ) return null;
+            return vars;
+        }
 
-        params.after = cursor;
-        params.before = null;
-        params.first = pageSize;
-        params.last = null;
+        // Change only the observed cursor, leaving first/count,
+        // before/last, Relay providers and every other variable
+        // exactly as the successful native continuation used them.
+        if (root === nested) return null;
+        if (root) vars.after = cursor;
+        else vars.data.after = cursor;
+
         return vars;
     }
 
@@ -8007,32 +8125,38 @@
         const startOwned = ownedCount();
         const reason = String(context.reason || 'completion');
         const userKey = state.username.toLowerCase();
-        const native = profileNativeCompletionRequest(userKey);
+        const contracts = profileNativeCompletionRequest(userKey);
         const observedDoc = String(
             net.gridDocByUser.get(userKey) || ''
         );
+        const audit = net.gridNativeAuditByUser.get(userKey);
+        log(
+            'PROFILE native provenance: initial=' + (audit?.initial || 0) +
+            ', continuation=' + (audit?.continuation || 0) +
+            ', cursor_schema=' + (audit?.cursorLocation || 'absent') +
+            ', last_has_next=' + (audit?.lastHasNext || 'unknown') + '.'
+        );
 
-        if (!native) {
+        if (!contracts) {
             log(
-                'PROFILE completion: no verified native Relay ' +
+                'PROFILE completion: no verified native continuation ' +
                 'contract; grid remains INCOMPLETE.',
                 'warn'
             );
             return {
                 ended:false, pages:0, edges:0, recovered:0,
-                endReason:'native_contract_unavailable', docId:'',
+                endReason:'native_continuation_unavailable', docId:'',
             };
         }
 
-        const docId = native.docId;
+        const docId = contracts.continuation.docId;
         log(
-            'PROFILE native Relay completion starting: ' +
+            'PROFILE verified native Relay completion starting: ' +
             'current=' + startOwned +
             ', reason=' + reason +
-            ', doc=' + docId +
-            ', native_doc=' + (observedDoc || '-') +
-            ', native_doc_differs=' +
-            (!!observedDoc && observedDoc !== docId) + '.',
+            ', initial_doc=' + contracts.initial.docId +
+            ', continuation_doc=' + docId +
+            ', native_doc=' + (observedDoc || '-') + '.',
             'warn'
         );
 
@@ -8047,8 +8171,11 @@
         for (let page = 1; page <= APP.PROFILE_MAX_SCROLLS; page++) {
             if (state.cancelled) throw new Error('Cancelled');
 
+            const contract = cursor
+                ? contracts.continuation
+                : contracts.initial;
             const vars = profileCompletionVariables(
-                native.variables, cursor
+                contract.variables,cursor
             );
             if (!vars) {
                 endReason = 'pagination_arguments_unavailable';
@@ -8062,11 +8189,11 @@
             let data;
             try {
                 data = await webRelayGql(
-                    docId, vars, native.friendly, {
-                        endpoint:native.endpoint,
-                        nativeTemplate:native.template,
+                    contract.docId,vars,contract.friendly,{
+                        endpoint:contract.endpoint,
+                        nativeTemplate:contract.template,
                         rootField:
-                            native.template.headers?.['x-root-field-name'] ||
+                            contract.template.headers?.['x-root-field-name'] ||
                             GRID_CONNECTION_KEY,
                     }
                 );
@@ -10343,6 +10470,226 @@
         );
     }
 
+    function assessProfileGridCrossSurfaceProof(proof = {}) {
+        // Do not infer PROFILE completeness from the counter alone:
+        // every candidate source must be identity scoped and have
+        // independent server-reported end-of-pagination evidence.
+        const fail = (reason,missing=0) =>
+            ({verified:false,reason,missing});
+
+        if (!proof.selectedPost || !proof.selectedReel) {
+            return fail('post_and_reel_scans_required');
+        }
+        if (
+            !proof.publicProfile ||
+            !proof.exclusiveKnown ||
+            proof.hasExclusive ||
+            !proof.shadowApplicable
+        ) return fail('public_access_equivalence_unavailable');
+
+        if (
+            !proof.profileId ||
+            proof.profileId !== proof.shadowProfileId
+        ) return fail('profile_identity_unverified');
+
+        if (!proof.shadowComplete || !proof.shadowPageInfoEnd) {
+            return fail('public_timeline_end_unproven');
+        }
+
+        const expected = Number(proof.expected);
+        const publicRoots = proof.publicRootIds;
+        const publicPosts = proof.publicPostIds;
+        const publicReels = proof.publicReelIds;
+        if (
+            !Number.isSafeInteger(expected) ||
+            expected <= 0 ||
+            proof.counterVerified !== true ||
+            !(publicRoots instanceof Set) ||
+            !(publicPosts instanceof Set) ||
+            !(publicReels instanceof Set) ||
+            publicRoots.size > expected ||
+            publicPosts.size + publicReels.size !== publicRoots.size
+        ) return fail('public_timeline_counter_or_partition_mismatch');
+
+        for (const id of publicPosts) {
+            if (!publicRoots.has(id) || publicReels.has(id)) {
+                return fail('public_root_partition_invalid');
+            }
+        }
+        for (const id of publicReels) {
+            if (!publicRoots.has(id) || publicPosts.has(id)) {
+                return fail('public_root_partition_invalid');
+            }
+        }
+
+        if (
+            !proof.reelsComplete ||
+            !proof.connectedHiddenComplete ||
+            !proof.ownedHydrationComplete ||
+            proof.hiddenCandidates !== 0 ||
+            proof.hiddenRecovered !== 0 ||
+            proof.hiddenPreviewOnly !== 0 ||
+            proof.hiddenFailed !== 0
+        ) return fail('connected_surfaces_not_equivalent');
+
+        if (
+            !(proof.ownedPostIds instanceof Set) ||
+            !(proof.ownedReelIds instanceof Set)
+        ) return fail('owned_root_sets_unavailable');
+
+        let missing = 0;
+        for (const id of publicPosts) {
+            if (!proof.ownedPostIds.has(id)) missing++;
+        }
+        for (const id of publicReels) {
+            if (!proof.ownedReelIds.has(id)) missing++;
+        }
+        if (missing) return fail('public_roots_not_reconciled',missing);
+
+        // The anonymous timeline occasionally omits a valid root that
+        // was observed in a target-scoped authenticated native response.
+        // Accept an aggregate end proof only if BOTH sources ended:
+        // the public timeline and a real native continuation. A
+        // mid-scroll native response with no end marker is insufficient.
+        if (publicRoots.size < expected) {
+            const native = proof.nativeRootIds;
+            if (
+                proof.nativeContinuationPages < 1 ||
+                !proof.nativePageInfoEnd ||
+                !proof.nativeLastHasNextFalse ||
+                !(native instanceof Set) ||
+                native.size === 0
+            ) return fail('authenticated_native_end_unproven');
+
+            const allRoots = new Set(publicRoots);
+            let overlap = 0;
+            let nativeUnowned = 0;
+            for (const id of native) {
+                if (
+                    typeof id !== 'string' ||
+                    !/^\d+$/.test(id)
+                ) return fail('authenticated_native_identity_invalid');
+
+                if (publicRoots.has(id)) overlap++;
+                allRoots.add(id);
+                if (
+                    !proof.ownedPostIds.has(id) &&
+                    !proof.ownedReelIds.has(id)
+                ) nativeUnowned++;
+            }
+
+            if (nativeUnowned) {
+                return fail('authenticated_native_roots_not_reconciled',nativeUnowned);
+            }
+            if (overlap < 1) {
+                return fail('public_native_overlap_unproven');
+            }
+            if (allRoots.size !== expected) {
+                return fail(
+                    'public_native_union_counter_mismatch',
+                    Math.max(0,expected-allRoots.size)
+                );
+            }
+
+            return {
+                verified:true,
+                reason:'public_native_union_cross_surface_proof',
+                missing:0,
+                publicCount:publicRoots.size,
+                nativeCount:native.size,
+                overlap,
+                unionCount:allRoots.size,
+            };
+        }
+
+        return {
+            verified:true,
+            reason:'public_connected_cross_surface_proof',
+            missing:0,
+            publicCount:publicRoots.size,
+            nativeCount:0,
+            overlap:0,
+            unionCount:publicRoots.size,
+        };
+    }
+
+    function reconcileProfileGridCoverage() {
+        if (
+            state.coverage.profileGrid ||
+            !scanSelected('post')
+        ) return;
+
+        const result = assessProfileGridCrossSurfaceProof({
+            selectedPost: scanSelected('post'),
+            selectedReel: scanSelected('reel'),
+            publicProfile: state.profileInfo?.is_private === false,
+            exclusiveKnown: state.exclusive.known === true,
+            hasExclusive: state.exclusive.hasExclusiveFeedContent === true,
+            shadowApplicable: state.shadow.applicable === true,
+            profileId: String(state.userId || ''),
+            shadowProfileId: String(state.shadow.profileId || ''),
+            shadowComplete: state.coverage.publicShadow === true,
+            shadowPageInfoEnd: state.shadow.pageInfoEnded === true,
+            expected: state.expected,
+            counterVerified:
+                Number.isSafeInteger(Number(state.profileInfo?.media_count)) &&
+                Number(state.profileInfo.media_count) === Number(state.expected) &&
+                Number(state.expected) > 0,
+            nativeRootIds: new Set(
+                net.gridByUser.get(state.username.toLowerCase())?.keys() || []
+            ),
+            nativeContinuationPages:
+                net.gridNativeAuditByUser.get(
+                    state.username.toLowerCase()
+                )?.continuation || 0,
+            nativePageInfoEnd:
+                net.gridPageInfo.get(
+                    state.username.toLowerCase()
+                )?.has_next_page === false,
+            nativeLastHasNextFalse:
+                net.gridNativeAuditByUser.get(
+                    state.username.toLowerCase()
+                )?.lastHasNext === 'false',
+            publicRootIds: state.shadow.rootIds,
+            publicPostIds: state.shadow.postIds,
+            publicReelIds: state.shadow.reelIds,
+            reelsComplete: state.coverage.reels === true,
+            connectedHiddenComplete: state.coverage.connectedHidden === true,
+            ownedHydrationComplete: state.coverage.ownedHydration === true,
+            hiddenCandidates: state.hidden.candidates,
+            hiddenRecovered: state.hidden.recovered,
+            hiddenPreviewOnly: state.hidden.previewOnly,
+            hiddenFailed: state.hidden.failed,
+            ownedPostIds: state.roots.POST,
+            ownedReelIds: state.roots.REEL,
+        });
+
+        if (result.verified) {
+            state.coverage.profileGrid = true;
+            log(
+                'PROFILE grid independently reconciled: ' +
+                'proof=' + result.reason +
+                ', public=' + result.publicCount +
+                ', native=' + result.nativeCount +
+                ', overlap=' + result.overlap +
+                ', union=' + result.unionCount +
+                ', expected=' + state.expected +
+                '. PUBLIC SHADOW ended, REELS/HIDDEN/HYDRATION verified. ' +
+                'Native PROFILE initial capture may remain unverified.',
+                'warn'
+            );
+        }
+        else {
+            log(
+                'PROFILE grid cross-surface proof unavailable: ' +
+                result.reason +
+                (result.missing ? ', missing=' + result.missing : '') +
+                '. Native PROFILE coverage stays INCOMPLETE.',
+                'warn'
+            );
+        }
+    }
+
     async function scanAll() {
         if (
             state.running ||
@@ -10457,6 +10804,15 @@
             net.gridQueryByUser.delete(
                 state.username.toLowerCase()
             );
+            net.gridNativeAuditByUser.delete(
+                state.username.toLowerCase()
+            );
+            net.gridNativeContinuationByUser.delete(
+                state.username.toLowerCase()
+            );
+            net.gridNativeInitialByUser.delete(
+                state.username.toLowerCase()
+            );
             net.reelsByUserId.set(
                 state.userId,
                 new Map()
@@ -10555,6 +10911,11 @@
                 );
             }
 
+            // A missed authenticated PROFILE hook is not itself
+            // proof that the public, reels and hidden timelines are
+            // incomplete. Reconcile once all selected passes have
+            // completed, using strict cross-surface evidence.
+            reconcileProfileGridCoverage();
             updateStats();
 
             logScanProfilerSummary(

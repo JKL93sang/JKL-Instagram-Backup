@@ -72,8 +72,9 @@ const fallback = script.slice(
     script.indexOf('    async function scanMainGrid(')
 );
 assert.ok(
-    fallback.includes('native_doc_differs='),
-    'Captured native GraphQL doc ID must be logged safely'
+    fallback.includes('initial_doc=') &&
+    fallback.includes('continuation_doc='),
+    'Successful native first-page and continuation document IDs must be logged separately'
 );
 assert.ok(
     fallback.includes('profileNativeCompletionRequest') &&
