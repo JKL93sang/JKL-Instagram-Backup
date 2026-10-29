@@ -2,7 +2,7 @@
 
 A Tampermonkey userscript for backing up Instagram media that is **already accessible to the signed-in browser session**.
 
-Current public version: **1.5.60**
+Current public version: **1.5.61**
 
 ## Install
 
@@ -14,7 +14,7 @@ The userscript contains its own `@updateURL` and `@downloadURL`, so Tampermonkey
 
 > Existing installs that were previously copied manually from the private development repository must install **1.5.57 once** from the public Raw URL. After that, future version checks use this public repository.
 
-## Profile identity resilience (v1.5.60)
+## Profile identity resilience (v1.5.60+)
 
 Profile resolution first checks the open profile page, then makes at most **one normal authenticated page request** to obtain profile-specific metadata. A single legacy topsearch request is retained as a last resort. The feed/user endpoint that returned redirected HTML is no longer used for identity resolution.
 
