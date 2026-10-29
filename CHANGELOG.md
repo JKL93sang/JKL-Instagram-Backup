@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.61 — PROFILE pagination connection arguments
+
+- Supply four explicit forward-pagination parameters on the second and subsequent native Relay pages: after, before=null, first and last=null.
+- Determine page size from the observed native query rather than inventing it.
+- Keep other captured Relay providers and metadata unchanged.
+- Preserve explicit completion proof, stop-on-error behavior and existing download functionality.
+- Add regression tests for initial pages, next-page cursors and missing page-size information.
+- Live Instagram verification remains necessary.
+
+
 ## 1.5.60 — Instagram profile resolution and native Relay pagination
 
 - Investigates Instagram 404 from topsearch and HTTP 200 HTML from the older feed/user fallback.

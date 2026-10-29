@@ -85,6 +85,8 @@ assert.equal(initial.data.count,12);
 const next = helpers.profileCompletionVariables(entry.variables,'cursor-2');
 assert.equal(next.after,'cursor-2');
 assert.equal(next.first,12);
+assert.equal(next.before,null);
+assert.equal(next.last,null);
 assert.equal(entry.variables.after,'old-cursor','source must not mutate');
 
 store.set('other.account',{
@@ -102,7 +104,46 @@ const nested = helpers.profileCompletionVariables({
     data:{after:'old',count:12},
 },'new-cursor');
 assert.equal(nested.data.after,'new-cursor');
+assert.equal(nested.data.first,12);
+assert.equal(nested.data.before,null);
+assert.equal(nested.data.last,null);
 assert.ok(!('after' in nested));
+
+/* This is the actual failure pattern in v1.5.60:
+ * initial profile query has only data.count=12 and no
+ * top-level connection args; page 1 succeeds, page 2
+ * cannot be sent without first/before/last.
+ */
+const initialOnly = {
+    username:'sample.account',
+    data:{count:12,include_relationship_info:true},
+    __relay_internal__pv__PolarisSEOIsCrawlerrelayprovider:false,
+};
+const firstPage = helpers.profileCompletionVariables(initialOnly);
+assert.ok(!('first' in firstPage));
+assert.ok(!('after' in firstPage));
+const page2 = helpers.profileCompletionVariables(initialOnly,'opaque-page-2');
+assert.equal(page2.after,'opaque-page-2');
+assert.equal(page2.before,null);
+assert.equal(page2.first,12);
+assert.equal(page2.last,null);
+assert.equal(page2.data.count,12);
+assert.equal(page2.__relay_internal__pv__PolarisSEOIsCrawlerrelayprovider,false);
+assert.ok(!('after' in initialOnly));
+assert.equal(initialOnly.data.count,12);
+
+/* No native page size => no speculative pagination request. */
+assert.equal(
+    helpers.profileCompletionVariables(
+        {username:'sample.account'},'opaque-page-2'
+    ),
+    null
+);
+const implausible = helpers.profileCompletionVariables({
+    username:'sample.account',data:{count:10000}
+},'opaque-page-2');
+assert.equal(implausible,null);
+
 const docBad = {...entry,docId:'bad'};
 store.set('bad.account',docBad);
 assert.equal(helpers.profileNativeCompletionRequest('bad.account'),null);
@@ -111,6 +152,10 @@ const fetchSource = extract('fetchJson');
 assert.ok(
     fetchSource.includes('Array.isArray(data?.errors)'),
     'JSON GraphQL error responses must not be accepted as a blank grid'
+);
+assert.ok(
+    fetchSource.includes('missing_required_variable'),
+    'Safe GraphQL error category must be exposed without full server message'
 );
 assert.ok(
     fetchSource.includes('apiUnhealthyError('),

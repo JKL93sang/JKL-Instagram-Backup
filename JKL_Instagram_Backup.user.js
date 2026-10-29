@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.60
+// @version      1.5.61
 // @description  Instagram archive hardened: exhaustive accessible scan, immutable completeness guard, anti-loss local archive, feedback circuit breaker.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.60', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.61', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -4706,8 +4706,23 @@
                 // A 200 response containing GraphQL errors is
                 // NOT a valid empty page.
                 if (Array.isArray(data?.errors) && data.errors.length) {
+                    // Report only known error categories, never arbitrary
+                    // API messages, private IDs or debug links.
+                    const errorText = data.errors
+                        .map(error => String(error?.message || ''))
+                        .join(' ');
+                    const category =
+                        /missing_required_variable_value/i.test(errorText)
+                            ? 'missing_required_variable'
+                            : /(?:invalid|malformed|expired)[^\n]{0,40}cursor/i.test(errorText)
+                                ? 'invalid_cursor'
+                                : /(?:permission|not authorized|unauthorized)/i.test(errorText)
+                                    ? 'access_denied'
+                                    : 'other';
+
                     throw apiUnhealthyError(
-                        label + ': Instagram GraphQL rejected the request; scan stopped.'
+                        label + ': Instagram GraphQL rejected the request ' +
+                        '(category=' + category + '); scan stopped.'
                     );
                 }
 
@@ -7943,8 +7958,9 @@
             JSON.stringify(nativeVariables || {})
         );
 
-        // Reconstruct pagination from the observed variables.
-        // An arbitrary counter or DOM bottom is not an end proof.
+        // First page: retain the exact observed request variables.
+        // Only discard an inherited cursor from an earlier native
+        // request, to start an independent completion traversal.
         if ('after' in vars) vars.after = null;
         if ('before' in vars) vars.before = null;
         if (vars.data && typeof vars.data === 'object') {
@@ -7952,22 +7968,38 @@
             if ('before' in vars.data) vars.data.before = null;
         }
 
-        if (cursor) {
-            const nested =
-                vars.data &&
-                typeof vars.data === 'object' &&
-                'after' in vars.data &&
-                !('after' in vars);
+        if (!cursor) return vars;
 
-            if (nested) {
-                vars.data.after = cursor;
-            }
-            else {
-                vars.after = cursor;
-                if ('before' in vars) vars.before = null;
-                if ('last' in vars) vars.last = null;
-            }
-        }
+        // A *next-page* Relay query has a distinct connection
+        // argument contract. An initial grid request can omit
+        // first/before/last, while pagination requires them.
+        const nested = !!(
+            vars.data &&
+            typeof vars.data === 'object' &&
+            Object.prototype.hasOwnProperty.call(vars.data,'after') &&
+            !Object.prototype.hasOwnProperty.call(vars,'after')
+        );
+        const params = nested ? vars.data : vars;
+        const pageSize = Number(
+            params.first ||
+            vars.first ||
+            vars.data?.first ||
+            vars.data?.count ||
+            0
+        );
+
+        // Never guess a page size or invent continuation requests
+        // if the original native query did not advertise one.
+        if (
+            !Number.isSafeInteger(pageSize) ||
+            pageSize < 1 ||
+            pageSize > 100
+        ) return null;
+
+        params.after = cursor;
+        params.before = null;
+        params.first = pageSize;
+        params.last = null;
         return vars;
     }
 
@@ -8018,6 +8050,15 @@
             const vars = profileCompletionVariables(
                 native.variables, cursor
             );
+            if (!vars) {
+                endReason = 'pagination_arguments_unavailable';
+                log(
+                    'PROFILE native Relay pagination: no verified ' +
+                    'page size to continue; grid remains INCOMPLETE.',
+                    'warn'
+                );
+                break;
+            }
             let data;
             try {
                 data = await webRelayGql(
