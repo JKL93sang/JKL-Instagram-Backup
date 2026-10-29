@@ -2,36 +2,28 @@
 
 A Tampermonkey userscript for backing up Instagram media that is **already accessible to the signed-in browser session**.
 
-Current public version: **1.5.61** (on `main`).
+Current public version: **1.5.65** (stable, `main`).
 
-**Experimental PR #8 build: v1.5.64** — available on this branch only. The experimental build has **not** been validated against a live Instagram continuation. It can legitimately stop as `INCOMPLETE` rather than guess request parameters.
+## Install or update
 
-## Install PR #8 experimental build (one-time channel switch)
-
-Open the test userscript's Raw URL in the browser with Tampermonkey enabled, then **confirm the update of the existing JKL Instagram Backup**:
-
-https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/refactor/native-profile-contract-provenance/JKL_Instagram_Backup.user.js
-
-The test script retains the same `@name` and `@namespace` so Tampermonkey should treat it as the same script, not install a second one. Verify the installed version says **1.5.64** and both `@updateURL` and `@downloadURL` point to `refactor/native-profile-contract-provenance`.
-
-**New in v1.5.63:** when connected PROFILE native capture cannot prove completion, independent public evidence may be reconciled only for a verified public profile. This requires a truly ended, identity-matched public timeline, an exact profile counter match, all POST and REEL IDs recovered, a complete REELS scan, an empty completed CONNECTED hidden scan and complete OWNED hydration. No extra API requests are made. Any missing condition keeps PROFILE incomplete. Live browser confirmation remains necessary.
-
-**v1.5.64 update:** PROFILE can also be independently reconciled when the verified anonymous timeline contains fewer roots than the verified profile count, *only* if a separate target-scoped native continuation explicitly ended, the native/public root-ID union equals the authenticated profile counter, the sources overlap, and every ID is already verified in owned POST/REEL. The connected hidden, REELS and hydration guards remain mandatory. Neither the counter alone nor a native capture without an end marker is sufficient. No extra requests are made.
-
-**Important:** Existing stable installations pointing at `main` cannot discover this test build through an ordinary update check. You must open this branch's Raw URL **once** to switch the update channel. After that, automatic checks follow this test branch. When returning to stable, reinstall the `main` Raw userscript; the stable version may temporarily be numerically lower, so an automatic downgrade must not be assumed. Do not leave two copies enabled.
-
-Stop scanning if Instagram shows an account restriction or challenge. Do not run repeated large-account scans while the experimental behavior is unverified.
-
-
-## Install
-
-**Tampermonkey:** open the raw userscript and confirm installation:
+Open the official stable userscript URL with Tampermonkey enabled:
 
 https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
 
-The userscript contains its own `@updateURL` and `@downloadURL`, so Tampermonkey can check this repository for later versions automatically.
+Existing stable users can also use **Tampermonkey → Check for userscript updates**. Both `@updateURL` and `@downloadURL` point to this `main` version.
 
-> Existing installs that were previously copied manually from the private development repository must install **1.5.57 once** from the public Raw URL. After that, future version checks use this public repository.
+**If you installed the PR #8 experimental build (v1.5.62–1.5.64):** the stable script has a higher version number, and the test branch also exposes this release metadata. Open the official `main` Raw link once if Tampermonkey does not automatically switch channels. Confirm that exactly one enabled copy remains and that its version is 1.5.65.
+
+## Public PROFILE completeness
+
+The PROFILE native network hook can occasionally miss a first-page response. This release retains strict incomplete status unless one of two independent, identity-scoped evidence paths passes:
+
+- The anonymous PUBLIC SHADOW ends with explicit `page_info.has_next_page=false`; its unique POST/REEL IDs match the verified authenticated profile count and every ID is present in the owned sets; selected REELS, CONNECTED hidden and hydration are complete.
+- The PUBLIC SHADOW ends with fewer roots than the verified counter, but an independently captured native PROFILE continuation also ends. Their overlapping root-ID union must match the verified count exactly, with every ID validated as owned.
+
+These checks apply only to verified public profiles without exclusive content and with both POST and REEL scan selection, completed REELS and hydration, and a verified empty CONNECTED hidden scan. Other cases remain INCOMPLETE unless native PROFILE coverage is separately proven. No extra API calls are made to force either result.
+
+**Validation:** positive browser feedback was received on two distinct public profiles, including a successful download on a profile with 24 public roots and 25 verified owned POST roots; automated regression tests cover incomplete pagination, mismatched IDs, hidden content and other unsafe paths. This is not a guarantee of universal compatibility or access to private material. Stop scans if Instagram issues an account warning or rate-limit notice.
 
 ## Profile identity resilience (v1.5.60+)
 
