@@ -169,6 +169,11 @@
             postRoots: 0,
             extras: 0,
             pages: 0,
+            profileId: '',
+            pageInfoEnded: false,
+            rootIds: new Set(),
+            postIds: new Set(),
+            reelIds: new Set(),
         },
 
         hydration: {
@@ -961,6 +966,11 @@
         state.shadow.postRoots = 0;
         state.shadow.extras = 0;
         state.shadow.pages = 0;
+        state.shadow.profileId = '';
+        state.shadow.pageInfoEnded = false;
+        state.shadow.rootIds = new Set();
+        state.shadow.postIds = new Set();
+        state.shadow.reelIds = new Set();
 
         state.hidden.pages = 0;
         state.hidden.candidates = 0;
@@ -7063,6 +7073,11 @@
         state.shadow.postRoots = 0;
         state.shadow.extras = 0;
         state.shadow.pages = 0;
+        state.shadow.profileId = '';
+        state.shadow.pageInfoEnded = false;
+        state.shadow.rootIds = new Set();
+        state.shadow.postIds = new Set();
+        state.shadow.reelIds = new Set();
 
         if (state.profileInfo?.is_private === true) {
             state.shadow.applicable = false;
@@ -7348,6 +7363,10 @@
                 const p = String(root.product_type || '').toLowerCase();
                 return p !== 'clips' && p !== 'reels';
             });
+            const publicReels = allRoots.filter(root => {
+                const p = String(root.product_type || '').toLowerCase();
+                return p === 'clips' || p === 'reels';
+            });
 
             const before = ownedIds();
             const extras = publicPosts.filter(root => !before.has(root.pk));
@@ -7425,6 +7444,18 @@
             }
 
             state.coverage.publicShadow = ended && hydrated === extras.length;
+
+            // Preserve the identity-scoped set of ALL public grid
+            // roots, including clips that are not hydrated by the
+            // POST-only public shadow pass. It is only eligible as
+            // proof if the pagination explicitly ended.
+            if (state.coverage.publicShadow) {
+                state.shadow.profileId = String(state.userId || '');
+                state.shadow.pageInfoEnded = pageInfo?.has_next_page === false;
+                state.shadow.rootIds = new Set(roots.keys());
+                state.shadow.postIds = new Set(publicPosts.map(r => r.pk));
+                state.shadow.reelIds = new Set(publicReels.map(r => r.pk));
+            }
 
             updateStats();
 
@@ -10439,6 +10470,139 @@
         );
     }
 
+    function assessProfileGridCrossSurfaceProof(proof = {}) {
+        // Independent public timeline completion is admissible only
+        // after the authenticated connected-only surfaces have ALSO
+        // been checked. This is not a counter-only shortcut.
+        const fail = (reason, missing = 0) =>
+            ({verified:false, reason, missing});
+
+        if (!proof.selectedPost || !proof.selectedReel) {
+            return fail('post_and_reel_scans_required');
+        }
+        if (
+            !proof.publicProfile ||
+            !proof.exclusiveKnown ||
+            proof.hasExclusive ||
+            !proof.shadowApplicable
+        ) return fail('public_access_equivalence_unavailable');
+
+        if (
+            !proof.profileId ||
+            proof.profileId !== proof.shadowProfileId
+        ) return fail('profile_identity_unverified');
+
+        if (!proof.shadowComplete || !proof.shadowPageInfoEnd) {
+            return fail('public_timeline_end_unproven');
+        }
+
+        const expected = Number(proof.expected);
+        const publicRoots = proof.publicRootIds;
+        const publicPosts = proof.publicPostIds;
+        const publicReels = proof.publicReelIds;
+        if (
+            !Number.isSafeInteger(expected) ||
+            expected <= 0 ||
+            !(publicRoots instanceof Set) ||
+            !(publicPosts instanceof Set) ||
+            !(publicReels instanceof Set) ||
+            publicRoots.size !== expected ||
+            publicPosts.size + publicReels.size !== publicRoots.size
+        ) return fail('public_timeline_counter_or_partition_mismatch');
+
+        for (const id of publicPosts) {
+            if (!publicRoots.has(id) || publicReels.has(id)) {
+                return fail('public_root_partition_invalid');
+            }
+        }
+        for (const id of publicReels) {
+            if (!publicRoots.has(id) || publicPosts.has(id)) {
+                return fail('public_root_partition_invalid');
+            }
+        }
+
+        if (
+            !proof.reelsComplete ||
+            !proof.connectedHiddenComplete ||
+            !proof.ownedHydrationComplete ||
+            proof.hiddenCandidates !== 0 ||
+            proof.hiddenRecovered !== 0 ||
+            proof.hiddenPreviewOnly !== 0 ||
+            proof.hiddenFailed !== 0
+        ) return fail('connected_surfaces_not_equivalent');
+
+        if (
+            !(proof.ownedPostIds instanceof Set) ||
+            !(proof.ownedReelIds instanceof Set)
+        ) return fail('owned_root_sets_unavailable');
+
+        let missing = 0;
+        for (const id of publicPosts) {
+            if (!proof.ownedPostIds.has(id)) missing++;
+        }
+        for (const id of publicReels) {
+            if (!proof.ownedReelIds.has(id)) missing++;
+        }
+
+        if (missing) return fail('public_roots_not_reconciled',missing);
+        return {verified:true,reason:'public_connected_cross_surface_proof',missing:0};
+    }
+
+    function reconcileProfileGridCoverage() {
+        if (
+            state.coverage.profileGrid ||
+            !scanSelected('post')
+        ) return;
+
+        const result = assessProfileGridCrossSurfaceProof({
+            selectedPost: scanSelected('post'),
+            selectedReel: scanSelected('reel'),
+            publicProfile: state.profileInfo?.is_private === false,
+            exclusiveKnown: state.exclusive.known === true,
+            hasExclusive: state.exclusive.hasExclusiveFeedContent === true,
+            shadowApplicable: state.shadow.applicable === true,
+            profileId: String(state.userId || ''),
+            shadowProfileId: String(state.shadow.profileId || ''),
+            shadowComplete: state.coverage.publicShadow === true,
+            shadowPageInfoEnd: state.shadow.pageInfoEnded === true,
+            expected: state.expected,
+            publicRootIds: state.shadow.rootIds,
+            publicPostIds: state.shadow.postIds,
+            publicReelIds: state.shadow.reelIds,
+            reelsComplete: state.coverage.reels === true,
+            connectedHiddenComplete: state.coverage.connectedHidden === true,
+            ownedHydrationComplete: state.coverage.ownedHydration === true,
+            hiddenCandidates: state.hidden.candidates,
+            hiddenRecovered: state.hidden.recovered,
+            hiddenPreviewOnly: state.hidden.previewOnly,
+            hiddenFailed: state.hidden.failed,
+            ownedPostIds: state.roots.POST,
+            ownedReelIds: state.roots.REEL,
+        });
+
+        if (result.verified) {
+            state.coverage.profileGrid = true;
+            log(
+                'PROFILE grid independently reconciled: ' +
+                'anonymous public timeline has explicit page_info_end, ' +
+                'all ' + state.shadow.rootIds.size + ' public roots match ' +
+                'the verified owned POST/REEL sets, connected hidden is ' +
+                'empty, REELS and OWNED hydration ended. ' +
+                'Native PROFILE pagination remains unverified.',
+                'warn'
+            );
+        }
+        else {
+            log(
+                'PROFILE grid cross-surface proof unavailable: ' +
+                result.reason +
+                (result.missing ? ', missing=' + result.missing : '') +
+                '. Native PROFILE coverage stays INCOMPLETE.',
+                'warn'
+            );
+        }
+    }
+
     async function scanAll() {
         if (
             state.running ||
@@ -10660,6 +10824,11 @@
                 );
             }
 
+            // A missed authenticated PROFILE hook is not itself
+            // proof that the public, reels and hidden timelines are
+            // incomplete. Reconcile once all selected passes have
+            // completed, using strict cross-surface evidence.
+            reconcileProfileGridCoverage();
             updateStats();
 
             logScanProfilerSummary(
