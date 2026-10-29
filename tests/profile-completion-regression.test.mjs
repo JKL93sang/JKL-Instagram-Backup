@@ -404,25 +404,31 @@ assert.ok(
 );
 
 /*
- * Forced completion must use the known canonical PROFILE doc.
+ * Native-profile completion must replay a successful captured Relay
+ * contract, not a fixed doc_id and hand-built variable list.
  */
 const fallbackSource =
-    extractFunction(
-        'scanProfileGraphQLFallback'
-    );
+    extractFunction('scanProfileGraphQLFallback');
 
 assert.ok(
-    fallbackSource.includes(
-        'preferCanonicalDoc'
-    ),
-    'canonical doc preference missing'
+    fallbackSource.includes('profileNativeCompletionRequest'),
+    'native request template is not used for completion'
 );
-
 assert.ok(
-    fallbackSource.includes(
-        '? APP.PROFILE_FALLBACK_DOC'
-    ),
-    'forced PROFILE completion does not select canonical fallback doc'
+    fallbackSource.includes('webRelayGql('),
+    'legacy bare gql() call returned'
+);
+assert.ok(
+    fallbackSource.includes('nativeTemplate:native.template'),
+    'native Relay payload is not replayed'
+);
+assert.ok(
+    fallbackSource.includes("endReason:'native_contract_unavailable'"),
+    'no-contract state must remain incomplete'
+);
+assert.ok(
+    !fallbackSource.includes('APP.PROFILE_FALLBACK_DOC'),
+    'static legacy profile doc ID is still forced'
 );
 
 const metadataVersion =
