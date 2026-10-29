@@ -257,6 +257,7 @@
         gridQueryByUser: new Map(),
         gridNativeAuditByUser: new Map(),
         gridNativeContinuationByUser: new Map(),
+        gridNativeInitialByUser: new Map(),
 
         reelsByUserId: new Map(),
         reelPageInfo: new Map(),
@@ -3916,9 +3917,14 @@
                     net.gridQueryByUser.set(user,verifiedContract);
 
                     if (cursor) {
-                        // Keep a successful native continuation distinct
-                        // from any later initial-page reentry request.
+                        // Keep native continuation schema distinct
+                        // from the native first-page request schema.
                         net.gridNativeContinuationByUser.set(
+                            user,verifiedContract
+                        );
+                    }
+                    else {
+                        net.gridNativeInitialByUser.set(
                             user,verifiedContract
                         );
                     }
@@ -8017,75 +8023,70 @@
         return { attempted: true, captured: false, method: 'reentry-missed', roots: 0, pageInfo: null };
     }
     function profileNativeCompletionRequest(userKey) {
-        const native = net.gridNativeContinuationByUser.get(userKey);
+        const initial = net.gridNativeInitialByUser.get(userKey);
+        const continuation =
+            net.gridNativeContinuationByUser.get(userKey);
         const audit = net.gridNativeAuditByUser.get(userKey);
-        // A successful first-page request does not establish the
-        // shape of a forward-pagination query. The continuation
-        // contract must have succeeded natively at least once.
+
+        // A first-page request and a cursor request may be
+        // different persisted queries with different arguments.
+        // Both must have succeeded on this target natively.
+        function validNative(request) {
+            return !!(
+                request &&
+                GRID_NAMES.has(request.friendly) &&
+                /^\d+$/.test(request.docId) &&
+                request.variables &&
+                typeof request.variables === 'object' &&
+                request.template &&
+                requestTargetsCurrentProfile({
+                    variables:request.variables,
+                })
+            );
+        }
+
         if (
             !audit ||
+            audit.initial < 1 ||
             audit.continuation < 1 ||
-            !native ||
-            !GRID_NAMES.has(native.friendly) ||
-            !/^\d+$/.test(native.docId) ||
-            !native.variables ||
-            typeof native.variables !== 'object' ||
-            !native.template ||
-            !requestTargetsCurrentProfile({ variables:native.variables })
+            !validNative(initial) ||
+            !validNative(continuation) ||
+            !/^(?:root|nested)$/.test(audit.cursorLocation)
         ) return null;
-        return native;
+
+        return { initial, continuation };
     }
 
-    function profileCompletionVariables(nativeVariables, cursor = null) {
+    function profileCompletionVariables(nativeVariables,cursor=null) {
         const vars = JSON.parse(
             JSON.stringify(nativeVariables || {})
         );
 
-        // First page: retain the exact observed request variables.
-        // Only discard an inherited cursor from an earlier native
-        // request, to start an independent completion traversal.
-        if ('after' in vars) vars.after = null;
-        if ('before' in vars) vars.before = null;
-        if (vars.data && typeof vars.data === 'object') {
-            if ('after' in vars.data) vars.data.after = null;
-            if ('before' in vars.data) vars.data.before = null;
-        }
-
-        if (!cursor) return vars;
-
-        // A *next-page* Relay query has a distinct connection
-        // argument contract. An initial grid request can omit
-        // first/before/last, while pagination requires them.
+        const root =
+            Object.prototype.hasOwnProperty.call(vars,'after');
         const nested = !!(
             vars.data &&
             typeof vars.data === 'object' &&
-            Object.prototype.hasOwnProperty.call(vars.data,'after') &&
-            !Object.prototype.hasOwnProperty.call(vars,'after')
-        );
-        const root =
-            Object.prototype.hasOwnProperty.call(vars,'after');
-        if (!nested && !root) return null;
-        const params = nested ? vars.data : vars;
-        const pageSize = Number(
-            params.first ||
-            vars.first ||
-            vars.data?.first ||
-            vars.data?.count ||
-            0
+            Object.prototype.hasOwnProperty.call(vars.data,'after')
         );
 
-        // Never guess a page size or invent continuation requests
-        // if the original native query did not advertise one.
-        if (
-            !Number.isSafeInteger(pageSize) ||
-            pageSize < 1 ||
-            pageSize > 100
-        ) return null;
+        // The native initial page should contain no active
+        // continuation cursor. Do not manufacture a reset shape.
+        if (!cursor) {
+            if (
+                (root && vars.after) ||
+                (nested && vars.data.after)
+            ) return null;
+            return vars;
+        }
 
-        params.after = cursor;
-        params.before = null;
-        params.first = pageSize;
-        params.last = null;
+        // Change only the observed cursor, leaving first/count,
+        // before/last, Relay providers and every other variable
+        // exactly as the successful native continuation used them.
+        if (root === nested) return null;
+        if (root) vars.after = cursor;
+        else vars.data.after = cursor;
+
         return vars;
     }
 
@@ -8093,7 +8094,7 @@
         const startOwned = ownedCount();
         const reason = String(context.reason || 'completion');
         const userKey = state.username.toLowerCase();
-        const native = profileNativeCompletionRequest(userKey);
+        const contracts = profileNativeCompletionRequest(userKey);
         const observedDoc = String(
             net.gridDocByUser.get(userKey) || ''
         );
@@ -8105,7 +8106,7 @@
             ', last_has_next=' + (audit?.lastHasNext || 'unknown') + '.'
         );
 
-        if (!native) {
+        if (!contracts) {
             log(
                 'PROFILE completion: no verified native continuation ' +
                 'contract; grid remains INCOMPLETE.',
@@ -8117,15 +8118,14 @@
             };
         }
 
-        const docId = native.docId;
+        const docId = contracts.continuation.docId;
         log(
-            'PROFILE native Relay completion starting: ' +
+            'PROFILE verified native Relay completion starting: ' +
             'current=' + startOwned +
             ', reason=' + reason +
-            ', doc=' + docId +
-            ', native_doc=' + (observedDoc || '-') +
-            ', native_doc_differs=' +
-            (!!observedDoc && observedDoc !== docId) + '.',
+            ', initial_doc=' + contracts.initial.docId +
+            ', continuation_doc=' + docId +
+            ', native_doc=' + (observedDoc || '-') + '.',
             'warn'
         );
 
@@ -8140,8 +8140,11 @@
         for (let page = 1; page <= APP.PROFILE_MAX_SCROLLS; page++) {
             if (state.cancelled) throw new Error('Cancelled');
 
+            const contract = cursor
+                ? contracts.continuation
+                : contracts.initial;
             const vars = profileCompletionVariables(
-                native.variables, cursor
+                contract.variables,cursor
             );
             if (!vars) {
                 endReason = 'pagination_arguments_unavailable';
@@ -8155,11 +8158,11 @@
             let data;
             try {
                 data = await webRelayGql(
-                    docId, vars, native.friendly, {
-                        endpoint:native.endpoint,
-                        nativeTemplate:native.template,
+                    contract.docId,vars,contract.friendly,{
+                        endpoint:contract.endpoint,
+                        nativeTemplate:contract.template,
                         rootField:
-                            native.template.headers?.['x-root-field-name'] ||
+                            contract.template.headers?.['x-root-field-name'] ||
                             GRID_CONNECTION_KEY,
                     }
                 );
@@ -10554,6 +10557,9 @@
                 state.username.toLowerCase()
             );
             net.gridNativeContinuationByUser.delete(
+                state.username.toLowerCase()
+            );
+            net.gridNativeInitialByUser.delete(
                 state.username.toLowerCase()
             );
             net.reelsByUserId.set(
