@@ -3915,7 +3915,7 @@
                     };
                     net.gridQueryByUser.set(user,verifiedContract);
 
-                    if (observedCursor) {
+                    if (cursor) {
                         // Keep a successful native continuation distinct
                         // from any later initial-page reentry request.
                         net.gridNativeContinuationByUser.set(
