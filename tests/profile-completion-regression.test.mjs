@@ -423,7 +423,7 @@ assert.ok(
     'native Relay payload is not replayed'
 );
 assert.ok(
-    fallbackSource.includes("endReason:'native_contract_unavailable'"),
+    fallbackSource.includes("endReason:'native_continuation_unavailable'"),
     'no-contract state must remain incomplete'
 );
 assert.ok(
