@@ -1,4 +1,13 @@
 # Changelog
+## 1.5.63 — Experimental cross-surface PROFILE completion proof
+
+- Introduce independent identity-scoped PROFILE coverage for public profiles when Instagram's native PROFILE hook is unavailable.
+- Require a fully paginated PUBLIC SHADOW (has_next_page=false), exact profile root count, and verified membership of all public POST/REEL IDs.
+- Require non-private status, no exclusive feed, complete REELS, empty verified CONNECTED hidden, and complete OWNED hydration. Missing evidence remains INCOMPLETE.
+- Evaluate once after all selected scan phases, without any added API requests; preserve all safety stops and download guards.
+- Keep experimental branch auto-update channel and increment both version markers for Tampermonkey.
+- Add extensive positive/negative test fixtures. Real browser verification remains required.
+
 
 ## 1.5.62 — PR #8 experimental test-channel build
 
