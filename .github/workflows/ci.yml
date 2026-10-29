@@ -65,3 +65,6 @@ jobs:
 
       - name: Native Relay profile pagination regression tests
         run: node tests/native-profile-relay-regression.test.mjs
+
+      - name: Native capture provenance, privacy and transport isolation tests
+        run: node tests/native-capture-provenance-regression.test.mjs
