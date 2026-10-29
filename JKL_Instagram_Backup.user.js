@@ -254,6 +254,7 @@
         gridByUser: new Map(),
         gridPageInfo: new Map(),
         gridDocByUser: new Map(),
+        gridQueryByUser: new Map(),
 
         reelsByUserId: new Map(),
         reelPageInfo: new Map(),
@@ -3866,6 +3867,29 @@
                 user,
                 String(meta.docId)
             );
+            // Store the exact contract of a successful native
+            // request targeted to this profile.
+            if (
+                meta.variables &&
+                typeof meta.variables === 'object' &&
+                GRID_NAMES.has(String(meta.friendly || ''))
+            ) {
+                try {
+                    net.gridQueryByUser.set(user, {
+                        docId:String(meta.docId),
+                        friendly:String(meta.friendly),
+                        endpoint:meta.endpoint === 'api' ? 'api' : 'query',
+                        variables:JSON.parse(JSON.stringify(meta.variables)),
+                        template:{
+                            body:JSON.parse(JSON.stringify(meta.bodyFields || {})),
+                            headers:JSON.parse(JSON.stringify(meta.relayHeaders || {})),
+                        },
+                    });
+                }
+                catch {
+                    net.gridQueryByUser.delete(user);
+                }
+            }
         }
     }
 
@@ -4679,6 +4703,14 @@
                     throw e;
                 }
 
+                // A 200 response containing GraphQL errors is
+                // NOT a valid empty page.
+                if (Array.isArray(data?.errors) && data.errors.length) {
+                    throw apiUnhealthyError(
+                        label + ': Instagram GraphQL rejected the request; scan stopped.'
+                    );
+                }
+
                 if (
                     data?.status ===
                     'fail'
@@ -4803,6 +4835,7 @@
                 : 'query';
 
         const template =
+            options.nativeTemplate ||
             net.relayTemplates[
                 endpointKey
             ];
@@ -7891,37 +7924,87 @@
 
         return { attempted: true, captured: false, method: 'reentry-missed', roots: 0, pageInfo: null };
     }
+    function profileNativeCompletionRequest(userKey) {
+        const native = net.gridQueryByUser.get(userKey);
+        if (
+            !native ||
+            !GRID_NAMES.has(native.friendly) ||
+            !/^\d+$/.test(native.docId) ||
+            !native.variables ||
+            typeof native.variables !== 'object' ||
+            !native.template ||
+            !requestTargetsCurrentProfile({ variables:native.variables })
+        ) return null;
+        return native;
+    }
+
+    function profileCompletionVariables(nativeVariables, cursor = null) {
+        const vars = JSON.parse(
+            JSON.stringify(nativeVariables || {})
+        );
+
+        // Reconstruct pagination from the observed variables.
+        // An arbitrary counter or DOM bottom is not an end proof.
+        if ('after' in vars) vars.after = null;
+        if ('before' in vars) vars.before = null;
+        if (vars.data && typeof vars.data === 'object') {
+            if ('after' in vars.data) vars.data.after = null;
+            if ('before' in vars.data) vars.data.before = null;
+        }
+
+        if (cursor) {
+            const nested =
+                vars.data &&
+                typeof vars.data === 'object' &&
+                'after' in vars.data &&
+                !('after' in vars);
+
+            if (nested) {
+                vars.data.after = cursor;
+            }
+            else {
+                vars.after = cursor;
+                if ('before' in vars) vars.before = null;
+                if ('last' in vars) vars.last = null;
+            }
+        }
+        return vars;
+    }
+
     async function scanProfileGraphQLFallback(context = {}) {
         const startOwned = ownedCount();
         const reason = String(context.reason || 'completion');
         const userKey = state.username.toLowerCase();
-        const preferCanonicalDoc =
-            context.preferCanonicalDoc ===
-            true;
-
-        let docId =
-            preferCanonicalDoc
-                ? APP.PROFILE_FALLBACK_DOC
-                : (
-                    net.gridDocByUser.get(
-                        userKey
-                    ) ||
-                    APP.PROFILE_FALLBACK_DOC
-                );
-
+        const native = profileNativeCompletionRequest(userKey);
         const observedDoc = String(
             net.gridDocByUser.get(userKey) || ''
         );
 
+        if (!native) {
+            log(
+                'PROFILE completion: no verified native Relay ' +
+                'contract; grid remains INCOMPLETE.',
+                'warn'
+            );
+            return {
+                ended:false, pages:0, edges:0, recovered:0,
+                endReason:'native_contract_unavailable', docId:'',
+            };
+        }
+
+        const docId = native.docId;
         log(
-            `PROFILE GraphQL completion starting: ` +
-            `current=${startOwned}, reason=${reason}, doc=${docId}, ` +
-            `native_doc=${observedDoc || '-'}, ` +
-            `native_doc_differs=${!!observedDoc && observedDoc !== docId}.`,
+            'PROFILE native Relay completion starting: ' +
+            'current=' + startOwned +
+            ', reason=' + reason +
+            ', doc=' + docId +
+            ', native_doc=' + (observedDoc || '-') +
+            ', native_doc_differs=' +
+            (!!observedDoc && observedDoc !== docId) + '.',
             'warn'
         );
 
-        let afterCursor = null;
+        let cursor = null;
         let gotResponse = false;
         let ended = false;
         let endReason = 'max_pages';
@@ -7930,113 +8013,64 @@
         const seenCursors = new Set();
 
         for (let page = 1; page <= APP.PROFILE_MAX_SCROLLS; page++) {
-            if (state.cancelled) {
-                throw new Error('Cancelled');
-            }
+            if (state.cancelled) throw new Error('Cancelled');
 
-            const vars = {
-                username: state.username,
-                __relay_internal__pv__PolarisIsLoggedInrelayprovider: true,
-                __relay_internal__pv__PolarisFeedShareMenurelayprovider: true,
-                data: {
-                    count: 12,
-                    include_relationship_info: true,
-                    latest_besties_reel_media: true,
-                    latest_reel_media: true,
-                },
-            };
-
-            if (afterCursor) {
-                vars.after = afterCursor;
-                vars.before = null;
-                vars.first = 12;
-                vars.last = null;
-            }
-
-            let d;
+            const vars = profileCompletionVariables(
+                native.variables, cursor
+            );
+            let data;
             try {
-                d = await gql(
-                    docId,
-                    vars,
-                    'PolarisProfilePostsTabContentQuery_connection'
+                data = await webRelayGql(
+                    docId, vars, native.friendly, {
+                        endpoint:native.endpoint,
+                        nativeTemplate:native.template,
+                        rootField:
+                            native.template.headers?.['x-root-field-name'] ||
+                            GRID_CONNECTION_KEY,
+                    }
                 );
                 gotResponse = true;
             }
-            catch (e) {
-                throwIfInstagramStop(e, 'PROFILE GraphQL completion');
-
-                if (
-                    page === 1 &&
-                    docId !== APP.PROFILE_FALLBACK_DOC
-                ) {
-                    log(
-                        `PROFILE native doc ${docId} failed with ${e.message}; ` +
-                        `retrying fallback doc ${APP.PROFILE_FALLBACK_DOC}.`,
-                        'warn'
-                    );
-
-                    docId = APP.PROFILE_FALLBACK_DOC;
-                    gotResponse = false;
-                    afterCursor = null;
-                    seenCursors.clear();
-                    endReason = 'max_pages';
-                    page = 0;
-                    continue;
-                }
-
-                endReason = `graphql_error:${e.message}`;
+            catch (error) {
+                throwIfInstagramStop(error, 'PROFILE native Relay completion');
+                endReason = 'graphql_error';
                 log(
-                    `PROFILE GraphQL completion failed on page ${page}: ${e.message}`,
+                    'PROFILE completion request unavailable on page ' +
+                    page + '; grid remains INCOMPLETE.',
                     'warn'
                 );
                 break;
             }
 
-            const c = gridConn(d);
+            const c = gridConn(data);
             if (!c) {
-                if (
-                    page === 1 &&
-                    docId !== APP.PROFILE_FALLBACK_DOC
-                ) {
-                    log(
-                        `PROFILE native doc ${docId} returned no timeline connection; ` +
-                        `retrying fallback doc ${APP.PROFILE_FALLBACK_DOC}.`,
-                        'warn'
-                    );
-
-                    docId = APP.PROFILE_FALLBACK_DOC;
-                    gotResponse = false;
-                    afterCursor = null;
-                    seenCursors.clear();
-                    endReason = 'max_pages';
-                    page = 0;
-                    continue;
-                }
-
                 endReason = 'connection_missing';
                 log(
-                    `PROFILE GraphQL completion page ${page}: timeline connection missing.`,
+                    'PROFILE completion response lacks the timeline ' +
+                    'connection; grid remains INCOMPLETE.',
                     'warn'
                 );
                 break;
             }
 
-            const edges = c?.edges || [];
+            const edges = c.edges || [];
             pages++;
             totalEdges += edges.length;
-            const beforePage = ownedCount();
+            const before = ownedCount();
 
-            for (const e of edges) {
-                addMedia(edgeNode(e), '', 'PROFILE_FALLBACK');
+            for (const edge of edges) {
+                addMedia(edgeNode(edge), '', 'PROFILE_FALLBACK');
             }
 
-            const afterPage = ownedCount();
+            const added = Math.max(0, ownedCount() - before);
             updateStats();
-
             log(
-                `PROFILE GraphQL page ${page}: ` +
-                `edges=${edges.length}, new=${Math.max(0, afterPage - beforePage)}, ` +
-                `OWNED=${afterPage}, has_next=${c?.page_info?.has_next_page ?? 'unknown'}.`
+                'PROFILE native Relay page ' + page +
+                ': edges=' + edges.length +
+                ', new=' + added +
+                ', OWNED=' + ownedCount() +
+                ', has_next=' +
+                (c?.page_info?.has_next_page ?? 'unknown') + '.'
             );
 
             if (c?.page_info?.has_next_page === false) {
@@ -8056,34 +8090,27 @@
             }
             if (seenCursors.has(next)) {
                 endReason = 'repeated_cursor';
-                log(
-                    `PROFILE GraphQL completion cursor repeated on page ${page}; stopping.`,
-                    'warn'
-                );
                 break;
             }
 
             seenCursors.add(next);
-            afterCursor = next;
+            cursor = next;
             await sleep(rand(APP.PAGE_MIN, APP.PAGE_MAX));
         }
 
-        const finalOwned = ownedCount();
-        const recovered = Math.max(0, finalOwned - startOwned);
-
+        const recovered = Math.max(0, ownedCount() - startOwned);
         log(
-            `PROFILE GraphQL completion complete: ` +
-            `pages=${pages}, edges=${totalEdges}, recovered=${recovered}, ` +
-            `OWNED=${finalOwned}, end=${endReason}, ended=${gotResponse && ended}.`
+            'PROFILE native Relay completion: ' +
+            'pages=' + pages + ', edges=' + totalEdges +
+            ', recovered=' + recovered +
+            ', OWNED=' + ownedCount() +
+            ', end=' + endReason +
+            ', ended=' + (gotResponse && ended) + '.'
         );
 
         return {
-            ended: gotResponse && ended,
-            pages,
-            edges: totalEdges,
-            recovered,
-            endReason,
-            docId,
+            ended:gotResponse && ended,
+            pages, edges:totalEdges, recovered, endReason, docId,
         };
     }
     async function scanMainGrid() {
@@ -10384,6 +10411,9 @@
                 state.username.toLowerCase()
             );
             net.gridDocByUser.delete(
+                state.username.toLowerCase()
+            );
+            net.gridQueryByUser.delete(
                 state.username.toLowerCase()
             );
             net.reelsByUserId.set(
