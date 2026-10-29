@@ -25,6 +25,7 @@ const net = {
     gridQueryByUser:new Map(),
     gridNativeAuditByUser:new Map(),
     gridNativeContinuationByUser:new Map(),
+    gridNativeInitialByUser:new Map(),
 };
 const friendly = 'PolarisProfilePostsTabContentQuery_connection';
 const makeConnection = (hasNext, mediaId='123') => ({
@@ -54,6 +55,8 @@ const nativeMeta = {
 capture({data:{profile_connection:makeConnection(true)}}, nativeMeta);
 assert.equal(net.gridNativeAuditByUser.get('sample.account').initial,1);
 assert.equal(net.gridNativeAuditByUser.get('sample.account').continuation,0);
+assert.equal(net.gridNativeInitialByUser.size,1);
+assert.equal(net.gridNativeInitialByUser.get('sample.account').docId,'123456');
 assert.equal(net.gridNativeContinuationByUser.size,0,
     'An initial native page is not proof of continuation format'
 );
@@ -63,6 +66,7 @@ const continuation = {
 };
 capture({data:{profile_connection:makeConnection(false,'456')}},continuation);
 assert.equal(net.gridNativeAuditByUser.get('sample.account').continuation,1);
+assert.equal(net.gridNativeInitialByUser.get('sample.account').variables.after,undefined);
 assert.equal(
     net.gridNativeContinuationByUser.get('sample.account').variables.after,
     'opaque-cursor'
