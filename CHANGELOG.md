@@ -1,4 +1,12 @@
 # Changelog
+## 1.5.64 — Experimental PROFILE public/native union proof
+
+- Reconcile profiles where PUBLIC SHADOW ends with fewer roots than the verified authenticated profile counter, but a target-matched native PROFILE continuation separately ends and adds the missing root IDs.
+- Require exact numeric-ID union equal to the authenticated profile count, at least one ID shared by both independent sources, native continuation with explicit final `page_info.has_next_page=false`, all native and public IDs verified owned, REELS complete, CONNECTED hidden empty, and hydration complete.
+- For example, 24 public roots plus 13 native roots, 12 overlapping, yields 25 independently verified roots. If any condition fails, PROFILE stays INCOMPLETE.
+- No request retries or additional API traffic; retains the previous exact-public matching path unchanged.
+- Add simulated positive and negative cases for both complete-public and union paths. This remains a test-channel build pending live confirmation.
+
 ## 1.5.63 — Experimental cross-surface PROFILE completion proof
 
 - Introduce independent identity-scoped PROFILE coverage for public profiles when Instagram's native PROFILE hook is unavailable.
