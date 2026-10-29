@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.62
+// @version      1.5.63
 // @description  TEST BUILD PR #8 - native PROFILE discovery refactor; browser validation required before public release.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.62', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.63', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
