@@ -256,6 +256,7 @@
         gridDocByUser: new Map(),
         gridQueryByUser: new Map(),
         gridNativeAuditByUser: new Map(),
+        gridNativeContinuationByUser: new Map(),
 
         reelsByUserId: new Map(),
         reelPageInfo: new Map(),
@@ -3902,7 +3903,7 @@
                 GRID_NAMES.has(String(meta.friendly || ''))
             ) {
                 try {
-                    net.gridQueryByUser.set(user, {
+                    const verifiedContract = {
                         docId:String(meta.docId),
                         friendly:String(meta.friendly),
                         endpoint:meta.endpoint === 'api' ? 'api' : 'query',
@@ -3911,7 +3912,16 @@
                             body:JSON.parse(JSON.stringify(meta.bodyFields || {})),
                             headers:JSON.parse(JSON.stringify(meta.relayHeaders || {})),
                         },
-                    });
+                    };
+                    net.gridQueryByUser.set(user,verifiedContract);
+
+                    if (observedCursor) {
+                        // Keep a successful native continuation distinct
+                        // from any later initial-page reentry request.
+                        net.gridNativeContinuationByUser.set(
+                            user,verifiedContract
+                        );
+                    }
                 }
                 catch {
                     net.gridQueryByUser.delete(user);
@@ -8007,7 +8017,7 @@
         return { attempted: true, captured: false, method: 'reentry-missed', roots: 0, pageInfo: null };
     }
     function profileNativeCompletionRequest(userKey) {
-        const native = net.gridQueryByUser.get(userKey);
+        const native = net.gridNativeContinuationByUser.get(userKey);
         const audit = net.gridNativeAuditByUser.get(userKey);
         // A successful first-page request does not establish the
         // shape of a forward-pagination query. The continuation
@@ -10541,6 +10551,9 @@
                 state.username.toLowerCase()
             );
             net.gridNativeAuditByUser.delete(
+                state.username.toLowerCase()
+            );
+            net.gridNativeContinuationByUser.delete(
                 state.username.toLowerCase()
             );
             net.reelsByUserId.set(
