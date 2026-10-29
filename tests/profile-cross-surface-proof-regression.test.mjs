@@ -61,7 +61,7 @@ reject(p=>{p.shadowPageInfoEnd=false},'public_timeline_end_unproven');
 reject(p=>{p.expected=23},'public_timeline_counter_or_partition_mismatch');
 reject(p=>{p.expected=0},'public_timeline_counter_or_partition_mismatch');
 reject(p=>{p.publicReelIds=new Set()},'public_timeline_counter_or_partition_mismatch');
-reject(p=>{p.publicReelIds=new Set(['100']);p.publicPostIds.delete('100')},
+reject(p=>{p.publicReelIds=new Set(['100'])},
     'public_root_partition_invalid');
 reject(p=>{p.reelsComplete=false},'connected_surfaces_not_equivalent');
 reject(p=>{p.connectedHiddenComplete=false},'connected_surfaces_not_equivalent');
