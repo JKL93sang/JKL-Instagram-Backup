@@ -78,7 +78,7 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.63');
+assert.equal(metadataVersion, '1.5.64');
 assert.equal(metadataVersion, appVersion);
 assert.notEqual(meta('updateURL'), publicRaw,
     'Experimental version must never silently switch back to main');
