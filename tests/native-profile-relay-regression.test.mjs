@@ -24,6 +24,7 @@ const relaySource = extract('webRelayGql');
 assert.ok(captureSource.includes('requestTargetsCurrentProfile'));
 assert.ok(captureSource.includes('net.gridQueryByUser.set'));
 assert.ok(captureSource.includes('net.gridNativeContinuationByUser.set'));
+assert.ok(captureSource.includes('net.gridNativeInitialByUser.set'));
 assert.ok(captureSource.includes('net.gridNativeAuditByUser.set'));
 assert.ok(captureSource.includes("meta.endpoint === 'api'"));
 assert.ok(captureSource.includes('meta.bodyFields'));
@@ -37,11 +38,15 @@ assert.ok(!fallbackSource.includes('await gql('));
 assert.ok(fallbackSource.includes('page_info?.has_next_page === false'));
 assert.ok(fallbackSource.includes('native_continuation_unavailable'));
 assert.ok(fallbackSource.includes('native.template'));
-assert.ok(fallbackSource.includes('native.variables'));
+assert.ok(fallbackSource.includes('contracts.initial'));
+assert.ok(fallbackSource.includes('contracts.continuation'));
+assert.ok(fallbackSource.includes('contract.variables'));
+assert.ok(fallbackSource.includes('contract.docId'));
 
 const store = new Map();
 const net = {
     gridQueryByUser:new Map(),
+    gridNativeInitialByUser:new Map(),
     gridNativeContinuationByUser:store,
     gridNativeAuditByUser:new Map(),
 };
@@ -59,111 +64,115 @@ assert.equal(
 );
 
 const entry = {
-    docId:'1234567890',
+    docId:'2222222222',
     friendly:'PolarisProfilePostsTabContentQuery_connection',
     endpoint:'api',
     variables:{
         username:'sample.account',
         __relay_internal__pv__PolarisSEOIsCrawlerrelayprovider:false,
         __relay_internal__pv__PolarisIsLoggedInrelayprovider:true,
-        data:{count:12,include_relationship_info:true},
-        after:'old-cursor',first:12,
+        data:{count:12,include_relationship_info:true}
     },
     template:{
-        body:{fb_dtsg:'sensitive-not-for-logs',doc_id:'1234567890'},
-        headers:{'x-fb-friendly-name':'PolarisProfilePostsTabContentQuery_connection'},
-    },
+        body:{fb_dtsg:'PRIVATE-DO-NOT-LOG',doc_id:'2222222222'},
+        headers:{'x-fb-friendly-name':'PolarisProfilePostsTabContentQuery_connection'}
+    }
 };
-store.set('sample.account',entry);
+const continuation = {
+    ...entry,
+    docId:'3333333333',
+    variables:{
+        ...entry.variables,
+        after:'old-cursor',
+        first:12,
+        before:null,
+        last:null,
+        different_provider:'only-on-continuation'
+    }
+};
+
+net.gridNativeInitialByUser.set('sample.account',entry);
+store.set('sample.account',continuation);
 assert.equal(
-    helpers.profileNativeCompletionRequest('sample.account'),
-    null,
-    'continuation contract without native response is untrusted'
+    helpers.profileNativeCompletionRequest('sample.account'),null,
+    'initial and continuation templates alone are insufficient evidence'
 );
+
 net.gridNativeAuditByUser.set('sample.account',{
     initial:1,continuation:1,cursorLocation:'root'
 });
+const contracts = helpers.profileNativeCompletionRequest('sample.account');
+assert.equal(contracts.initial,entry);
+assert.equal(contracts.continuation,continuation);
+
+const firstPage = helpers.profileCompletionVariables(entry.variables);
+assert.deepEqual(firstPage,entry.variables);
+assert.notEqual(firstPage,entry.variables,'variables must be cloned');
 assert.equal(
-    helpers.profileNativeCompletionRequest('sample.account'),
-    entry
+    helpers.profileCompletionVariables(continuation.variables),
+    null,
+    'initial request must not replay a native continuation cursor'
 );
-const initial = helpers.profileCompletionVariables(entry.variables);
-assert.equal(initial.after,null);
-assert.equal(initial.first,12);
-assert.equal(
-    initial.__relay_internal__pv__PolarisSEOIsCrawlerrelayprovider,
-    false,
-    'the browser-observed relay provider must be preserved'
+
+const next = helpers.profileCompletionVariables(
+    continuation.variables,'cursor-2'
 );
-assert.equal(initial.data.count,12);
-const next = helpers.profileCompletionVariables(entry.variables,'cursor-2');
 assert.equal(next.after,'cursor-2');
 assert.equal(next.first,12);
 assert.equal(next.before,null);
 assert.equal(next.last,null);
-assert.equal(entry.variables.after,'old-cursor','source must not mutate');
-
-store.set('other.account',{
-    ...entry,
-    variables:{...entry.variables,username:'other.account'},
-});
-net.gridNativeAuditByUser.set('other.account',{
-    initial:1,continuation:1,cursorLocation:'root'
-});
-assert.equal(
-    helpers.profileNativeCompletionRequest('other.account'),
-    null,
-    'a query unrelated to the active target must not be replayed'
-);
+assert.equal(next.different_provider,'only-on-continuation');
+assert.equal(next.__relay_internal__pv__PolarisSEOIsCrawlerrelayprovider,false);
+assert.equal(continuation.variables.after,'old-cursor');
 
 const nested = helpers.profileCompletionVariables({
     username:'sample.account',
-    data:{after:'old',count:12},
+    data:{after:'old',count:12,first:12,other:'preserved'},
 },'new-cursor');
 assert.equal(nested.data.after,'new-cursor');
 assert.equal(nested.data.first,12);
-assert.equal(nested.data.before,null);
-assert.equal(nested.data.last,null);
+assert.equal(nested.data.other,'preserved');
 assert.ok(!('after' in nested));
 
-/* This is the actual failure pattern in v1.5.60:
- * initial profile query has only data.count=12 and no
- * top-level connection args; page 1 succeeds, page 2
- * cannot be sent without first/before/last.
- */
 const initialOnly = {
-    username:'sample.account',
-    data:{count:12,include_relationship_info:true},
+    username:'sample.account',data:{count:12},
     __relay_internal__pv__PolarisSEOIsCrawlerrelayprovider:false,
 };
-const firstPage = helpers.profileCompletionVariables(initialOnly);
-assert.ok(!('first' in firstPage));
-assert.ok(!('after' in firstPage));
-const page2 = helpers.profileCompletionVariables(initialOnly,'opaque-page-2');
-assert.equal(page2,null,
-    'never invent a cursor field absent from native variables'
+assert.deepEqual(
+    helpers.profileCompletionVariables(initialOnly),initialOnly
 );
-assert.ok(!('after' in initialOnly));
-assert.equal(initialOnly.data.count,12);
-
-/* No native page size => no speculative pagination request. */
 assert.equal(
-    helpers.profileCompletionVariables(
-        {username:'sample.account'},'opaque-page-2'
-    ),
-    null
+    helpers.profileCompletionVariables(initialOnly,'cursor'),
+    null,
+    'never introduce an unobserved after variable'
 );
-const implausible = helpers.profileCompletionVariables({
-    username:'sample.account',data:{count:10000}
-},'opaque-page-2');
-assert.equal(implausible,null);
+assert.equal(
+    helpers.profileCompletionVariables({
+        username:'sample.account',
+        after:null,data:{after:null,count:12}
+    },'cursor'),
+    null,
+    'ambiguous cursor location is never guessed'
+);
 
-const docBad = {...entry,docId:'bad'};
-store.set('bad.account',docBad);
-net.gridNativeAuditByUser.set('bad.account',{
-    initial:1,continuation:1,cursorLocation:'root'
+net.gridNativeInitialByUser.delete('sample.account');
+assert.equal(
+    helpers.profileNativeCompletionRequest('sample.account'),
+    null,
+    'missing initial template must keep scan incomplete'
+);
+net.gridNativeInitialByUser.set('sample.account',entry);
+store.set('sample.account',{
+    ...continuation,variables:{...continuation.variables,username:'other.account'}
 });
-assert.equal(helpers.profileNativeCompletionRequest('bad.account'),null);
+assert.equal(
+    helpers.profileNativeCompletionRequest('sample.account'),
+    null,
+    'cross-profile continuation must never be accepted'
+);
+store.set('sample.account',continuation);
+net.gridNativeInitialByUser.set('sample.account',{...entry,docId:'bad'});
+assert.equal(helpers.profileNativeCompletionRequest('sample.account'),null);
 
 const fetchSource = extract('fetchJson');
 assert.ok(
@@ -186,6 +195,7 @@ assert.ok(
 assert.ok(
     source.includes('net.gridQueryByUser.delete(') &&
     source.includes('net.gridNativeContinuationByUser.delete(') &&
+    source.includes('net.gridNativeInitialByUser.delete(') &&
     source.includes('net.gridNativeAuditByUser.delete('),
     'native request state must be cleared at the start of each scan'
 );
