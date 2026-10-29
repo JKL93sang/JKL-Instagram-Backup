@@ -4,7 +4,7 @@ A Tampermonkey userscript for backing up Instagram media that is **already acces
 
 Current public version: **1.5.61** (on `main`).
 
-**Experimental PR #8 build: v1.5.63** — available on this branch only. The experimental build has **not** been validated against a live Instagram continuation. It can legitimately stop as `INCOMPLETE` rather than guess request parameters.
+**Experimental PR #8 build: v1.5.64** — available on this branch only. The experimental build has **not** been validated against a live Instagram continuation. It can legitimately stop as `INCOMPLETE` rather than guess request parameters.
 
 ## Install PR #8 experimental build (one-time channel switch)
 
@@ -12,9 +12,11 @@ Open the test userscript's Raw URL in the browser with Tampermonkey enabled, the
 
 https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/refactor/native-profile-contract-provenance/JKL_Instagram_Backup.user.js
 
-The test script retains the same `@name` and `@namespace` so Tampermonkey should treat it as the same script, not install a second one. Verify the installed version says **1.5.63** and both `@updateURL` and `@downloadURL` point to `refactor/native-profile-contract-provenance`.
+The test script retains the same `@name` and `@namespace` so Tampermonkey should treat it as the same script, not install a second one. Verify the installed version says **1.5.64** and both `@updateURL` and `@downloadURL` point to `refactor/native-profile-contract-provenance`.
 
 **New in v1.5.63:** when connected PROFILE native capture cannot prove completion, independent public evidence may be reconciled only for a verified public profile. This requires a truly ended, identity-matched public timeline, an exact profile counter match, all POST and REEL IDs recovered, a complete REELS scan, an empty completed CONNECTED hidden scan and complete OWNED hydration. No extra API requests are made. Any missing condition keeps PROFILE incomplete. Live browser confirmation remains necessary.
+
+**v1.5.64 update:** PROFILE can also be independently reconciled when the verified anonymous timeline contains fewer roots than the verified profile count, *only* if a separate target-scoped native continuation explicitly ended, the native/public root-ID union equals the authenticated profile counter, the sources overlap, and every ID is already verified in owned POST/REEL. The connected hidden, REELS and hydration guards remain mandatory. Neither the counter alone nor a native capture without an end marker is sufficient. No extra requests are made.
 
 **Important:** Existing stable installations pointing at `main` cannot discover this test build through an ordinary update check. You must open this branch's Raw URL **once** to switch the update channel. After that, automatic checks follow this test branch. When returning to stable, reinstall the `main` Raw userscript; the stable version may temporarily be numerically lower, so an automatic downgrade must not be assumed. Do not leave two copies enabled.
 
