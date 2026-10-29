@@ -76,8 +76,9 @@ assert.ok(
     'Captured native GraphQL doc ID must be logged safely'
 );
 assert.ok(
-    fallback.includes('preferCanonicalDoc'),
-    'Do not change canonical pagination proof policy in a diagnostic patch'
+    fallback.includes('profileNativeCompletionRequest') &&
+    fallback.includes('page_info?.has_next_page === false'),
+    'The native contract must be required and completion must keep the explicit end proof'
 );
 
 console.log('Safe GraphQL response diagnostics regression tests passed.');
