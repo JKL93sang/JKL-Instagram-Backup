@@ -10471,11 +10471,11 @@
     }
 
     function assessProfileGridCrossSurfaceProof(proof = {}) {
-        // Independent public timeline completion is admissible only
-        // after the authenticated connected-only surfaces have ALSO
-        // been checked. This is not a counter-only shortcut.
-        const fail = (reason, missing = 0) =>
-            ({verified:false, reason, missing});
+        // Do not infer PROFILE completeness from the counter alone:
+        // every candidate source must be identity scoped and have
+        // independent server-reported end-of-pagination evidence.
+        const fail = (reason,missing=0) =>
+            ({verified:false,reason,missing});
 
         if (!proof.selectedPost || !proof.selectedReel) {
             return fail('post_and_reel_scans_required');
@@ -10503,10 +10503,11 @@
         if (
             !Number.isSafeInteger(expected) ||
             expected <= 0 ||
+            proof.counterVerified !== true ||
             !(publicRoots instanceof Set) ||
             !(publicPosts instanceof Set) ||
             !(publicReels instanceof Set) ||
-            publicRoots.size !== expected ||
+            publicRoots.size > expected ||
             publicPosts.size + publicReels.size !== publicRoots.size
         ) return fail('public_timeline_counter_or_partition_mismatch');
 
@@ -10543,9 +10544,73 @@
         for (const id of publicReels) {
             if (!proof.ownedReelIds.has(id)) missing++;
         }
-
         if (missing) return fail('public_roots_not_reconciled',missing);
-        return {verified:true,reason:'public_connected_cross_surface_proof',missing:0};
+
+        // The anonymous timeline occasionally omits a valid root that
+        // was observed in a target-scoped authenticated native response.
+        // Accept an aggregate end proof only if BOTH sources ended:
+        // the public timeline and a real native continuation. A
+        // mid-scroll native response with no end marker is insufficient.
+        if (publicRoots.size < expected) {
+            const native = proof.nativeRootIds;
+            if (
+                proof.nativeContinuationPages < 1 ||
+                !proof.nativePageInfoEnd ||
+                !proof.nativeLastHasNextFalse ||
+                !(native instanceof Set) ||
+                native.size === 0
+            ) return fail('authenticated_native_end_unproven');
+
+            const allRoots = new Set(publicRoots);
+            let overlap = 0;
+            let nativeUnowned = 0;
+            for (const id of native) {
+                if (
+                    typeof id !== 'string' ||
+                    !/^\d+$/.test(id)
+                ) return fail('authenticated_native_identity_invalid');
+
+                if (publicRoots.has(id)) overlap++;
+                allRoots.add(id);
+                if (
+                    !proof.ownedPostIds.has(id) &&
+                    !proof.ownedReelIds.has(id)
+                ) nativeUnowned++;
+            }
+
+            if (nativeUnowned) {
+                return fail('authenticated_native_roots_not_reconciled',nativeUnowned);
+            }
+            if (overlap < 1) {
+                return fail('public_native_overlap_unproven');
+            }
+            if (allRoots.size !== expected) {
+                return fail(
+                    'public_native_union_counter_mismatch',
+                    Math.max(0,expected-allRoots.size)
+                );
+            }
+
+            return {
+                verified:true,
+                reason:'public_native_union_cross_surface_proof',
+                missing:0,
+                publicCount:publicRoots.size,
+                nativeCount:native.size,
+                overlap,
+                unionCount:allRoots.size,
+            };
+        }
+
+        return {
+            verified:true,
+            reason:'public_connected_cross_surface_proof',
+            missing:0,
+            publicCount:publicRoots.size,
+            nativeCount:0,
+            overlap:0,
+            unionCount:publicRoots.size,
+        };
     }
 
     function reconcileProfileGridCoverage() {
@@ -10566,6 +10631,25 @@
             shadowComplete: state.coverage.publicShadow === true,
             shadowPageInfoEnd: state.shadow.pageInfoEnded === true,
             expected: state.expected,
+            counterVerified:
+                Number.isSafeInteger(Number(state.profileInfo?.media_count)) &&
+                Number(state.profileInfo.media_count) === Number(state.expected) &&
+                Number(state.expected) > 0,
+            nativeRootIds: new Set(
+                net.gridByUser.get(state.username.toLowerCase())?.keys() || []
+            ),
+            nativeContinuationPages:
+                net.gridNativeAuditByUser.get(
+                    state.username.toLowerCase()
+                )?.continuation || 0,
+            nativePageInfoEnd:
+                net.gridPageInfo.get(
+                    state.username.toLowerCase()
+                )?.has_next_page === false,
+            nativeLastHasNextFalse:
+                net.gridNativeAuditByUser.get(
+                    state.username.toLowerCase()
+                )?.lastHasNext === 'false',
             publicRootIds: state.shadow.rootIds,
             publicPostIds: state.shadow.postIds,
             publicReelIds: state.shadow.reelIds,
@@ -10584,11 +10668,14 @@
             state.coverage.profileGrid = true;
             log(
                 'PROFILE grid independently reconciled: ' +
-                'anonymous public timeline has explicit page_info_end, ' +
-                'all ' + state.shadow.rootIds.size + ' public roots match ' +
-                'the verified owned POST/REEL sets, connected hidden is ' +
-                'empty, REELS and OWNED hydration ended. ' +
-                'Native PROFILE pagination remains unverified.',
+                'proof=' + result.reason +
+                ', public=' + result.publicCount +
+                ', native=' + result.nativeCount +
+                ', overlap=' + result.overlap +
+                ', union=' + result.unionCount +
+                ', expected=' + state.expected +
+                '. PUBLIC SHADOW ended, REELS/HIDDEN/HYDRATION verified. ' +
+                'Native PROFILE initial capture may remain unverified.',
                 'warn'
             );
         }
