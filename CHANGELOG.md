@@ -7,7 +7,8 @@
 - Validate requested username, final profile route and optional canonical URL before accepting only explicit profile ID metadata.
 - Retain a single search request only as last resort; remove the redirected feed/user fallback.
 - Do not retry on HTTP 429, feedback_required, 401/403 or login redirects.
-- No change to the scan engine, downloading, ledger or solo-download controls.
+- Native PROFILE pagination is fixed to replay a successfully captured GraphQL request (document ID, profile-scoped variables, endpoint, body and headers) through the already existing Relay client; it no longer sends an incomplete hand-built POST. A missing native template leaves the scan incomplete rather than sending a guessed query.
+- GraphQL HTTP 200 JSON error payloads now trip the API safety stop instead of being treated as a blank page. The rest of the scan engine, downloading, ledger and solo-download controls remain unchanged.
 - Add dedicated profile HTML identity and guard regression tests, plus non-sensitive diagnostic classification of non-JSON GraphQL responses (MIME, body type, redirect category) and native GraphQL doc-ID comparison. No extra diagnostic requests. Browser smoke test remains required before publishing.
 
 
