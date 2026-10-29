@@ -176,7 +176,7 @@ const metadataVersion =
     source.match(/\/\/ @version\s+([0-9.]+)/)?.[1];
 const appVersion =
     source.match(/VERSION:\s*'([0-9.]+)'/)?.[1];
-assert.equal(metadataVersion,'1.5.63');
+assert.equal(metadataVersion,'1.5.64');
 assert.equal(appVersion,metadataVersion);
 
 console.log('Profile HTML identity fallback regression tests passed.');
