@@ -23,9 +23,6 @@ const expectedRepo =
     'https://github.com/JKL93sang/JKL-Instagram-Backup';
 
 const expectedRaw =
-    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/refactor/native-profile-contract-provenance/JKL_Instagram_Backup.user.js';
-
-const publicRaw =
     'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js';
 
 assert.equal(
@@ -51,7 +48,7 @@ assert.equal(
 
 assert.equal(
     meta('source'),
-    expectedRepo + '/blob/refactor/native-profile-contract-provenance/JKL_Instagram_Backup.user.js'
+    expectedRepo + '/blob/main/JKL_Instagram_Backup.user.js'
 );
 
 assert.equal(
@@ -78,12 +75,12 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.64');
+assert.equal(metadataVersion, '1.5.65');
 assert.equal(metadataVersion, appVersion);
-assert.notEqual(meta('updateURL'), publicRaw,
-    'Experimental version must never silently switch back to main');
-assert.match(meta('description'), /TEST BUILD PR #8/,
-    'Experimental build must be labelled clearly');
+assert.match(meta('description'), /Instagram backup:/,
+    'Stable release must not retain experimental metadata');
+assert.doesNotMatch(meta('description'), /TEST BUILD|experimental/i,
+    'Stable release must not be marked as a test build');
 
 
 assert.ok(
@@ -94,5 +91,5 @@ assert.ok(
 );
 
 console.log(
-    'Experimental branch distribution metadata regression tests passed.'
+    'Public distribution metadata regression tests passed.'
 );
