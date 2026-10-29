@@ -23,6 +23,8 @@ const relaySource = extract('webRelayGql');
 
 assert.ok(captureSource.includes('requestTargetsCurrentProfile'));
 assert.ok(captureSource.includes('net.gridQueryByUser.set'));
+assert.ok(captureSource.includes('net.gridNativeContinuationByUser.set'));
+assert.ok(captureSource.includes('net.gridNativeAuditByUser.set'));
 assert.ok(captureSource.includes("meta.endpoint === 'api'"));
 assert.ok(captureSource.includes('meta.bodyFields'));
 assert.ok(captureSource.includes('meta.relayHeaders'));
@@ -33,12 +35,16 @@ assert.ok(fallbackSource.includes('webRelayGql('));
 assert.ok(!fallbackSource.includes('APP.PROFILE_FALLBACK_DOC'));
 assert.ok(!fallbackSource.includes('await gql('));
 assert.ok(fallbackSource.includes('page_info?.has_next_page === false'));
-assert.ok(fallbackSource.includes('native_contract_unavailable'));
+assert.ok(fallbackSource.includes('native_continuation_unavailable'));
 assert.ok(fallbackSource.includes('native.template'));
 assert.ok(fallbackSource.includes('native.variables'));
 
 const store = new Map();
-const net = {gridQueryByUser:store};
+const net = {
+    gridQueryByUser:new Map(),
+    gridNativeContinuationByUser:store,
+    gridNativeAuditByUser:new Map(),
+};
 const names = new Set(['PolarisProfilePostsTabContentQuery_connection']);
 const helpers = new Function(
     'net','GRID_NAMES','requestTargetsCurrentProfile',
@@ -71,6 +77,14 @@ const entry = {
 store.set('sample.account',entry);
 assert.equal(
     helpers.profileNativeCompletionRequest('sample.account'),
+    null,
+    'continuation contract without native response is untrusted'
+);
+net.gridNativeAuditByUser.set('sample.account',{
+    initial:1,continuation:1,cursorLocation:'root'
+});
+assert.equal(
+    helpers.profileNativeCompletionRequest('sample.account'),
     entry
 );
 const initial = helpers.profileCompletionVariables(entry.variables);
@@ -92,6 +106,9 @@ assert.equal(entry.variables.after,'old-cursor','source must not mutate');
 store.set('other.account',{
     ...entry,
     variables:{...entry.variables,username:'other.account'},
+});
+net.gridNativeAuditByUser.set('other.account',{
+    initial:1,continuation:1,cursorLocation:'root'
 });
 assert.equal(
     helpers.profileNativeCompletionRequest('other.account'),
@@ -123,12 +140,9 @@ const firstPage = helpers.profileCompletionVariables(initialOnly);
 assert.ok(!('first' in firstPage));
 assert.ok(!('after' in firstPage));
 const page2 = helpers.profileCompletionVariables(initialOnly,'opaque-page-2');
-assert.equal(page2.after,'opaque-page-2');
-assert.equal(page2.before,null);
-assert.equal(page2.first,12);
-assert.equal(page2.last,null);
-assert.equal(page2.data.count,12);
-assert.equal(page2.__relay_internal__pv__PolarisSEOIsCrawlerrelayprovider,false);
+assert.equal(page2,null,
+    'never invent a cursor field absent from native variables'
+);
 assert.ok(!('after' in initialOnly));
 assert.equal(initialOnly.data.count,12);
 
@@ -146,6 +160,9 @@ assert.equal(implausible,null);
 
 const docBad = {...entry,docId:'bad'};
 store.set('bad.account',docBad);
+net.gridNativeAuditByUser.set('bad.account',{
+    initial:1,continuation:1,cursorLocation:'root'
+});
 assert.equal(helpers.profileNativeCompletionRequest('bad.account'),null);
 
 const fetchSource = extract('fetchJson');
@@ -154,7 +171,7 @@ assert.ok(
     'JSON GraphQL error responses must not be accepted as a blank grid'
 );
 assert.ok(
-    fetchSource.includes('missing_required_variable'),
+    source.includes('summarizeGraphQlErrors('),
     'Safe GraphQL error category must be exposed without full server message'
 );
 assert.ok(
@@ -167,7 +184,9 @@ assert.ok(
     'no fake grid completion from the profile counter'
 );
 assert.ok(
-    source.includes('net.gridQueryByUser.delete('),
+    source.includes('net.gridQueryByUser.delete(') &&
+    source.includes('net.gridNativeContinuationByUser.delete(') &&
+    source.includes('net.gridNativeAuditByUser.delete('),
     'native request state must be cleared at the start of each scan'
 );
 console.log('Native PROFILE Relay pagination regression tests passed.');
