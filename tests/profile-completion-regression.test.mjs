@@ -419,7 +419,7 @@ assert.ok(
     'legacy bare gql() call returned'
 );
 assert.ok(
-    fallbackSource.includes('nativeTemplate:native.template'),
+    fallbackSource.includes('nativeTemplate:contract.template'),
     'native Relay payload is not replayed'
 );
 assert.ok(
