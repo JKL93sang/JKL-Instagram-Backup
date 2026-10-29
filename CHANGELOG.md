@@ -1,4 +1,14 @@
 # Changelog
+
+## 1.5.65 — Stable native PROFILE discovery and verified cross-surface coverage
+
+- Promote reviewed PR #8 architecture following positive browser tests on two different public profiles, including a successful download for the 24-public/13-native/12-overlap case reconciling 25 POSTS.
+- Keep website-native capture isolated from requests issued by the userscript. Track successful native initial and continuation contracts separately; refuse guessed GraphQL continuation fields.
+- Retain strict coverage evidence: complete public timeline and verified identity/counter/owned sets, or complete public/native timelines with exact root-ID union and overlap, plus full REELS, empty CONNECTED hidden and successful OWNED hydration.
+- No extra API retries or weakened login/feedback/rate-limit stops. Maintain solo downloads, archive and all unrelated scan categories.
+- Reset userscript source/update/download URLs to the public main branch. Increment to v1.5.65 so Tampermonkey recognizes the release as newer than the experimental v1.5.64.
+- Automated CI and targeted browser feedback do not guarantee universal compatibility with Instagram.
+
 ## 1.5.64 — Experimental PROFILE public/native union proof
 
 - Reconcile profiles where PUBLIC SHADOW ends with fewer roots than the verified authenticated profile counter, but a target-matched native PROFILE continuation separately ends and adds the missing root IDs.
