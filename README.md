@@ -2,7 +2,22 @@
 
 A Tampermonkey userscript for backing up Instagram media that is **already accessible to the signed-in browser session**.
 
-Current public version: **1.5.61**
+Current public version: **1.5.61** (on `main`).
+
+**Experimental PR #8 build: v1.5.62** — available on this branch only. The experimental build has **not** been validated against a live Instagram continuation. It can legitimately stop as `INCOMPLETE` rather than guess request parameters.
+
+## Install PR #8 experimental build (one-time channel switch)
+
+Open the test userscript's Raw URL in the browser with Tampermonkey enabled, then **confirm the update of the existing JKL Instagram Backup**:
+
+https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/refactor/native-profile-contract-provenance/JKL_Instagram_Backup.user.js
+
+The test script retains the same `@name` and `@namespace` so Tampermonkey should treat it as the same script, not install a second one. Verify the installed version says **1.5.62** and both `@updateURL` and `@downloadURL` point to `refactor/native-profile-contract-provenance`.
+
+**Important:** Existing stable installations pointing at `main` cannot discover this test build through an ordinary update check. You must open this branch's Raw URL **once** to switch the update channel. After that, automatic checks follow this test branch. When returning to stable, reinstall the `main` Raw userscript; the stable version may temporarily be numerically lower, so an automatic downgrade must not be assumed. Do not leave two copies enabled.
+
+Stop scanning if Instagram shows an account restriction or challenge. Do not run repeated large-account scans while the experimental behavior is unverified.
+
 
 ## Install
 
