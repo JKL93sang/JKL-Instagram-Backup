@@ -58,3 +58,7 @@ Log only a bounded classification: `kind`, numeric server error `code`, `severit
 - A recently reinstated Instagram account must not be used for repeated automated experiments. Any checkpoint or rate-limit means stop.
 
 **Release policy:** do not merge this draft into `main` based solely on CI. A native continuation needs to be observed in a real session. A complete, truly reliable end-to-end backup requires further live evidence before any public version bump.
+
+## Cross-surface public PROFILE proof (v1.5.63 experimental)
+
+When native PROFILE capture is unavailable, never equate a numeric counter with a complete scan. An independent proof may be accepted only after all phases finish and all conditions hold: target identity verified, account public and known to have no exclusive feed, an identity-matched PUBLIC SHADOW with an explicit end of pagination, unique public roots exactly matching the target profile counter and partitioned into POST/REEL roots, every public POST ID belonging to the owned POST set and every public REEL ID belonging to the owned REEL set, REELS finished, CONNECTED hidden finished empty and OWNED hydration complete. Evaluated locally; no additional request. Failed conditions retain profileGrid=false. Logs distinguish an independent proof from a verified end of the native connected PROFILE API. Real browser verification required before stable release.
