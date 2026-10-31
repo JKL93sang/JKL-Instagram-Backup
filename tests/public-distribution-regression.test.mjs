@@ -23,7 +23,7 @@ const expectedRepo =
     'https://github.com/JKL93sang/JKL-Instagram-Backup';
 
 const expectedRaw =
-    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/public-post-reel-reconciliation/JKL_Instagram_Backup.user.js';
+    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js';
 
 assert.equal(
     meta('name'),
@@ -48,7 +48,7 @@ assert.equal(
 
 assert.equal(
     meta('source'),
-    expectedRepo + '/blob/fix/public-post-reel-reconciliation/JKL_Instagram_Backup.user.js'
+    expectedRepo + '/blob/main/JKL_Instagram_Backup.user.js'
 );
 
 assert.equal(
@@ -75,11 +75,11 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.66');
+assert.equal(metadataVersion, '1.5.67');
 assert.equal(metadataVersion, appVersion);
 assert.match(meta('description'), /Instagram backup:/);
-assert.match(meta('description'), /TEST BUILD: POST\/REEL reconciliation/,
-    'Experimental branch must be explicitly identified as a test build');
+assert.doesNotMatch(meta('description'), /TEST BUILD|experimental/i,
+    'Stable release must not retain experimental metadata');
 
 
 assert.ok(
