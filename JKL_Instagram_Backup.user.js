@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.65
+// @version      1.5.67
 // @description  Instagram backup: verified public/native profile coverage, archive integrity, and safe pagination handling.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.65', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.67', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -10539,9 +10539,17 @@
 
         let missing = 0;
         for (const id of publicPosts) {
-            if (!proof.ownedPostIds.has(id)) missing++;
+            // PUBLIC SHADOW can label a mixed-grid Reel as a POST.
+            // The authenticated REELS surface takes precedence and moves
+            // the same owned root from POST to REEL. Its identity still
+            // reconciles, provided the completed REELS coverage is proven.
+            if (
+                !proof.ownedPostIds.has(id) &&
+                !proof.ownedReelIds.has(id)
+            ) missing++;
         }
         for (const id of publicReels) {
+            // An explicitly marked public Reel must also be owned as REEL.
             if (!proof.ownedReelIds.has(id)) missing++;
         }
         if (missing) return fail('public_roots_not_reconciled',missing);
