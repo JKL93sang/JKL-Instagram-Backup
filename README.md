@@ -2,7 +2,7 @@
 
 A Tampermonkey userscript for backing up Instagram media that is **already accessible to the signed-in browser session**.
 
-Current public version: **1.5.65** (stable, `main`).
+Current public version: **1.5.67** (stable, `main`).
 
 ## Install or update
 
@@ -12,18 +12,18 @@ https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instag
 
 Existing stable users can also use **Tampermonkey → Check for userscript updates**. Both `@updateURL` and `@downloadURL` point to this `main` version.
 
-**If you installed the PR #8 experimental build (v1.5.62–1.5.64):** the stable script has a higher version number, and the test branch also exposes this release metadata. Open the official `main` Raw link once if Tampermonkey does not automatically switch channels. Confirm that exactly one enabled copy remains and that its version is 1.5.65.
+**If you installed the PR #8 experimental build (v1.5.62–1.5.64):** the stable script has a higher version number, and the test branch also exposes this release metadata. Open the official `main` Raw link once if Tampermonkey does not automatically switch channels. Confirm that exactly one enabled copy remains and that its version is 1.5.67.
 
 ## Public PROFILE completeness
 
 The PROFILE native network hook can occasionally miss a first-page response. This release retains strict incomplete status unless one of two independent, identity-scoped evidence paths passes:
 
-- The anonymous PUBLIC SHADOW ends with explicit `page_info.has_next_page=false`; its unique POST/REEL IDs match the verified authenticated profile count and every ID is present in the owned sets; selected REELS, CONNECTED hidden and hydration are complete.
+- The anonymous PUBLIC SHADOW ends with explicit `page_info.has_next_page=false`; its unique POST/REEL IDs match the verified authenticated profile count and every ID is present in the owned sets; selected REELS, CONNECTED hidden and hydration are complete. Public-grid roots provisionally labelled POST may later be authenticated as REEL, provided their exact IDs are accounted for by completed owned REELS coverage; explicit public REEL roots must remain owned REEL.
 - The PUBLIC SHADOW ends with fewer roots than the verified counter, but an independently captured native PROFILE continuation also ends. Their overlapping root-ID union must match the verified count exactly, with every ID validated as owned.
 
 These checks apply only to verified public profiles without exclusive content and with both POST and REEL scan selection, completed REELS and hydration, and a verified empty CONNECTED hidden scan. Other cases remain INCOMPLETE unless native PROFILE coverage is separately proven. No extra API calls are made to force either result.
 
-**Validation:** positive browser feedback was received on two distinct public profiles, including a successful download on a profile with 24 public roots and 25 verified owned POST roots; automated regression tests cover incomplete pagination, mismatched IDs, hidden content and other unsafe paths. This is not a guarantee of universal compatibility or access to private material. Stop scans if Instagram issues an account warning or rate-limit notice.
+**Validation:** browser tests confirmed the prior public/native union and the v1.5.67 POST-to-REEL reconciliation path, including a completed PROFILE scan with 124 public roots and 14 subsequently confirmed REELS. Automated regression tests cover incomplete pagination, mismatched IDs, hidden content and other unsafe paths. **A completed scan is not proof that every physical file downloaded:** the latter browser test had one `GM_download` failure out of 129 main media jobs; that downloader issue is tracked separately. This is not a guarantee of universal compatibility or access to private material. Stop scans if Instagram issues an account warning or rate-limit notice.
 
 ## Profile identity resilience (v1.5.60+)
 
