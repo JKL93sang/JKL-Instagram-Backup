@@ -45,7 +45,7 @@ assert.deepEqual(exact,{
 },'fully ended public timeline and connected surfaces must remain valid');
 
 /*
- * Real 1.5.65 failure pattern (@bbeckicoco):
+ * Real 1.5.65 failure pattern (public PROFILE test):
  * 124 distinct PUBLIC SHADOW roots, all provisionally POST;
  * authenticated REELS confirms 14 of them as REEL and adds 1
  * separate Reel. Owned membership is therefore POST=110, REEL=15,
