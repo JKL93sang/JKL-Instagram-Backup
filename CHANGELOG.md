@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.67 — Stable PROFILE public POST/REEL reconciliation
+
+- Promote the targeted v1.5.66 test correction after a successful authenticated browser PROFILE scan with 124 public roots and 14 exact root IDs reclassified from provisional POST to verified REEL; final PROFILE proof=public_connected_cross_surface_proof, all coverage guards true and SCAN FINISHED — COMPLETE.
+- A public-grid provisional POST may match either owned POST or a **confirmed owned REEL**, but a public-grid explicit REEL still must match owned REEL. Preserve the existing strict identity, source pagination, authenticated counter, hidden-zero, hydration and REELS-end safety conditions.
+- Regression tests cover the 124 public / 110 POST + 15 REEL / 125 owned case and negative identity, missing-root, pagination, counter and hydration cases.
+- This release fixes the PROFILE coverage verdict only. In the validation download, 128 of 129 main media jobs and all 16 additional hidden copies succeeded; one separate Tampermonkey GM_download `not_succeeded` failure remains unresolved. The scan verdict does not certify archive files; do not describe that download as fully successful.
+- Restore the stable main-branch source and auto-update URLs; keep the userscript name and namespace unchanged.
+
 ## 1.5.65 — Stable native PROFILE discovery and verified cross-surface coverage
 
 - Promote reviewed PR #8 architecture following positive browser tests on two different public profiles, including a successful download for the 24-public/13-native/12-overlap case reconciling 25 POSTS.
