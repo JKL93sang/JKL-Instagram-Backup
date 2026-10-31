@@ -45,6 +45,45 @@ assert.deepEqual(exact,{
 },'fully ended public timeline and connected surfaces must remain valid');
 
 /*
+ * Real 1.5.65 failure pattern (@bbeckicoco):
+ * 124 distinct PUBLIC SHADOW roots, all provisionally POST;
+ * authenticated REELS confirms 14 of them as REEL and adds 1
+ * separate Reel. Owned membership is therefore POST=110, REEL=15,
+ * OWNED=125 and every one of the 124 public IDs is accounted for.
+ * This is a valid independent public/connected proof, not 14 missing.
+ */
+const mkReclassified=()=>{
+    const p=mk(124);
+    const allPublicPosts=new Set(
+        Array.from({length:124},(_,i)=>String(5000+i))
+    );
+    const asPosts=new Set(
+        Array.from({length:110},(_,i)=>String(5000+i))
+    );
+    const promotedReels=new Set(
+        Array.from({length:14},(_,i)=>String(5110+i))
+    );
+    p.expected=124;
+    p.publicRootIds=allPublicPosts;
+    p.publicPostIds=allPublicPosts;
+    p.publicReelIds=new Set();
+    p.ownedPostIds=asPosts;
+    p.ownedReelIds=new Set([...promotedReels,'8000']);
+    return p;
+};
+const reclassified=mkReclassified();
+assert.equal(reclassified.ownedPostIds.size,110);
+assert.equal(reclassified.ownedReelIds.size,15);
+assert.equal(
+    new Set([...reclassified.ownedPostIds,...reclassified.ownedReelIds]).size,
+    125
+);
+assert.deepEqual(assess(reclassified),{
+    verified:true,reason:'public_connected_cross_surface_proof',
+    missing:0,publicCount:124,nativeCount:0,overlap:0,unionCount:124,
+},'a public POST promoted to authenticated REEL must not become missing');
+
+/*
  * Real 1.5.63 failure pattern:
  * PROFILE expected 25, PUBLIC SHADOW ended with 24 POST roots,
  * PROFILE native observer captured 13 roots, 12 of which overlap
@@ -109,6 +148,25 @@ reject(mk,p=>{p.hiddenPreviewOnly=1},'connected_surfaces_not_equivalent');
 reject(mk,p=>{p.hiddenFailed=1},'connected_surfaces_not_equivalent');
 reject(mk,p=>{p.ownedPostIds.delete('1000')},'public_roots_not_reconciled');
 reject(mk,p=>{p.ownedReelIds.delete('2000')},'public_roots_not_reconciled');
+reject(mk,p=>{
+    p.ownedReelIds.delete('2000');
+    p.ownedPostIds.add('2000');
+},'public_roots_not_reconciled');
+reject(mkReclassified,p=>{
+    p.ownedReelIds.delete('5110');
+},'public_roots_not_reconciled');
+reject(mkReclassified,p=>{
+    p.ownedPostIds.delete('5000');
+},'public_roots_not_reconciled');
+reject(mkReclassified,p=>{
+    p.reelsComplete=false;
+},'connected_surfaces_not_equivalent');
+reject(mkReclassified,p=>{
+    p.shadowPageInfoEnd=false;
+},'public_timeline_end_unproven');
+reject(mkReclassified,p=>{
+    p.expected=123;
+},'public_timeline_counter_or_partition_mismatch');
 const missing=mk();missing.ownedPostIds.delete('1000');
 missing.ownedPostIds.delete('1001');
 assert.equal(assess(missing).missing,2);
