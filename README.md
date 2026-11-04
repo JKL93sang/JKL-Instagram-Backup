@@ -1,8 +1,26 @@
 # JKL Instagram Backup
 
+## Stable v1.5.70 — one file per media, FAN CLUB / HIDDEN routing
+
+This release combines the v1.5.68 verified subscriber-partial backup (successfully tested on a real authenticated session) with the new single-file archive layout. **The new routing is covered by CI tests; it has not yet been verified on a new live browser download.**
+
+- `subscription_media_visibility=fan_club` confirmed by authenticated media-info → `<profile> - FAN CLUB/`.
+- Other authenticated `CONNECTED_HIDDEN_AUTHORIZED` candidates → `<profile> - HIDDEN/` (flat, no extra subfolders).
+- Public posts / reels → `<profile> - POSTS/`, `<profile> - REELS/` respectively. Public-shadow discovery alone does not make content HIDDEN.
+- **One physical file per media ID in the selected folder**. Media type, visibility, provenance, and archive category remain in the ledger and manifest.
+- **No deletion or automatic migration** of earlier duplicates. An existing old copy in POSTS or HIDDEN does not count as a file already in FAN CLUB; the local-folder index checks the actual target folder. Check and consolidate historical duplicates manually only after the correctly classified file exists.
+- Profile `COMPLETE` safeguards are unchanged. The separate **DOWNLOAD SUBSCRIBER VERIFIED (PARTIAL)** control permits only authenticated media already validated at scan completion and keeps the overall verdict `INCOMPLETE`.
+- Verified browser baseline from v1.5.68: **65 verified fan-club roots**, **178 downloadable media**, **356/356 writes** (main + legacy duplicate HIDDEN copies) succeeded and files were confirmed readable. The new v1.5.70 policy writes **one** file instead of two; this layout has only automated-test coverage so far.
+
+### Install and automatic updates
+
+Official stable script: https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
+
+Stable installs retain the same `@name` and `@namespace`, with both `@updateURL` and `@downloadURL` bound to `main`. Use **Tampermonkey → Check for userscript updates** or open the official URL. Older experimental branch installs may require a one-time channel transition; confirm exactly one enabled script with version **1.5.70**.
+
 A Tampermonkey userscript for backing up Instagram media that is **already accessible to the signed-in browser session**.
 
-Current public version: **1.5.67** (stable, `main`).
+Current public version: **1.5.70** (stable, `main`).
 
 ## Install or update
 
@@ -12,7 +30,7 @@ https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instag
 
 Existing stable users can also use **Tampermonkey → Check for userscript updates**. Both `@updateURL` and `@downloadURL` point to this `main` version.
 
-**If you installed the PR #8 experimental build (v1.5.62–1.5.64):** the stable script has a higher version number, and the test branch also exposes this release metadata. Open the official `main` Raw link once if Tampermonkey does not automatically switch channels. Confirm that exactly one enabled copy remains and that its version is 1.5.67.
+**If you installed the PR #8 experimental build (v1.5.62–1.5.64):** the stable script has a higher version number, and the test branch also exposes this release metadata. Open the official `main` Raw link once if Tampermonkey does not automatically switch channels. Confirm that exactly one enabled copy remains and that its version is 1.5.70.
 
 ## Public PROFILE completeness
 

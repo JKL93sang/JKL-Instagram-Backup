@@ -71,3 +71,9 @@ jobs:
 
       - name: PROFILE cross-surface pagination proof regression tests
         run: node tests/profile-cross-surface-proof-regression.test.mjs
+
+      - name: Subscriber-authorized partial backup safety regression tests
+        run: node tests/subscriber-verified-partial-regression.test.mjs
+
+      - name: Unique FAN CLUB / flat HIDDEN category routing tests
+        run: node tests/single-copy-archive-routing-regression.test.mjs

@@ -75,11 +75,11 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.67');
+assert.equal(metadataVersion, '1.5.70');
 assert.equal(metadataVersion, appVersion);
 assert.match(meta('description'), /Instagram backup:/);
-assert.doesNotMatch(meta('description'), /TEST BUILD|experimental/i,
-    'Stable release must not retain experimental metadata');
+assert.doesNotMatch(meta('description'), /TEST BUILD|EXPERIMENTAL/i,
+    'Stable distribution must not advertise an experimental channel');
 
 
 assert.ok(
