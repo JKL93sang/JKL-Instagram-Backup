@@ -10302,6 +10302,120 @@
             .join('\n');
     }
 
+
+    // Each returned unit must belong to a root proven downloadable by the
+    // authenticated media-info endpoint. Public-only roots never qualify.
+    function verifiedSubscriberMedia() {
+        const verifiedRoots = state.verifiedSubscriberRootIds;
+        return [...state.queue.values()].filter(m =>
+            !!m?.url &&
+            ['POST', 'REEL'].includes(m.type) &&
+            m.sources instanceof Set &&
+            m.sources.has('CONNECTED_HIDDEN_AUTHORIZED') &&
+            m.rootIds instanceof Set &&
+            [...m.rootIds].some(id => verifiedRoots.has(String(id)))
+        );
+    }
+
+    function captureVerifiedSubscriberSnapshot() {
+        state.verifiedSubscriberSnapshot = null;
+
+        // INCOMPLETE is preserved: this grants only a bounded, explicit
+        // per-media backup path, not an alternative PROFILE completeness proof.
+        if (
+            state.scanOutcome !== 'INCOMPLETE' ||
+            state.cancelled ||
+            state.feedbackRequired ||
+            state.rateLimited ||
+            state.apiUnhealthy ||
+            !state.scanPlan?.post ||
+            !state.scanPlan?.reel ||
+            !state.exclusive.known ||
+            !state.exclusive.hasExclusiveFeedContent ||
+            !state.coverage.connectedHidden ||
+            !state.coverage.ownedHydration ||
+            state.hidden.candidates < 1 ||
+            state.hidden.failed !== 0 ||
+            state.hidden.previewOnly !== 0 ||
+            state.hidden.recovered < 1 ||
+            state.hidden.candidates !==
+                state.hidden.recovered + state.hidden.alreadyOwned ||
+            state.verifiedSubscriberRootIds.size !== state.hidden.recovered ||
+            !state.userId
+        ) return;
+
+        const media = verifiedSubscriberMedia();
+        if (!media.length) return;
+
+        state.verifiedSubscriberSnapshot = Object.freeze({
+            userId: String(state.userId),
+            username: String(state.username),
+            queueSize: state.queue.size,
+            queueFingerprint: scanDownloadFingerprint(),
+            verifiedRoots: [...state.verifiedSubscriberRootIds].sort().join('|'),
+            mediaIds: media.map(m => String(m.id)).sort().join('|'),
+            mediaCount: media.length,
+        });
+
+        log(
+            'SUBSCRIBER PARTIAL READY: ' +
+            state.hidden.recovered + ' authenticated roots, ' +
+            media.length + ' downloadable media. Overall PROFILE ' +
+            'remains INCOMPLETE. Use only the separate verified-media action.',
+            'warn'
+        );
+    }
+
+    function verifiedSubscriberDownloadIntegrity() {
+        const fail = reason => ({ ok: false, reason });
+        const snap = state.verifiedSubscriberSnapshot;
+
+        if (!snap || state.scanOutcome !== 'INCOMPLETE') {
+            return fail('no verified subscriber snapshot from finished INCOMPLETE scan');
+        }
+        if (
+            state.running ||
+            state.cancelled ||
+            state.feedbackRequired ||
+            state.rateLimited ||
+            state.apiUnhealthy
+        ) return fail('scan/session stopped or Instagram safety circuit active');
+
+        if (
+            !state.exclusive.known ||
+            !state.exclusive.hasExclusiveFeedContent ||
+            !state.coverage.connectedHidden ||
+            !state.coverage.ownedHydration ||
+            state.hidden.failed !== 0 ||
+            state.hidden.previewOnly !== 0 ||
+            state.hidden.candidates !==
+                state.hidden.recovered + state.hidden.alreadyOwned ||
+            state.verifiedSubscriberRootIds.size !== state.hidden.recovered ||
+            [...state.verifiedSubscriberRootIds].sort().join('|') !==
+                snap.verifiedRoots
+        ) return fail('subscriber source authorization or hydration not verified');
+
+        if (
+            String(state.userId) !== snap.userId ||
+            String(state.username) !== snap.username ||
+            cleanUser(ui.username?.value || currentProfile()) !== snap.username
+        ) return fail('profile identity/input changed after scan');
+
+        if (
+            state.queue.size !== snap.queueSize ||
+            scanDownloadFingerprint() !== snap.queueFingerprint
+        ) return fail('scan media inventory changed after verification');
+
+        const media = verifiedSubscriberMedia();
+        if (
+            !media.length ||
+            media.length !== snap.mediaCount ||
+            media.map(m => String(m.id)).sort().join('|') !== snap.mediaIds
+        ) return fail('verified subscriber media set changed');
+
+        return { ok: true, reason: '', media };
+    }
+
     function completedScanIntegrity() {
         if (
             !state.scanComplete ||
