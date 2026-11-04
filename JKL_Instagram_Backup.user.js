@@ -12776,6 +12776,10 @@
         }
     }
 
+    async function downloadVerifiedSubscriberPartial() {
+        return downloadMissing(true);
+    }
+
     async function syncAll() {
         await scanAll();
 
@@ -12986,6 +12990,7 @@
             of [
                 'scan',
                 'download',
+                'downloadAuthorized',
                 'sync',
                 'username',
                 'cbPost',
@@ -16045,6 +16050,14 @@
 
                     <button
                         class="action"
+                        id="jkl-download-authorized"
+                        title="Save only authenticated subscriber media already verified by media-info. This is NOT a COMPLETE profile backup."
+                    >
+                        DOWNLOAD SUBSCRIBER VERIFIED (PARTIAL)
+                    </button>
+
+                    <button
+                        class="action"
                         id="jkl-sync"
                     >
                         SCAN + DOWNLOAD
@@ -16302,6 +16315,11 @@
                     '#jkl-download'
                 ),
 
+            downloadAuthorized:
+                b.querySelector(
+                    '#jkl-download-authorized'
+                ),
+
             sync:
                 b.querySelector(
                     '#jkl-sync'
@@ -16507,7 +16525,10 @@
             scanAll;
 
         ui.download.onclick =
-            downloadMissing;
+            () => downloadMissing(false);
+
+        ui.downloadAuthorized.onclick =
+            downloadVerifiedSubscriberPartial;
 
         ui.sync.onclick =
             syncAll;
