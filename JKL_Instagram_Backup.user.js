@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.68
-// @description  Instagram backup with verified subscriber-only partial archiving. EXPERIMENTAL v1.5.68.
+// @version      1.5.69
+// @description  Instagram backup with unique media filing in FAN CLUB, HIDDEN, POSTS and REELS. EXPERIMENTAL v1.5.69.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/feat/verified-subscriber-partial-download/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/feat/verified-subscriber-partial-download/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/feat/verified-subscriber-partial-download/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/feat/one-file-fan-club-flat-hidden/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/feat/one-file-fan-club-flat-hidden/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/feat/one-file-fan-club-flat-hidden/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.68', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.69', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -1175,6 +1175,47 @@
         );
     }
 
+    // Provenance is not a visibility label. FAN CLUB requires authenticated
+    // media-info. HIDDEN retains only authenticated other connected candidates.
+    function mediaArchiveCategory(m) {
+        if (m?.visibility === 'fan_club') {
+            return 'FAN CLUB';
+        }
+
+        const sources = m?.sources instanceof Set
+            ? m.sources
+            : new Set(Array.isArray(m?.sources) ? m.sources : []);
+
+        if (
+            m?.visibility === 'hidden' ||
+            sources.has('CONNECTED_HIDDEN_AUTHORIZED')
+        ) {
+            return 'HIDDEN';
+        }
+
+        return ({
+            POST: 'POSTS',
+            REEL: 'REELS',
+            HIGHLIGHT: 'HIGHLIGHTS',
+            STORY: 'STORIES',
+            TAGGED: 'TAGGED',
+            AVATAR: 'AVATAR',
+        })[String(m?.type || '')] || String(m?.type || 'MEDIA');
+    }
+
+    function authenticatedMediaVisibility(raw, source) {
+        if (!['CONNECTED_HIDDEN_AUTHORIZED', 'OWNED_DEEP_HYDRATION'].includes(source)) {
+            return '';
+        }
+
+        const value = String(raw?.subscription_media_visibility || '')
+            .trim().toLowerCase();
+
+        if (value === 'fan_club') return 'fan_club';
+        if (value === 'hidden') return 'hidden';
+        return '';
+    }
+
     function hiddenDiscoverySources(m) {
         const sources =
             m?.sources instanceof Set
@@ -2122,6 +2163,7 @@
                 root,
                 typeHint
             );
+        const confirmedVisibility = authenticatedMediaVisibility(root, source);
 
         if (
             type === 'POST' &&
@@ -2265,6 +2307,7 @@
                         ),
 
                 url,
+                visibility: confirmedVisibility,
 
                 diskBacked:
                     !url &&
@@ -2317,6 +2360,14 @@
                 old.sources.add(
                     source || type
                 );
+                if (old.visibility === 'fan_club' || confirmedVisibility === 'fan_club') {
+                    m.visibility = 'fan_club';
+                    old.visibility = 'fan_club';
+                } else if (!confirmedVisibility) {
+                    m.visibility = old.visibility || '';
+                } else {
+                    old.visibility = confirmedVisibility;
+                }
 
                 old.rootIds ||= new Set();
 
@@ -2343,6 +2394,7 @@
 
                     m.rootIds =
                         old.rootIds;
+                    m.visibility = old.visibility || m.visibility;
 
                     state.queue.set(
                         id,
