@@ -2831,10 +2831,10 @@
         }
 
         for (const unitId of unitIds) {
+            const queued = state.queue.get(unitId);
             if (
-                !state.diskCanonical.has(
-                    unitId
-                )
+                !queued ||
+                !state.diskLocations.get(unitId)?.has(mediaArchiveCategory(queued))
             ) {
                 return false;
             }
@@ -2860,39 +2860,8 @@
             }
         }
 
-        /*
-         * HIDDEN discovery itself is never skipped. This function runs only
-         * after PUBLIC SHADOW / CONNECTED HIDDEN. If a HIDDEN duplicate is
-         * missing, an URL must already be queued for that exact unit; otherwise
-         * deep hydration remains mandatory so the duplicate can still be made.
-         */
-        if (rootHasHiddenDiscovery(rec)) {
-            for (const unitId of unitIds) {
-                if (
-                    state.diskHidden.has(
-                        unitId
-                    )
-                ) {
-                    continue;
-                }
-
-                const media =
-                    state.queue.get(
-                        unitId
-                    );
-
-                if (
-                    !media ||
-                    !media?.rootIds?.has?.(
-                        String(rec.id)
-                    ) ||
-                    !isHiddenMedia(media) ||
-                    !media.url
-                ) {
-                    return false;
-                }
-            }
-        }
+        // No duplicate HIDDEN copy requirement: the single file already
+        // verified in its exact target category is sufficient.
 
         return true;
     }
@@ -11945,45 +11914,7 @@
     }
 
     async function downloadOne(m) {
-        const mainExisting =
-            existingReason(m);
-
-        const hiddenNeeded =
-            isHiddenMedia(m) &&
-            !hiddenCopyExistingReason(m);
-
-        if (!mainExisting) {
-            const mainOk =
-                await downloadMainOne(
-                    m
-                );
-
-            if (!mainOk) {
-                if (
-                    hiddenNeeded &&
-                    !state.cancelled
-                ) {
-                    markDownloadOperation(
-                        false,
-                        m,
-                        'HIDDEN',
-                        { blocked: true }
-                    );
-
-                    updateStats();
-                }
-
-                return false;
-            }
-        }
-
-        if (hiddenNeeded) {
-            return downloadHiddenCopy(
-                m
-            );
-        }
-
-        return true;
+        return existingReason(m) ? true : downloadMainOne(m);
     }
     function diagnosticDownloadPath(m, index) {
         const user = sanitize(
@@ -12626,14 +12557,7 @@
         try {
             const pending =
                 mediaScope
-                    .filter(
-                        m =>
-                            !existingReason(m) ||
-                            (
-                                isHiddenMedia(m) &&
-                                !hiddenCopyExistingReason(m)
-                            )
-                    );
+                    .filter(m => !existingReason(m));
 
             const downloadPlan =
                 beginDownloadProgress(
@@ -12672,8 +12596,7 @@
             log(
                 `${authorizedOnly ? 'Starting VERIFIED SUBSCRIBER PARTIAL download' : 'Starting download'}: ` +
                 `${pending.length} media jobs, ` +
-                `${downloadPlan.total} physical writes ` +
-                `(main=${downloadPlan.main}, hidden=${downloadPlan.hidden}), ` +
+                `${downloadPlan.total} physical writes (one per media), ` +
                 `${workerCount} worker, ` +
                 `${APP.DOWNLOAD_RETRIES} attempts max per file, ` +
                 `inter-file delay=${APP.DOWNLOAD_DELAY} ms.`
