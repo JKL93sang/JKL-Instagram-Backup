@@ -12637,10 +12637,12 @@
                     ? state.diskCanonical.size
                     : state.queue.size;
 
-                const message =
-                    `Archive already complete for this scan — ` +
-                    `${state.queue.size}/${state.queue.size} scan media verified` +
-                    `${state.diskActive ? ` on disk (${verified} indexed).` : '.'}`;
+                const message = authorizedOnly
+                    ? `Verified subscriber subset already saved: ${mediaScope.length} ` +
+                      `media inspected (PARTIAL PROFILE; scan still INCOMPLETE).`
+                    : `Archive already complete for this scan — ` +
+                      `${state.queue.size}/${state.queue.size} scan media verified` +
+                      `${state.diskActive ? ` on disk (${verified} indexed).` : '.'}`;
 
                 log(message);
                 status(message, 'ok');
@@ -12658,7 +12660,8 @@
             const batchStartedAt = performance.now();
 
             log(
-                `Starting download: ${pending.length} media jobs, ` +
+                `${authorizedOnly ? 'Starting VERIFIED SUBSCRIBER PARTIAL download' : 'Starting download'}: ` +
+                `${pending.length} media jobs, ` +
                 `${downloadPlan.total} physical writes ` +
                 `(main=${downloadPlan.main}, hidden=${downloadPlan.hidden}), ` +
                 `${workerCount} worker, ` +
@@ -12741,22 +12744,17 @@
                     ? batchElapsed / completed
                     : 0;
 
-            log(
-                `Download complete: ${completed} files in ` +
-                `${batchElapsed.toFixed(2)} s — average ` +
-                `${average.toFixed(2)} s/file.`
-            );
+            const p = state.downloadProgress;
+            const summary =
+                `${authorizedOnly ? 'VERIFIED SUBSCRIBER PARTIAL' : 'Download batch'} finished: ` +
+                `${completed} media jobs processed, ` +
+                `${p.succeeded}/${downloadPlan.total} physical writes succeeded, ` +
+                `${p.failed} failed, ${p.blocked} blocked; ` +
+                `${batchElapsed.toFixed(2)} s, ${average.toFixed(2)} s/job.` +
+                (authorizedOnly ? ' Overall PROFILE scan remains INCOMPLETE.' : '');
 
-            status(
-                `Download complete: ` +
-                `${state.downloaded} archive files, ` +
-                `${state.hiddenCopiesDownloaded} HIDDEN copies, ` +
-                `${state.failed} errors — ` +
-                `${average.toFixed(2)} s/media-job average.`,
-                state.failed
-                    ? 'warn'
-                    : 'ok'
-            );
+            log(summary, p.failed || p.blocked || authorizedOnly ? 'warn' : 'info');
+            status(summary, p.failed || p.blocked || authorizedOnly ? 'warn' : 'ok');
         }
 
         finally {
