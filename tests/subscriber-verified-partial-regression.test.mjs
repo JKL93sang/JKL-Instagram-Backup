@@ -232,4 +232,119 @@ assert.ok(source.includes('Overall PROFILE scan remains INCOMPLETE.'));
 assert.ok(source.includes('physical writes succeeded'));
 assert.ok(!source.includes("state.scanOutcome = 'COMPLETE';\n                captureVerifiedSubscriberSnapshot()"));
 
+
+/*
+ * Exercise the real downloadMissing control flow with a fake transport.
+ * This test never contacts Instagram or downloads actual media.
+ */
+function simulatedRunner(x, { ledgerBlocked = false, failLast = false } = {}) {
+    const saved = [];
+    const seenScopes = [];
+    const statuses = [];
+    const record = {
+        disabled: [],
+        flushes: [],
+    };
+    const beginDownloadProgress = pending => {
+        const main = pending.length;
+        const hidden = pending.length;
+        x.state.downloadProgress = {
+            status: 'running', total: main + hidden,
+            completed: 0, succeeded: 0, failed: 0,
+            blocked: 0, current: '',
+        };
+        return { main, hidden, total: main + hidden };
+    };
+    const downloadOne = async m => {
+        saved.push(m.id);
+        const p = x.state.downloadProgress;
+        p.completed += 2;
+        if (failLast && saved.length === 65) {
+            p.succeeded += 0;
+            p.failed++;
+            p.blocked++;
+        } else {
+            p.succeeded += 2;
+        }
+        return true;
+    };
+    const run = new Function(
+        'state', 'status', 'log',
+        'verifiedSubscriberDownloadIntegrity',
+        'completedScanIntegrity', 'incompleteCoverage',
+        'unverifiedArchiveHistory', 'disable', 'existingReason',
+        'isHiddenMedia', 'hiddenCopyExistingReason',
+        'beginDownloadProgress', 'APP', 'sleep',
+        'downloadOne', 'updateStats', 'flushLedger',
+        extract('downloadMissing') + '\nreturn downloadMissing;'
+    )(
+        x.state,
+        (message, level) => statuses.push({ message, level }),
+        (...parts) => x.logs.push(parts),
+        x.verifiedSubscriberDownloadIntegrity,
+        () => ({ ok: false, reason: 'PROFILE is not complete' }),
+        () => ['PROFILE grid'],
+        records => {
+            seenScopes.push([...records].map(m => m.id));
+            return ledgerBlocked
+                ? { total: 1, ledger: 1 }
+                : { total: 0, ledger: 0 };
+        },
+        disabled => record.disabled.push(disabled),
+        () => null,
+        m => m.sources.has('CONNECTED_HIDDEN_AUTHORIZED'),
+        () => null,
+        beginDownloadProgress,
+        { DOWNLOAD_WORKERS: 1, DOWNLOAD_DELAY: 0, DOWNLOAD_RETRIES: 3 },
+        async () => {},
+        downloadOne,
+        () => {},
+        value => record.flushes.push(value),
+    );
+    return { run, saved, seenScopes, statuses, record };
+}
+
+const x = fixture();
+x.captureVerifiedSubscriberSnapshot();
+const simulate = simulatedRunner(x);
+await simulate.run(false);
+assert.equal(simulate.saved.length, 0,
+    'normal download must remain blocked on an incomplete PROFILE');
+assert.ok(simulate.statuses.some(e => e.message.includes('PROFILE is not complete')));
+await simulate.run(true);
+assert.equal(simulate.saved.length, 65,
+    'partial download must dispatch only verified media');
+assert.ok(!simulate.saved.includes('public'));
+assert.ok(!simulate.saved.includes('unverified'));
+assert.ok(!simulate.saved.includes('preview-only'));
+assert.equal(simulate.seenScopes[0].length, 65);
+assert.equal(x.state.downloadProgress.succeeded, 130);
+assert.equal(x.state.downloadProgress.failed, 0);
+assert.equal(x.state.scanOutcome, 'INCOMPLETE');
+assert.equal(x.state.downloading, false);
+assert.deepEqual(simulate.record.disabled, [true, false]);
+assert.deepEqual(simulate.record.flushes, [true]);
+assert.ok(simulate.statuses.some(e => e.message.includes('PARTIAL')));
+
+const blocked = fixture();
+blocked.captureVerifiedSubscriberSnapshot();
+const blockedRun = simulatedRunner(blocked, { ledgerBlocked: true });
+await blockedRun.run(true);
+assert.equal(blockedRun.saved.length, 0,
+    'historical ledger must not bypass local-folder verification');
+assert.equal(blockedRun.seenScopes[0].length, 65);
+
+const failed = fixture();
+failed.captureVerifiedSubscriberSnapshot();
+const failedRun = simulatedRunner(failed, { failLast: true });
+await failedRun.run(true);
+assert.equal(failedRun.saved.length, 65);
+assert.equal(failed.state.downloadProgress.succeeded, 128);
+assert.equal(failed.state.downloadProgress.failed, 1);
+assert.equal(failed.state.downloadProgress.blocked, 1);
+assert.ok(failedRun.statuses.some(e =>
+    e.level === 'warn' &&
+    e.message.includes('128/130 physical writes succeeded')
+));
+
 console.log('Subscriber-authorized partial backup safety regression tests passed.');
