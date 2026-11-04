@@ -74,3 +74,6 @@ jobs:
 
       - name: Subscriber-authorized partial backup safety regression tests
         run: node tests/subscriber-verified-partial-regression.test.mjs
+
+      - name: Unique FAN CLUB / flat HIDDEN category routing tests
+        run: node tests/single-copy-archive-routing-regression.test.mjs
