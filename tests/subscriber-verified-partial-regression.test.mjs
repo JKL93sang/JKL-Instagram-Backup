@@ -17,6 +17,7 @@ function extract(name) {
 
 const methods = [
     'hiddenDiscoverySources',
+    'mediaArchiveCategory',
     'scanDownloadFingerprint',
     'verifiedSubscriberMedia',
     'captureVerifiedSubscriberSnapshot',
@@ -247,24 +248,22 @@ function simulatedRunner(x, { ledgerBlocked = false, failLast = false } = {}) {
     };
     const beginDownloadProgress = pending => {
         const main = pending.length;
-        const hidden = pending.length;
+        const hidden = 0;
         x.state.downloadProgress = {
-            status: 'running', total: main + hidden,
+            status: 'running', total: main,
             completed: 0, succeeded: 0, failed: 0,
             blocked: 0, current: '',
         };
-        return { main, hidden, total: main + hidden };
+        return { main, hidden, total: main };
     };
     const downloadOne = async m => {
         saved.push(m.id);
         const p = x.state.downloadProgress;
-        p.completed += 2;
+        p.completed += 1;
         if (failLast && saved.length === 65) {
-            p.succeeded += 0;
             p.failed++;
-            p.blocked++;
         } else {
-            p.succeeded += 2;
+            p.succeeded++;
         }
         return true;
     };
@@ -318,7 +317,7 @@ assert.ok(!simulate.saved.includes('public'));
 assert.ok(!simulate.saved.includes('unverified'));
 assert.ok(!simulate.saved.includes('preview-only'));
 assert.equal(simulate.seenScopes[0].length, 65);
-assert.equal(x.state.downloadProgress.succeeded, 130);
+assert.equal(x.state.downloadProgress.succeeded, 65);
 assert.equal(x.state.downloadProgress.failed, 0);
 assert.equal(x.state.scanOutcome, 'INCOMPLETE');
 assert.equal(x.state.downloading, false);
@@ -339,12 +338,12 @@ failed.captureVerifiedSubscriberSnapshot();
 const failedRun = simulatedRunner(failed, { failLast: true });
 await failedRun.run(true);
 assert.equal(failedRun.saved.length, 65);
-assert.equal(failed.state.downloadProgress.succeeded, 128);
+assert.equal(failed.state.downloadProgress.succeeded, 64);
 assert.equal(failed.state.downloadProgress.failed, 1);
-assert.equal(failed.state.downloadProgress.blocked, 1);
+assert.equal(failed.state.downloadProgress.blocked, 0);
 assert.ok(failedRun.statuses.some(e =>
     e.level === 'warn' &&
-    e.message.includes('128/130 physical writes succeeded')
+    e.message.includes('64/65 physical writes succeeded')
 ));
 
 console.log('Subscriber-authorized partial backup safety regression tests passed.');
