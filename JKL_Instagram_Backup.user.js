@@ -11123,6 +11123,10 @@
                 );
 
                 log('=== SCAN FINISHED — INCOMPLETE ===', 'warn');
+
+                // Only after every scan phase has stopped. This never
+                // changes PROFILE coverage or scanOutcome to COMPLETE.
+                captureVerifiedSubscriberSnapshot();
             }
         }
         catch (e) {
