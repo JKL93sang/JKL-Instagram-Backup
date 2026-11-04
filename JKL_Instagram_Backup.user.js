@@ -254,7 +254,6 @@
 
 
         downloaded: 0,
-        hiddenCopiesDownloaded: 0,
         failed: 0,
     };
 
@@ -1447,46 +1446,6 @@
             hiddenDiscovery:
                 hiddenDiscoverySources(m),
             downloadedAt:
-                new Date().toISOString(),
-        };
-
-        state.ledgerDirty++;
-
-        flushLedger(false);
-    }
-
-    function recordHiddenDownloaded(m) {
-        const db = loadDb();
-
-        const p =
-            db.profiles[state.userId] ||= {
-                userId: state.userId,
-                username: state.username,
-                updatedAt: null,
-                media: {},
-            };
-
-        p.username =
-            state.username;
-
-        p.updatedAt =
-            new Date().toISOString();
-
-        const previous =
-            p.media[String(m.id)] ||
-            {};
-
-        p.media[String(m.id)] = {
-            ...previous,
-            id: String(m.id),
-            filename: m.filename,
-            type: m.type,
-            timestamp: m.timestamp || null,
-            shortcode: m.shortcode || null,
-            sources: [...m.sources],
-            hiddenDiscovery:
-                hiddenDiscoverySources(m),
-            hiddenCopyDownloadedAt:
                 new Date().toISOString(),
         };
 
@@ -2775,29 +2734,6 @@
         );
 
         return true;
-    }
-
-    function rootHasHiddenDiscovery(rec) {
-        const sources =
-            rec?.sources instanceof Set
-                ? rec.sources
-                : new Set(
-                    Array.isArray(rec?.sources)
-                        ? rec.sources
-                        : []
-                );
-
-        for (const source of sources) {
-            if (
-                HIDDEN_DISCOVERY_SOURCES.has(
-                    String(source)
-                )
-            ) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     function diskSatisfiesOwnedRoot(rec) {
@@ -10896,7 +10832,6 @@
         };
 
         state.downloaded = 0;
-        state.hiddenCopiesDownloaded = 0;
         state.failed = 0;
         resetDownloadProgress('idle');
 
@@ -11378,7 +11313,7 @@
             `Local archive indexed: ` +
             `${files.length} files, ` +
             `${state.diskCanonical.size} canonical IDs, ` +
-            `${state.diskHidden.size} HIDDEN copies, ` +
+            `${state.diskHidden.size} HIDDEN-folder files, ` +
             `${state.legacy.size} legacy groups.`
         );
 
@@ -11475,28 +11410,6 @@
             state.diskLocations.get(id)?.has(mediaArchiveCategory(m))
         ) {
             return 'SESSION';
-        }
-
-        return null;
-    }
-
-    function hiddenCopyExistingReason(m) {
-        if (
-            !isHiddenMedia(m) ||
-            state.settings.force
-        ) {
-            return null;
-        }
-
-        const id =
-            String(
-                m.id
-            );
-
-        if (state.diskHidden.has(id)) {
-            return state.diskActive
-                ? 'DISK_HIDDEN'
-                : 'SESSION_HIDDEN';
         }
 
         return null;
@@ -11775,138 +11688,6 @@
 
         log(
             `✗ ${m.filename} — ` +
-            `${last?.message || 'download failed after retries'} ` +
-            `(${elapsed.toFixed(2)} s)`,
-            'error'
-        );
-
-        updateStats();
-
-        return false;
-    }
-
-    async function downloadHiddenCopy(m) {
-        if (
-            !isHiddenMedia(m) ||
-            hiddenCopyExistingReason(m)
-        ) {
-            return true;
-        }
-
-        const startedAt =
-            performance.now();
-
-        let last = null;
-
-        for (
-            let attempt = 1;
-            attempt <= APP.DOWNLOAD_RETRIES;
-            attempt++
-        ) {
-            if (state.cancelled) {
-                return false;
-            }
-
-            try {
-                await downloadAttempt(
-                    m,
-                    {
-                        hiddenCopy: true,
-                    }
-                );
-
-                state.diskHidden.add(
-                    String(m.id)
-                );
-
-                state.hiddenCopiesDownloaded++;
-
-                markDownloadOperation(
-                    true,
-                    m,
-                    'HIDDEN'
-                );
-
-                recordHiddenDownloaded(
-                    m
-                );
-
-                const elapsed =
-                    (performance.now() -
-                        startedAt) /
-                    1000;
-
-                log(
-                    `✓ HIDDEN COPY ${m.filename} — ` +
-                    `${elapsed.toFixed(2)} s ` +
-                    `[${hiddenDiscoverySources(m).join(', ')}]`
-                );
-
-                updateStats();
-
-                return true;
-            }
-            catch (e) {
-                last = e;
-
-                const illegalPath =
-                    /filename must not contain illegal characters|illegal filename|invalid filename/i
-                        .test(
-                            String(
-                                e?.message ||
-                                ''
-                            )
-                        );
-
-                if (illegalPath) {
-                    log(
-                        `HIDDEN download path rejected: "${e?.downloadPath || archiveDownloadPath(m, state.username, { hiddenCopy: true })}".`,
-                        'warn'
-                    );
-
-                    break;
-                }
-
-                if (
-                    attempt <
-                    APP.DOWNLOAD_RETRIES
-                ) {
-                    const wait =
-                        700 * attempt +
-                        rand(
-                            150,
-                            650
-                        );
-
-                    log(
-                        `↻ HIDDEN COPY ${m.filename} — retry ` +
-                        `${attempt + 1}/${APP.DOWNLOAD_RETRIES} ` +
-                        `after ${e.message}`,
-                        'warn'
-                    );
-
-                    await sleep(
-                        wait
-                    );
-                }
-            }
-        }
-
-        state.failed++;
-
-        markDownloadOperation(
-            false,
-            m,
-            'HIDDEN'
-        );
-
-        const elapsed =
-            (performance.now() -
-                startedAt) /
-            1000;
-
-        log(
-            `✗ HIDDEN COPY ${m.filename} — ` +
             `${last?.message || 'download failed after retries'} ` +
             `(${elapsed.toFixed(2)} s)`,
             'error'
@@ -12811,9 +12592,8 @@
                 },
                 hiddenArchive: {
                     media: hiddenMediaCount(),
-                    copiesVerified: state.diskHidden.size,
-                    copiesDownloadedThisSession:
-                        state.hiddenCopiesDownloaded,
+                    filesOnDisk: state.diskHidden.size,
+                    uniqueFilePolicy: true,
                 },
                 hydration: { ...state.hydration },
                 coverage: { ...state.coverage },
