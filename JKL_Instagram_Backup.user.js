@@ -11523,7 +11523,7 @@
         return null;
     }
 
-    function unverifiedArchiveHistory() {
+    function unverifiedArchiveHistory(mediaRecords = state.queue.values()) {
         const result = {
             total: 0,
             ledger: 0,
@@ -11538,7 +11538,7 @@
 
         for (
             const m
-            of state.queue.values()
+            of mediaRecords
         ) {
             const id =
                 String(m.id);
