@@ -862,25 +862,17 @@
 
     function downloadOperationPlan(mediaList = state.queue.values()) {
         let main = 0;
-        let hidden = 0;
 
         for (const m of mediaList) {
             if (!existingReason(m)) {
                 main++;
             }
-
-            if (
-                isHiddenMedia(m) &&
-                !hiddenCopyExistingReason(m)
-            ) {
-                hidden++;
-            }
         }
 
         return {
             main,
-            hidden,
-            total: main + hidden,
+            hidden: 0,
+            total: main,
         };
     }
 
@@ -1238,10 +1230,7 @@
     }
 
     function isHiddenMedia(m) {
-        return (
-            hiddenDiscoverySources(m)
-                .length > 0
-        );
+        return mediaArchiveCategory(m) === 'HIDDEN';
     }
 
     function hiddenMediaCount() {
@@ -1645,35 +1634,12 @@
                 'MEDIA'
             );
 
-        if (options?.hiddenCopy) {
-            return [
-                user,
-                sanitizePathComponent(
-                    `${user} - HIDDEN`,
-                    'HIDDEN',
-                    96
-                ),
-                String(
-                    m?.filename ||
-                    filename(m)
-                ),
-            ].join('/');
-        }
-
-        const folderType =
-            sanitizePathComponent(
-                ({
-                    POST: 'POSTS',
-                    REEL: 'REELS',
-                    HIGHLIGHT: 'HIGHLIGHTS',
-                    STORY: 'STORIES',
-                    TAGGED: 'TAGGED',
-                    AVATAR: 'AVATAR',
-                })[rawType] ||
-                rawType,
-                'MEDIA',
-                32
-            );
+        // Exactly one destination for each media ID; no parallel HIDDEN copy.
+        const folderType = sanitizePathComponent(
+            mediaArchiveCategory(m),
+            'MEDIA',
+            32
+        );
 
         const parts = [
             user,
