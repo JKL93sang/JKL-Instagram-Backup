@@ -12535,7 +12535,7 @@
         }
     }
 
-    async function downloadMissing() {
+    async function downloadMissing(authorizedOnly = false) {
         if (
             state.running ||
             state.downloading
@@ -12554,36 +12554,42 @@
             return;
         }
 
-        const scanIntegrity = completedScanIntegrity();
+        // Standard archive path still requires an immutable COMPLETE scan.
+        // Only a separate explicit action may select the verified subset.
+        const scanIntegrity = authorizedOnly
+            ? verifiedSubscriberDownloadIntegrity()
+            : completedScanIntegrity();
 
         if (!scanIntegrity.ok) {
             status(
-                `Download blocked: no immutable COMPLETE scan (${scanIntegrity.reason}).`,
+                `Download blocked: ${scanIntegrity.reason}.`,
                 'warn'
             );
-
             log(
-                `Archive guard blocked download: ${scanIntegrity.reason}. ` +
-                `Run a new SCAN and require === SCAN FINISHED — COMPLETE === first.`,
+                `Archive guard blocked ${authorizedOnly ? 'verified subscriber' : 'full'} download: ` +
+                `${scanIntegrity.reason}.`,
                 'warn'
             );
-
             return;
         }
 
-        const incomplete = incompleteCoverage();
-
-        if (incomplete.length) {
-            status(
-                `Download blocked: incomplete ${incomplete.join(', ')}.`,
-                'warn'
-            );
-
-            return;
+        if (!authorizedOnly) {
+            const incomplete = incompleteCoverage();
+            if (incomplete.length) {
+                status(
+                    `Download blocked: incomplete ${incomplete.join(', ')}.`,
+                    'warn'
+                );
+                return;
+            }
         }
+
+        const mediaScope = authorizedOnly
+            ? scanIntegrity.media
+            : [...state.queue.values()];
 
         const unverified =
-            unverifiedArchiveHistory();
+            unverifiedArchiveHistory(mediaScope);
 
         if (unverified.total) {
             status(
@@ -12609,7 +12615,7 @@
 
         try {
             const pending =
-                [...state.queue.values()]
+                mediaScope
                     .filter(
                         m =>
                             !existingReason(m) ||
