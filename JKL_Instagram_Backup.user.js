@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.68
-// @description  Instagram backup with verified subscriber-only partial archiving. EXPERIMENTAL v1.5.68.
+// @version      1.5.70
+// @description  Instagram backup: unique file per media, FAN CLUB / HIDDEN routing, verified subscriber partial backup.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/feat/verified-subscriber-partial-download/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/feat/verified-subscriber-partial-download/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/feat/verified-subscriber-partial-download/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/main/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.68', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.70', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -247,13 +247,13 @@
         diskActive: false,
         diskCanonical: new Set(),
         diskCanonicalMeta: new Map(),
+        diskLocations: new Map(),
         diskHidden: new Set(),
         diskStoryHighlight: new Set(),
         legacy: new Map(),
 
 
         downloaded: 0,
-        hiddenCopiesDownloaded: 0,
         failed: 0,
     };
 
@@ -862,25 +862,17 @@
 
     function downloadOperationPlan(mediaList = state.queue.values()) {
         let main = 0;
-        let hidden = 0;
 
         for (const m of mediaList) {
             if (!existingReason(m)) {
                 main++;
             }
-
-            if (
-                isHiddenMedia(m) &&
-                !hiddenCopyExistingReason(m)
-            ) {
-                hidden++;
-            }
         }
 
         return {
             main,
-            hidden,
-            total: main + hidden,
+            hidden: 0,
+            total: main,
         };
     }
 
@@ -1175,6 +1167,47 @@
         );
     }
 
+    // Provenance is not a visibility label. FAN CLUB requires authenticated
+    // media-info. HIDDEN retains only authenticated other connected candidates.
+    function mediaArchiveCategory(m) {
+        if (m?.visibility === 'fan_club') {
+            return 'FAN CLUB';
+        }
+
+        const sources = m?.sources instanceof Set
+            ? m.sources
+            : new Set(Array.isArray(m?.sources) ? m.sources : []);
+
+        if (
+            m?.visibility === 'hidden' ||
+            sources.has('CONNECTED_HIDDEN_AUTHORIZED')
+        ) {
+            return 'HIDDEN';
+        }
+
+        return ({
+            POST: 'POSTS',
+            REEL: 'REELS',
+            HIGHLIGHT: 'HIGHLIGHTS',
+            STORY: 'STORIES',
+            TAGGED: 'TAGGED',
+            AVATAR: 'AVATAR',
+        })[String(m?.type || '')] || String(m?.type || 'MEDIA');
+    }
+
+    function authenticatedMediaVisibility(raw, source) {
+        if (!['CONNECTED_HIDDEN_AUTHORIZED', 'OWNED_DEEP_HYDRATION'].includes(source)) {
+            return '';
+        }
+
+        const value = String(raw?.subscription_media_visibility || '')
+            .trim().toLowerCase();
+
+        if (value === 'fan_club') return 'fan_club';
+        if (value === 'hidden') return 'hidden';
+        return '';
+    }
+
     function hiddenDiscoverySources(m) {
         const sources =
             m?.sources instanceof Set
@@ -1197,10 +1230,7 @@
     }
 
     function isHiddenMedia(m) {
-        return (
-            hiddenDiscoverySources(m)
-                .length > 0
-        );
+        return mediaArchiveCategory(m) === 'HIDDEN';
     }
 
     function hiddenMediaCount() {
@@ -1411,49 +1441,11 @@
             timestamp: m.timestamp || null,
             shortcode: m.shortcode || null,
             sources: [...m.sources],
+            visibility: m.visibility || null,
+            archiveCategory: mediaArchiveCategory(m),
             hiddenDiscovery:
                 hiddenDiscoverySources(m),
             downloadedAt:
-                new Date().toISOString(),
-        };
-
-        state.ledgerDirty++;
-
-        flushLedger(false);
-    }
-
-    function recordHiddenDownloaded(m) {
-        const db = loadDb();
-
-        const p =
-            db.profiles[state.userId] ||= {
-                userId: state.userId,
-                username: state.username,
-                updatedAt: null,
-                media: {},
-            };
-
-        p.username =
-            state.username;
-
-        p.updatedAt =
-            new Date().toISOString();
-
-        const previous =
-            p.media[String(m.id)] ||
-            {};
-
-        p.media[String(m.id)] = {
-            ...previous,
-            id: String(m.id),
-            filename: m.filename,
-            type: m.type,
-            timestamp: m.timestamp || null,
-            shortcode: m.shortcode || null,
-            sources: [...m.sources],
-            hiddenDiscovery:
-                hiddenDiscoverySources(m),
-            hiddenCopyDownloadedAt:
                 new Date().toISOString(),
         };
 
@@ -1604,35 +1596,12 @@
                 'MEDIA'
             );
 
-        if (options?.hiddenCopy) {
-            return [
-                user,
-                sanitizePathComponent(
-                    `${user} - HIDDEN`,
-                    'HIDDEN',
-                    96
-                ),
-                String(
-                    m?.filename ||
-                    filename(m)
-                ),
-            ].join('/');
-        }
-
-        const folderType =
-            sanitizePathComponent(
-                ({
-                    POST: 'POSTS',
-                    REEL: 'REELS',
-                    HIGHLIGHT: 'HIGHLIGHTS',
-                    STORY: 'STORIES',
-                    TAGGED: 'TAGGED',
-                    AVATAR: 'AVATAR',
-                })[rawType] ||
-                rawType,
-                'MEDIA',
-                32
-            );
+        // Exactly one destination for each media ID; no parallel HIDDEN copy.
+        const folderType = sanitizePathComponent(
+            mediaArchiveCategory(m),
+            'MEDIA',
+            32
+        );
 
         const parts = [
             user,
@@ -2122,6 +2091,7 @@
                 root,
                 typeHint
             );
+        const confirmedVisibility = authenticatedMediaVisibility(root, source);
 
         if (
             type === 'POST' &&
@@ -2265,6 +2235,7 @@
                         ),
 
                 url,
+                visibility: confirmedVisibility,
 
                 diskBacked:
                     !url &&
@@ -2317,6 +2288,14 @@
                 old.sources.add(
                     source || type
                 );
+                if (old.visibility === 'fan_club' || confirmedVisibility === 'fan_club') {
+                    m.visibility = 'fan_club';
+                    old.visibility = 'fan_club';
+                } else if (!confirmedVisibility) {
+                    m.visibility = old.visibility || '';
+                } else {
+                    old.visibility = confirmedVisibility;
+                }
 
                 old.rootIds ||= new Set();
 
@@ -2343,6 +2322,7 @@
 
                     m.rootIds =
                         old.rootIds;
+                    m.visibility = old.visibility || m.visibility;
 
                     state.queue.set(
                         id,
@@ -2756,29 +2736,6 @@
         return true;
     }
 
-    function rootHasHiddenDiscovery(rec) {
-        const sources =
-            rec?.sources instanceof Set
-                ? rec.sources
-                : new Set(
-                    Array.isArray(rec?.sources)
-                        ? rec.sources
-                        : []
-                );
-
-        for (const source of sources) {
-            if (
-                HIDDEN_DISCOVERY_SOURCES.has(
-                    String(source)
-                )
-            ) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     function diskSatisfiesOwnedRoot(rec) {
         if (
             !state.diskActive ||
@@ -2812,10 +2769,10 @@
         }
 
         for (const unitId of unitIds) {
+            const queued = state.queue.get(unitId);
             if (
-                !state.diskCanonical.has(
-                    unitId
-                )
+                !queued ||
+                !state.diskLocations.get(unitId)?.has(mediaArchiveCategory(queued))
             ) {
                 return false;
             }
@@ -2841,39 +2798,8 @@
             }
         }
 
-        /*
-         * HIDDEN discovery itself is never skipped. This function runs only
-         * after PUBLIC SHADOW / CONNECTED HIDDEN. If a HIDDEN duplicate is
-         * missing, an URL must already be queued for that exact unit; otherwise
-         * deep hydration remains mandatory so the duplicate can still be made.
-         */
-        if (rootHasHiddenDiscovery(rec)) {
-            for (const unitId of unitIds) {
-                if (
-                    state.diskHidden.has(
-                        unitId
-                    )
-                ) {
-                    continue;
-                }
-
-                const media =
-                    state.queue.get(
-                        unitId
-                    );
-
-                if (
-                    !media ||
-                    !media?.rootIds?.has?.(
-                        String(rec.id)
-                    ) ||
-                    !isHiddenMedia(media) ||
-                    !media.url
-                ) {
-                    return false;
-                }
-            }
-        }
+        // No duplicate HIDDEN copy requirement: the single file already
+        // verified in its exact target category is sufficient.
 
         return true;
     }
@@ -5665,7 +5591,7 @@
             if (isHiddenMedia(m)) {
                 hiddenTotal++;
 
-                if (hiddenCopyExistingReason(m)) {
+                if (existingReason(m)) {
                     hiddenExisting++;
                 }
             }
@@ -6167,7 +6093,7 @@
                 </div>
 
                 <div class="diag-row">
-                    <span>HIDDEN missing copies</span>
+                    <span>HIDDEN missing files</span>
                     <b>${hiddenMissing}</b>
                 </div>
 
@@ -10294,6 +10220,8 @@
                 String(m.type || ''),
                 String(m.filename || ''),
                 String(m.url || ''),
+                String(m.visibility || ''),
+                mediaArchiveCategory(m),
                 hiddenDiscoverySources(m)
                     .sort()
                     .join(','),
@@ -10904,7 +10832,6 @@
         };
 
         state.downloaded = 0;
-        state.hiddenCopiesDownloaded = 0;
         state.failed = 0;
         resetDownloadProgress('idle');
 
@@ -11237,6 +11164,7 @@
     function indexFolder(files) {
         state.diskCanonical.clear();
         state.diskCanonicalMeta.clear();
+        state.diskLocations.clear();
         state.diskHidden.clear();
         state.diskStoryHighlight.clear();
         state.legacy.clear();
@@ -11277,42 +11205,33 @@
                     )
                         .toUpperCase();
 
-                const hiddenPath =
-                    /(?:^|\/)[^/]+\s-\sHIDDEN(?:\/|$)/i
-                        .test(
-                            relativePath
-                        );
+                const folder = String(
+                    relativePath.match(
+                        /(?:^|\/)(?:[^/]*\s-\s)?(FAN CLUB|HIDDEN|POSTS|REELS|STORIES|HIGHLIGHTS|TAGGED|AVATAR)(?:\/|$)/i
+                    )?.[1] || ''
+                ).toUpperCase();
 
-                if (hiddenPath) {
-                    state.diskHidden
-                        .add(m[1]);
+                const id = String(m[1]);
+                state.diskCanonical.add(id);
+                if (folder) {
+                    const locations = state.diskLocations.get(id) || new Set();
+                    locations.add(folder);
+                    state.diskLocations.set(id, locations);
                 }
-                else {
-                    const id =
-                        String(m[1]);
+                if (folder === 'HIDDEN') {
+                    // Existing HIDDEN files are preserved, never deleted.
+                    state.diskHidden.add(id);
+                }
 
-                    state.diskCanonical
-                        .add(id);
-
-                    state.diskCanonicalMeta
-                        .set(
-                            id,
-                            {
-                                type:
-                                    canonicalType,
-                                ext:
-                                    String(
-                                        m[2] ||
-                                        ''
-                                    )
-                                        .toLowerCase(),
-                                name:
-                                    String(
-                                        f.name ||
-                                        ''
-                                    ),
-                            }
-                        );
+                // Keep canonical structure evidence without treating a
+                // HIDDEN legacy copy as a different physical media ID.
+                if (!state.diskCanonicalMeta.has(id) || folder !== 'HIDDEN') {
+                    state.diskCanonicalMeta.set(id, {
+                        type: canonicalType,
+                        ext: String(m[2] || '').toLowerCase(),
+                        name: String(f.name || ''),
+                        folder,
+                    });
                 }
 
                 continue;
@@ -11394,7 +11313,7 @@
             `Local archive indexed: ` +
             `${files.length} files, ` +
             `${state.diskCanonical.size} canonical IDs, ` +
-            `${state.diskHidden.size} HIDDEN copies, ` +
+            `${state.diskHidden.size} HIDDEN-folder files, ` +
             `${state.legacy.size} legacy groups.`
         );
 
@@ -11462,25 +11381,20 @@
         const id =
             String(m.id);
 
-        if (
-            state.diskActive
-        ) {
-            if (
-                state.diskCanonical
-                    .has(id)
-            ) {
+        if (state.diskActive) {
+            if (state.diskLocations.get(id)?.has(mediaArchiveCategory(m))) {
                 return 'DISK';
             }
 
+            // Legacy matches have no reliable visibility information.
+            // Never mistake an old POSTS/HIDDEN copy for a FAN CLUB file.
             if (
+                !['FAN CLUB', 'HIDDEN'].includes(mediaArchiveCategory(m)) &&
                 legacyMatch(m)
             ) {
                 return 'LEGACY';
             }
 
-            /*
-             * Disk is authoritative once explicitly indexed.
-             */
             return null;
         }
 
@@ -11492,32 +11406,10 @@
          * instead of silently skipping media.
          */
         if (
-            state.diskCanonical
-                .has(id)
+            state.diskCanonical.has(id) &&
+            state.diskLocations.get(id)?.has(mediaArchiveCategory(m))
         ) {
             return 'SESSION';
-        }
-
-        return null;
-    }
-
-    function hiddenCopyExistingReason(m) {
-        if (
-            !isHiddenMedia(m) ||
-            state.settings.force
-        ) {
-            return null;
-        }
-
-        const id =
-            String(
-                m.id
-            );
-
-        if (state.diskHidden.has(id)) {
-            return state.diskActive
-                ? 'DISK_HIDDEN'
-                : 'SESSION_HIDDEN';
         }
 
         return null;
@@ -11673,6 +11565,9 @@
                     .add(
                         String(m.id)
                     );
+                const locations = state.diskLocations.get(String(m.id)) || new Set();
+                locations.add(mediaArchiveCategory(m));
+                state.diskLocations.set(String(m.id), locations);
 
                 if (state.diskActive) {
                     state.diskCanonicalMeta
@@ -11696,6 +11591,7 @@
                                         m.filename ||
                                         ''
                                     ),
+                                folder: mediaArchiveCategory(m),
                             }
                         );
                 }
@@ -11802,178 +11698,8 @@
         return false;
     }
 
-    async function downloadHiddenCopy(m) {
-        if (
-            !isHiddenMedia(m) ||
-            hiddenCopyExistingReason(m)
-        ) {
-            return true;
-        }
-
-        const startedAt =
-            performance.now();
-
-        let last = null;
-
-        for (
-            let attempt = 1;
-            attempt <= APP.DOWNLOAD_RETRIES;
-            attempt++
-        ) {
-            if (state.cancelled) {
-                return false;
-            }
-
-            try {
-                await downloadAttempt(
-                    m,
-                    {
-                        hiddenCopy: true,
-                    }
-                );
-
-                state.diskHidden.add(
-                    String(m.id)
-                );
-
-                state.hiddenCopiesDownloaded++;
-
-                markDownloadOperation(
-                    true,
-                    m,
-                    'HIDDEN'
-                );
-
-                recordHiddenDownloaded(
-                    m
-                );
-
-                const elapsed =
-                    (performance.now() -
-                        startedAt) /
-                    1000;
-
-                log(
-                    `✓ HIDDEN COPY ${m.filename} — ` +
-                    `${elapsed.toFixed(2)} s ` +
-                    `[${hiddenDiscoverySources(m).join(', ')}]`
-                );
-
-                updateStats();
-
-                return true;
-            }
-            catch (e) {
-                last = e;
-
-                const illegalPath =
-                    /filename must not contain illegal characters|illegal filename|invalid filename/i
-                        .test(
-                            String(
-                                e?.message ||
-                                ''
-                            )
-                        );
-
-                if (illegalPath) {
-                    log(
-                        `HIDDEN download path rejected: "${e?.downloadPath || archiveDownloadPath(m, state.username, { hiddenCopy: true })}".`,
-                        'warn'
-                    );
-
-                    break;
-                }
-
-                if (
-                    attempt <
-                    APP.DOWNLOAD_RETRIES
-                ) {
-                    const wait =
-                        700 * attempt +
-                        rand(
-                            150,
-                            650
-                        );
-
-                    log(
-                        `↻ HIDDEN COPY ${m.filename} — retry ` +
-                        `${attempt + 1}/${APP.DOWNLOAD_RETRIES} ` +
-                        `after ${e.message}`,
-                        'warn'
-                    );
-
-                    await sleep(
-                        wait
-                    );
-                }
-            }
-        }
-
-        state.failed++;
-
-        markDownloadOperation(
-            false,
-            m,
-            'HIDDEN'
-        );
-
-        const elapsed =
-            (performance.now() -
-                startedAt) /
-            1000;
-
-        log(
-            `✗ HIDDEN COPY ${m.filename} — ` +
-            `${last?.message || 'download failed after retries'} ` +
-            `(${elapsed.toFixed(2)} s)`,
-            'error'
-        );
-
-        updateStats();
-
-        return false;
-    }
-
     async function downloadOne(m) {
-        const mainExisting =
-            existingReason(m);
-
-        const hiddenNeeded =
-            isHiddenMedia(m) &&
-            !hiddenCopyExistingReason(m);
-
-        if (!mainExisting) {
-            const mainOk =
-                await downloadMainOne(
-                    m
-                );
-
-            if (!mainOk) {
-                if (
-                    hiddenNeeded &&
-                    !state.cancelled
-                ) {
-                    markDownloadOperation(
-                        false,
-                        m,
-                        'HIDDEN',
-                        { blocked: true }
-                    );
-
-                    updateStats();
-                }
-
-                return false;
-            }
-        }
-
-        if (hiddenNeeded) {
-            return downloadHiddenCopy(
-                m
-            );
-        }
-
-        return true;
+        return existingReason(m) ? true : downloadMainOne(m);
     }
     function diagnosticDownloadPath(m, index) {
         const user = sanitize(
@@ -12616,14 +12342,7 @@
         try {
             const pending =
                 mediaScope
-                    .filter(
-                        m =>
-                            !existingReason(m) ||
-                            (
-                                isHiddenMedia(m) &&
-                                !hiddenCopyExistingReason(m)
-                            )
-                    );
+                    .filter(m => !existingReason(m));
 
             const downloadPlan =
                 beginDownloadProgress(
@@ -12662,8 +12381,7 @@
             log(
                 `${authorizedOnly ? 'Starting VERIFIED SUBSCRIBER PARTIAL download' : 'Starting download'}: ` +
                 `${pending.length} media jobs, ` +
-                `${downloadPlan.total} physical writes ` +
-                `(main=${downloadPlan.main}, hidden=${downloadPlan.hidden}), ` +
+                `${downloadPlan.total} physical writes (one per media), ` +
                 `${workerCount} worker, ` +
                 `${APP.DOWNLOAD_RETRIES} attempts max per file, ` +
                 `inter-file delay=${APP.DOWNLOAD_DELAY} ms.`
@@ -12838,6 +12556,8 @@
                     null,
                 sources:
                     [...m.sources],
+                visibility: m.visibility || null,
+                archiveCategory: mediaArchiveCategory(m),
                 hidden:
                     isHiddenMedia(m),
                 hiddenDiscovery:
@@ -12872,9 +12592,8 @@
                 },
                 hiddenArchive: {
                     media: hiddenMediaCount(),
-                    copiesVerified: state.diskHidden.size,
-                    copiesDownloadedThisSession:
-                        state.hiddenCopiesDownloaded,
+                    filesOnDisk: state.diskHidden.size,
+                    uniqueFilePolicy: true,
                 },
                 hydration: { ...state.hydration },
                 coverage: { ...state.coverage },
