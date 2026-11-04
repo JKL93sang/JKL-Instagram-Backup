@@ -11299,7 +11299,7 @@
 
                 const folder = String(
                     relativePath.match(
-                        /(?:^|\\/)(?:[^/]*\\s-\\s)?(FAN CLUB|HIDDEN|POSTS|REELS|STORIES|HIGHLIGHTS|TAGGED|AVATAR)(?:\\/|$)/i
+                        /(?:^|\/)(?:[^/]*\s-\s)?(FAN CLUB|HIDDEN|POSTS|REELS|STORIES|HIGHLIGHTS|TAGGED|AVATAR)(?:\/|$)/i
                     )?.[1] || ''
                 ).toUpperCase();
 
@@ -11473,25 +11473,20 @@
         const id =
             String(m.id);
 
-        if (
-            state.diskActive
-        ) {
-            if (
-                state.diskCanonical
-                    .has(id)
-            ) {
+        if (state.diskActive) {
+            if (state.diskLocations.get(id)?.has(mediaArchiveCategory(m))) {
                 return 'DISK';
             }
 
+            // Legacy matches have no reliable visibility information.
+            // Never mistake an old POSTS/HIDDEN copy for a FAN CLUB file.
             if (
+                !['FAN CLUB', 'HIDDEN'].includes(mediaArchiveCategory(m)) &&
                 legacyMatch(m)
             ) {
                 return 'LEGACY';
             }
 
-            /*
-             * Disk is authoritative once explicitly indexed.
-             */
             return null;
         }
 
@@ -11503,8 +11498,8 @@
          * instead of silently skipping media.
          */
         if (
-            state.diskCanonical
-                .has(id)
+            state.diskCanonical.has(id) &&
+            state.diskLocations.get(id)?.has(mediaArchiveCategory(m))
         ) {
             return 'SESSION';
         }
@@ -11684,6 +11679,9 @@
                     .add(
                         String(m.id)
                     );
+                const locations = state.diskLocations.get(String(m.id)) || new Set();
+                locations.add(mediaArchiveCategory(m));
+                state.diskLocations.set(String(m.id), locations);
 
                 if (state.diskActive) {
                     state.diskCanonicalMeta
@@ -11707,6 +11705,7 @@
                                         m.filename ||
                                         ''
                                     ),
+                                folder: mediaArchiveCategory(m),
                             }
                         );
                 }
