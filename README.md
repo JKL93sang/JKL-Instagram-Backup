@@ -1,5 +1,21 @@
 # JKL Instagram Backup
 
+## Experimental v1.5.68 — authorized subscriber partial backup
+
+This **test-branch-only** version adds **DOWNLOAD SUBSCRIBER VERIFIED (PARTIAL)**. It can save a bounded subset of subscriber posts that the authenticated Instagram session has independently resolved through full media-info, even if the general PROFILE scan cannot prove completeness.
+
+- Its action is separate from **DOWNLOAD MISSING**, which still requires an immutable **COMPLETE** scan.
+- The verified subset is frozen after an **INCOMPLETE** scan with completed CONNECTED HIDDEN and OWNED hydration. The profile identity, source classifications and full queue fingerprint are checked again before downloading. Previews, unauthenticated/public-only roots, API errors, and changed scan data cannot enter the subset.
+- It displays **PARTIAL** in the status and reports actual physical successes and failures; it **does not prove that all paid posts have been found**.
+- It uses the same media download/ledger/local-folder safety mechanisms, without bypassing subscriber permissions or adding exploration calls.
+- The live browser behavior of this new action remains **unverified**. Automated CI tests simulate the 65-verified-root case and negative guards.
+
+Test-install URL (Tampermonkey, only one active copy):
+
+https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/feat/verified-subscriber-partial-download/JKL_Instagram_Backup.user.js
+
+The main branch and its current stable v1.5.67 installation remain unchanged. This is **not yet a stable release**.
+
 A Tampermonkey userscript for backing up Instagram media that is **already accessible to the signed-in browser session**.
 
 Current public version: **1.5.67** (stable, `main`).
