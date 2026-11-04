@@ -1442,6 +1442,8 @@
             timestamp: m.timestamp || null,
             shortcode: m.shortcode || null,
             sources: [...m.sources],
+            visibility: m.visibility || null,
+            archiveCategory: mediaArchiveCategory(m),
             hiddenDiscovery:
                 hiddenDiscoverySources(m),
             downloadedAt:
@@ -5653,7 +5655,7 @@
             if (isHiddenMedia(m)) {
                 hiddenTotal++;
 
-                if (hiddenCopyExistingReason(m)) {
+                if (existingReason(m)) {
                     hiddenExisting++;
                 }
             }
@@ -6155,7 +6157,7 @@
                 </div>
 
                 <div class="diag-row">
-                    <span>HIDDEN missing copies</span>
+                    <span>HIDDEN missing files</span>
                     <b>${hiddenMissing}</b>
                 </div>
 
@@ -10282,6 +10284,8 @@
                 String(m.type || ''),
                 String(m.filename || ''),
                 String(m.url || ''),
+                String(m.visibility || ''),
+                mediaArchiveCategory(m),
                 hiddenDiscoverySources(m)
                     .sort()
                     .join(','),
@@ -12771,6 +12775,8 @@
                     null,
                 sources:
                     [...m.sources],
+                visibility: m.visibility || null,
+                archiveCategory: mediaArchiveCategory(m),
                 hidden:
                     isHiddenMedia(m),
                 hiddenDiscovery:
