@@ -188,6 +188,10 @@
         rootCatalog: new Map(),
         queue: new Map(),
 
+        // Authorized only after full authenticated media-info, never previews.
+        verifiedSubscriberRootIds: new Set(),
+        verifiedSubscriberSnapshot: null,
+
         roots: {
             POST: new Set(),
             REEL: new Set(),
@@ -953,6 +957,7 @@
         state.scanUserId = '';
         state.scanQueueSize = 0;
         state.scanQueueFingerprint = '';
+        state.verifiedSubscriberSnapshot = null;
     }
 
     function resetCoverage() {
@@ -979,6 +984,8 @@
         state.hidden.previewOnly = 0;
         state.hidden.failed = 0;
         state.hidden.recoveredCodes = [];
+        state.verifiedSubscriberRootIds.clear();
+        state.verifiedSubscriberSnapshot = null;
 
         state.hydration.totalRoots = 0;
         state.hydration.hydratedRoots = 0;
@@ -7783,6 +7790,9 @@
                     throw new Error('authenticated media-info returned no downloadable unit');
                 }
 
+                // The candidate passed authenticated media-info, owner
+                // matching, media selection and downloadable-unit checks.
+                state.verifiedSubscriberRootIds.add(String(pk));
                 state.hidden.recovered++;
                 state.hidden.recoveredCodes.push(
                     String(
