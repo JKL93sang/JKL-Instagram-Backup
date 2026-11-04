@@ -247,6 +247,7 @@
         diskActive: false,
         diskCanonical: new Set(),
         diskCanonicalMeta: new Map(),
+        diskLocations: new Map(),
         diskHidden: new Set(),
         diskStoryHighlight: new Set(),
         legacy: new Map(),
@@ -11255,6 +11256,7 @@
     function indexFolder(files) {
         state.diskCanonical.clear();
         state.diskCanonicalMeta.clear();
+        state.diskLocations.clear();
         state.diskHidden.clear();
         state.diskStoryHighlight.clear();
         state.legacy.clear();
@@ -11295,42 +11297,33 @@
                     )
                         .toUpperCase();
 
-                const hiddenPath =
-                    /(?:^|\/)[^/]+\s-\sHIDDEN(?:\/|$)/i
-                        .test(
-                            relativePath
-                        );
+                const folder = String(
+                    relativePath.match(
+                        /(?:^|\\/)(?:[^/]*\\s-\\s)?(FAN CLUB|HIDDEN|POSTS|REELS|STORIES|HIGHLIGHTS|TAGGED|AVATAR)(?:\\/|$)/i
+                    )?.[1] || ''
+                ).toUpperCase();
 
-                if (hiddenPath) {
-                    state.diskHidden
-                        .add(m[1]);
+                const id = String(m[1]);
+                state.diskCanonical.add(id);
+                if (folder) {
+                    const locations = state.diskLocations.get(id) || new Set();
+                    locations.add(folder);
+                    state.diskLocations.set(id, locations);
                 }
-                else {
-                    const id =
-                        String(m[1]);
+                if (folder === 'HIDDEN') {
+                    // Existing HIDDEN files are preserved, never deleted.
+                    state.diskHidden.add(id);
+                }
 
-                    state.diskCanonical
-                        .add(id);
-
-                    state.diskCanonicalMeta
-                        .set(
-                            id,
-                            {
-                                type:
-                                    canonicalType,
-                                ext:
-                                    String(
-                                        m[2] ||
-                                        ''
-                                    )
-                                        .toLowerCase(),
-                                name:
-                                    String(
-                                        f.name ||
-                                        ''
-                                    ),
-                            }
-                        );
+                // Keep canonical structure evidence without treating a
+                // HIDDEN legacy copy as a different physical media ID.
+                if (!state.diskCanonicalMeta.has(id) || folder !== 'HIDDEN') {
+                    state.diskCanonicalMeta.set(id, {
+                        type: canonicalType,
+                        ext: String(m[2] || '').toLowerCase(),
+                        name: String(f.name || ''),
+                        folder,
+                    });
                 }
 
                 continue;
