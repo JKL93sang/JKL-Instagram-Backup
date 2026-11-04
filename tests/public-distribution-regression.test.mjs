@@ -23,7 +23,7 @@ const expectedRepo =
     'https://github.com/JKL93sang/JKL-Instagram-Backup';
 
 const expectedRaw =
-    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/feat/verified-subscriber-partial-download/JKL_Instagram_Backup.user.js';
+    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/feat/one-file-fan-club-flat-hidden/JKL_Instagram_Backup.user.js';
 
 assert.equal(
     meta('name'),
@@ -48,7 +48,7 @@ assert.equal(
 
 assert.equal(
     meta('source'),
-    expectedRepo + '/blob/feat/verified-subscriber-partial-download/JKL_Instagram_Backup.user.js'
+    expectedRepo + '/blob/feat/one-file-fan-club-flat-hidden/JKL_Instagram_Backup.user.js'
 );
 
 assert.equal(
@@ -75,9 +75,9 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.68');
+assert.equal(metadataVersion, '1.5.69');
 assert.equal(metadataVersion, appVersion);
-assert.match(meta('description'), /EXPERIMENTAL v1\.5\.68/i,
+assert.match(meta('description'), /EXPERIMENTAL v1\.5\.69/i,
     'Branch installation must be clearly marked as experimental');
 
 
