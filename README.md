@@ -1,5 +1,20 @@
 # JKL Instagram Backup
 
+## Experimental v1.5.69 — one file per media, separated by visibility
+
+This **test branch** builds on the separately verified v1.5.68 partial-subscriber backup. It changes where files are **written**, not how access rights or scan completeness are determined.
+
+- Authenticated media-info with `subscription_media_visibility=fan_club` → **`<profile> - FAN CLUB/`** (single flat directory, no POST/REEL subfolders).
+- Other authenticated `CONNECTED_HIDDEN_AUTHORIZED` candidates → **`<profile> - HIDDEN/`** (flat, no subfolders); provenance is not proof of Instagram privacy.
+- Public-shadow-discovered media and normal publications → **`<profile> - POSTS/`**, **`<profile> - REELS/`** as appropriate. Public shadow alone is **not** HIDDEN.
+- Exactly **one physical download per media ID**: no parallel HIDDEN copy. The media type, source, confirmed visibility and selected archive category are retained in the manifest/ledger.
+- When a local folder is indexed, deduplication compares **the expected category**, not only the media ID. Older files in POSTS or HIDDEN do not incorrectly satisfy a missing FAN CLUB destination.
+- **No files are deleted or moved automatically.** Previously downloaded POST/HIDDEN duplicates stay intact. A later scan and DOWNLOAD PARTIAL may create the one properly categorized FAN CLUB file; manually reconcile old copies only after confirming the new file.
+- Existing security checks for `INCOMPLETE` PROFILE scans, authenticated media-info, identity and immutable queue snapshots are preserved.
+- CI adds folder-routing, duplicate-prevention, disk history and subscriber-partial safety regressions. **Live browser validation of this new directory structure is still pending.**
+
+[Install experimental v1.5.69](https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/feat/one-file-fan-club-flat-hidden/JKL_Instagram_Backup.user.js) — use only one active Tampermonkey copy, and keep main stable v1.5.67 untouched.
+
 ## Experimental v1.5.68 — authorized subscriber partial backup
 
 This **test-branch-only** version adds **DOWNLOAD SUBSCRIBER VERIFIED (PARTIAL)**. It can save a bounded subset of subscriber posts that the authenticated Instagram session has independently resolved through full media-info, even if the general PROFILE scan cannot prove completeness.
