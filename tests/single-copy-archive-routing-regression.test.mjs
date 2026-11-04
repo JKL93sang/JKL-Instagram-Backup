@@ -15,6 +15,7 @@ function extract(name) {
 }
 
 const helpers = new Function(
+    'sanitizePathComponent', 'filename',
     [
         'authenticatedMediaVisibility',
         'mediaArchiveCategory',
@@ -24,7 +25,9 @@ const helpers = new Function(
 );
 const { authenticatedMediaVisibility: visibility,
     mediaArchiveCategory: category,
-    archiveDownloadPath: archivePath } = helpers();
+    archiveDownloadPath: archivePath } = helpers(
+    x => String(x), m => m.filename
+);
 
 const sources = (...xs) => new Set(xs);
 const name = 'muat0ri - POST - 2025_05_01 - 123456.jpg';
