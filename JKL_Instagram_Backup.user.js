@@ -11075,8 +11075,11 @@
             }
         }
 
+        // PROFILE is the MAIN GRID. The independent REELS tab may be
+        // unavailable, but that must not invalidate an exhaustively
+        // paginated and identity-scoped PUBLIC main grid. REELS completeness
+        // remains an independent mandatory guard for a full archive.
         if (
-            !proof.reelsComplete ||
             !proof.connectedHiddenComplete ||
             !proof.ownedHydrationComplete ||
             proof.hiddenCandidates !== 0 ||
@@ -11174,6 +11177,47 @@
         };
     }
 
+    // Public profiles have an authenticated user counter AND an
+    // identity-verified anonymous main-grid connection. Use those real
+    // independent surfaces first. No native client traffic is required
+    // if the grid's own server end and every expected POST are proven.
+    // A separate REELS tab is never inferred from this proof.
+    function verifiedPublicGridPrimaryProof() {
+        const fail = reason => ({ verified: false, reason });
+        if (
+            !scanSelected('post') ||
+            !scanSelected('reel') ||
+            state.profileInfo?.is_private !== false ||
+            state.exclusive.known !== true ||
+            state.exclusive.hasExclusiveFeedContent === true ||
+            !state.shadow.applicable ||
+            !state.coverage.publicShadow ||
+            !state.shadow.pageInfoEnded ||
+            String(state.shadow.profileId || '') !== String(state.userId || '')
+        ) return fail('public_source_not_applicable');
+
+        const count = Number(state.profileInfo?.media_count);
+        if (
+            !Number.isSafeInteger(count) ||
+            count < 1 ||
+            count !== Number(state.expected) ||
+            !(state.shadow.rootIds instanceof Set) ||
+            !(state.shadow.postIds instanceof Set) ||
+            !(state.shadow.reelIds instanceof Set) ||
+            state.shadow.rootIds.size !== count ||
+            state.shadow.postIds.size !== count ||
+            state.shadow.reelIds.size !== 0
+        ) return fail('counter_or_public_pagination_not_exhaustive');
+
+        for (const id of state.shadow.postIds) {
+            if (
+                !state.shadow.rootIds.has(id) ||
+                (!state.roots.POST.has(id) && !state.roots.REEL.has(id))
+            ) return fail('public_post_not_hydrated');
+        }
+        return { verified: true, reason: 'public_server_end_exact_counter', count };
+    }
+
     function reconcileProfileGridCoverage() {
         if (
             state.coverage.profileGrid ||
@@ -11235,7 +11279,8 @@
                 ', overlap=' + result.overlap +
                 ', union=' + result.unionCount +
                 ', expected=' + state.expected +
-                '. PUBLIC SHADOW ended, REELS/HIDDEN/HYDRATION verified. ' +
+                '. PUBLIC SHADOW ended; HIDDEN/HYDRATION verified. ' +
+                'REELS has its own independent coverage guard. ' +
                 'Native PROFILE initial capture may remain unverified.',
                 'warn'
             );
@@ -11387,23 +11432,43 @@
 
             updateStats();
 
-            if (
-                scanSelected('post') ||
-                scanSelected('reel')
-            ) {
-                await scanProfilerPhase(
-                    'PROFILE GRID',
-                    scanMainGrid,
-                    scanProfilerTimings
-                );
-            }
-
+            // Server-backed, identity-verified PUBLIC timeline is the
+            // primary source for PUBLIC grids. A native browser hook is an
+            // optional fallback, not a prerequisite that consumes 14 s
+            // waiting for a cached SPA request that never occurs.
             if (scanSelected('post')) {
                 await scanProfilerPhase(
                     'PUBLIC SHADOW',
                     scanPublicShadow,
                     scanProfilerTimings
                 );
+            }
+
+            if (scanSelected('post') || scanSelected('reel')) {
+                const publicProof = verifiedPublicGridPrimaryProof();
+                if (publicProof.verified) {
+                    log(
+                        'PROFILE native phase not needed: the independent PUBLIC ' +
+                        'timeline ended on the server and exactly reconciles ' +
+                        publicProof.count + ' hydrated main-grid roots. ' +
+                        'REELS coverage remains independent.'
+                    );
+                    await scanProfilerPhase(
+                        'PROFILE GRID',
+                        async () => true,
+                        scanProfilerTimings
+                    );
+                }
+                else {
+                    log('PROFILE public proof insufficient (' +
+                        publicProof.reason +
+                        '); using authenticated native PROFILE pass.');
+                    await scanProfilerPhase(
+                        'PROFILE GRID',
+                        scanMainGrid,
+                        scanProfilerTimings
+                    );
+                }
             }
 
             if (scanSelected('post') || scanSelected('reel')) {
