@@ -7096,7 +7096,7 @@
                 typeof raw === 'number' && Number.isSafeInteger(raw) &&
                 raw >= 0
             ) counts.push(raw);
-            else if (typeof raw === 'string' && /^\\d+$/.test(raw)) {
+            else if (typeof raw === 'string' && /^\d+$/.test(raw)) {
                 const count = Number(raw);
                 if (Number.isSafeInteger(count)) counts.push(count);
             }
@@ -11310,24 +11310,54 @@
     function explicitEmptyReelsProof() {
         const fail = reason => ({ verified: false, reason });
         const info = state.profileInfo;
-        const raw = info?.total_clips_count;
-        const validCount = typeof raw === 'number'
-            ? Number.isSafeInteger(raw) && raw >= 0
-            : typeof raw === 'string' && /^\d+$/.test(raw);
-        if (!validCount || Number(raw) !== 0) {
-            return fail('clips_count_not_explicit_zero');
-        }
-        if (
-            info?.has_clips === true ||
-            info?.has_any_clips === true ||
-            (info?.latest_reel_media !== undefined &&
-                info?.latest_reel_media !== null)
-        ) return fail('profile_reports_clips');
-
         const id = String(info?.pk || info?.id || '').split('_')[0];
         if (!id || id !== String(state.userId || '')) {
             return fail('profile_clip_count_identity_unverified');
         }
+
+        const ssr = state.shadow.reelsEvidence;
+        if (ssr) {
+            if (
+                ssr.profileId !== String(state.userId || '') ||
+                ssr.username !== String(state.username || '').toLowerCase()
+            ) return fail('public_ssr_identity_unverified');
+
+            if (ssr.consistent !== true) {
+                return fail('public_ssr_clips_metadata_conflict');
+            }
+        }
+
+        const rawCount = info?.total_clips_count;
+        const countValid = typeof rawCount === 'number'
+            ? Number.isSafeInteger(rawCount) && rawCount >= 0
+            : typeof rawCount === 'string' && /^\d+$/.test(rawCount) &&
+              Number.isSafeInteger(Number(rawCount));
+        const apiCount = countValid ? Number(rawCount) : null;
+        const apiZero = apiCount === 0;
+
+        // Only two genuine Instagram signals may support absence:
+        // a profile-scoped explicit count of zero from authenticated
+        // USER INFO, or explicit zero/false in the exact SSR user object.
+        // Missing fields, missing navigation and POST counts are NEVER
+        // promoted into a synthetic zero-clips assertion.
+        const ssrZero = ssr?.consistent === true &&
+            (ssr.hasAnyClips === false || ssr.totalClipsCount === 0);
+
+        if (
+            apiCount > 0 ||
+            info?.has_clips === true ||
+            info?.has_any_clips === true ||
+            (info?.latest_reel_media !== undefined &&
+                info?.latest_reel_media !== null) ||
+            ssr?.hasAnyClips === true ||
+            ssr?.totalClipsCount > 0 ||
+            ssr?.latestReelPresent === true
+        ) return fail('profile_reports_clips');
+
+        if (!apiZero && !ssrZero) {
+            return fail('clips_absence_not_explicitly_reported');
+        }
+
         if (!verifiedPublicGridPrimaryProof().verified) {
             return fail('public_main_grid_not_verified');
         }
@@ -11352,7 +11382,12 @@
 
         return {
             verified: true,
-            reason: 'target_profile_explicit_zero_clips_and_public_grid_end',
+            reason: 'explicit_zero_clips_and_verified_public_grid_end',
+            source: apiZero
+                ? 'authenticated_user_info_total_clips_count'
+                : ssr.totalClipsCount === 0
+                    ? 'public_ssr_total_clips_count'
+                    : 'public_ssr_has_any_clips_false',
         };
     }
 
@@ -11366,11 +11401,11 @@
         if (proof.verified) {
             state.coverage.reels = true;
             log(
-                'REELS independently proven EMPTY: authenticated target ' +
-                'profile reports total_clips_count=0; PUBLIC grid ended ' +
-                'and fully reconciles the official media counter; ' +
-                'no Reel/hidden candidate or REELS tab exists. ' +
-                'No unverified GraphQL query was attempted.'
+                'REELS independently proven EMPTY: explicit Instagram ' +
+                'source=' + proof.source + '; PUBLIC grid ended and fully ' +
+                'reconciles the official media counter; no Reel/hidden ' +
+                'candidate or REELS tab exists. No unverified GraphQL ' +
+                'query was attempted.'
             );
         }
         else {
@@ -11379,6 +11414,10 @@
                 'REELS absent-tab zero proof unavailable: ' +
                 proof.reason + ', raw_total_clips_count=' +
                 (count === undefined || count === null ? '-' : String(count)) +
+                ', ssr_has_any_clips=' +
+                (state.shadow.reelsEvidence?.hasAnyClips ?? '-') +
+                ', ssr_total_clips_count=' +
+                (state.shadow.reelsEvidence?.totalClipsCount ?? '-') +
                 '. Keeping REELS INCOMPLETE.',
                 'warn'
             );
