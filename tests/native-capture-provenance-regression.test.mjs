@@ -127,6 +127,7 @@ const makeFetch = new Function(
     'rateLimitCircuitBreak','feedbackCircuitBreak','apiUnhealthyError',
     'summarizeJsonEndpointResponse','summarizeGraphQlErrors',
     'throwIfInstagramStop','sleep','rand',
+    extract('instagramAuthChallengeIn')+'\n'+
     fetchText+'\nreturn fetchJson;'
 );
 const fetchJson = makeFetch(
