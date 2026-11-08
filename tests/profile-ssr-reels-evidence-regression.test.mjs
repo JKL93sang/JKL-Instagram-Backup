@@ -122,9 +122,14 @@ function reject(label, changes, mutate = () => {}) {
 reject('field omitted entirely', {});
 reject('true explicitly indicates reels', { has_any_clips:true });
 reject('positive server clips count', { total_clips_count:3 });
-reject('latest reel media exists', {
-    has_any_clips:false, latest_reel_media:1792002021,
-});
+{
+    const x = parse(withOne({
+        has_any_clips:false, latest_reel_media:1792002021,
+    }));
+    state.shadow.reelsEvidence = x.reelsEvidence;
+    assert.equal(api.explicitEmptyReelsProof().verified, true,
+        'Story latest_reel_media timestamp never disproves zero clips');
+}
 reject('SSR flag and counter disagree', {
     has_any_clips:false, total_clips_count:2,
 });
@@ -198,15 +203,14 @@ for (const sentinel of [0, '0', false, '']) {
         has_any_clips:false, latest_reel_media:sentinel,
     })).reelsEvidence;
     assert.equal(ssr.latestReelPresent, false,
-        'empty SSR sentinel cannot be classified as an actual Reel');
+        'empty Story timestamp sentinel remains independently classified');
     assert.equal(ssr.consistent, true);
 }
-for (const reel of [{ pk:'123' }, 123, '123']) {
-    state.profileInfo.latest_reel_media = reel;
+for (const storyMarker of [{ pk:'123' }, 123, '123']) {
+    state.profileInfo.latest_reel_media = storyMarker;
     state.shadow.reelsEvidence = falseSSR.reelsEvidence;
-    assert.deepEqual(api.explicitEmptyReelsProof(), {
-        verified:false, reason:'profile_reports_clips',
-    }, 'actual REST latest-reel signal must block SSR absence proof');
+    assert.equal(api.explicitEmptyReelsProof().verified, true,
+        'Story media marker never indicates a short-video Reel');
 }
 delete state.profileInfo.latest_reel_media;
 state.shadow.reelsEvidence = null;
