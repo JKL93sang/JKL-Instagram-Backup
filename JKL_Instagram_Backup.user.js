@@ -248,6 +248,12 @@
         diskCanonical: new Set(),
         diskCanonicalMeta: new Map(),
         diskLocations: new Map(),
+        diskIndexStats: {
+            selectedFiles: 0,
+            canonicalFiles: 0,
+            legacyFiles: 0,
+            unrecognizedFiles: 0,
+        },
         diskHidden: new Set(),
         diskStoryHighlight: new Set(),
         legacy: new Map(),
@@ -5816,7 +5822,7 @@
 
         const diskText =
             state.diskActive
-                ? 'DISK VERIFIED'
+                ? 'DISK INDEXED'
                 : 'SESSION ONLY';
 
         const diskClass =
@@ -6024,6 +6030,16 @@
                     <b class="jkl-state ${diskClass}">${diskText}</b>
                 </div>
 
+                <div class="jkl-card-line">
+                    <span>Files <b>${state.diskActive ? state.diskIndexStats.selectedFiles : '—'}</b></span>
+                    <span>IDs <b>${state.diskActive ? state.diskCanonical.size : '—'}</b></span>
+                    <span>HIDDEN <b>${state.diskActive ? state.diskHidden.size : '—'}</b></span>
+                    <span>Legacy <b>${state.diskActive ? state.legacy.size : '—'}</b></span>
+                </div>
+                <div class="jkl-card-line">
+                    <span>Recognized files <b>${state.diskActive ? state.diskIndexStats.canonicalFiles + state.diskIndexStats.legacyFiles : '—'}</b></span>
+                    <span>Unrecognized <b>${state.diskActive ? state.diskIndexStats.unrecognizedFiles : '—'}</b></span>
+                </div>
                 <div class="jkl-card-line">
                     <span>Existing <b>${existing}</b></span>
                     <span>Missing <b>${pending}</b></span>
@@ -11227,6 +11243,13 @@
         state.diskHidden.clear();
         state.diskStoryHighlight.clear();
         state.legacy.clear();
+        const counts = {
+            selectedFiles: files.length,
+            canonicalFiles: 0,
+            legacyFiles: 0,
+            unrecognizedFiles: 0,
+        };
+
 
         const canonical =
             /\s-\s(?:POST|REEL|STORY|HIGHLIGHT|TAGGED|AVATAR)\s-\s\d{4}_\d{2}_\d{2}\s-\s([A-Za-z0-9_]+)\.(jpg|jpeg|png|webp|mp4|m4v|mov)$/i;
@@ -11244,6 +11267,7 @@
                 );
 
             if (m) {
+                counts.canonicalFiles++;
                 const relativePath =
                     String(
                         f.webkitRelativePath ||
@@ -11302,8 +11326,11 @@
                 );
 
             if (!m) {
+                counts.unrecognizedFiles++;
                 continue;
             }
+
+            counts.legacyFiles++;
 
             const rec = {
                 name: f.name,
@@ -11357,14 +11384,18 @@
             }
         }
 
+        state.diskIndexStats = counts;
         state.diskActive = true;
 
         updateStats();
 
         status(
-            `Local folder indexed ` +
-            `(${files.length} files). ` +
-            `Disk is authoritative.`,
+            `Local folder indexed: ${counts.selectedFiles} files, ` +
+            `${state.diskCanonical.size} canonical IDs, ` +
+            `${state.diskHidden.size} HIDDEN files, ` +
+            `${state.legacy.size} legacy groups, ` +
+            `${counts.unrecognizedFiles} unrecognized. ` +
+            `Names indexed; file content not checked.`,
             'ok'
         );
 
