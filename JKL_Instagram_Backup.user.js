@@ -10466,14 +10466,14 @@
             if (m.type === 'HIGHLIGHT') {
                 return state.scanPlan?.highlight === true &&
                     state.coverage.highlights === true &&
-                    state.roots.HIGHLIGHT.has(id) &&
+                    // HIGHLIGHT files have source tags, not roots.HIGHLIGHT entries.
                     [...m.sources].some(s => String(s).startsWith('HIGHLIGHT:'));
             }
 
             if (m.type === 'STORY') {
                 return state.scanPlan?.story === true &&
                     state.coverage.story === true &&
-                    state.roots.STORY.has(id) &&
+                    // STORY is tracked by its authenticated Web GraphQL source.
                     m.sources.has('STORY_WEB_GRAPHQL');
             }
 
