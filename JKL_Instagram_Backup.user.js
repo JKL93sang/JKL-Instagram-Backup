@@ -1601,8 +1601,12 @@
     }
 
     function highlightFallbackFolderTitle(m, maxLength = 76) {
-        const id = String(m?.highlightId || m?.id || '');
-        return highlightFolderName('', id, maxLength) || 'Highlight';
+        const id = hiId(m?.highlightId || m?.id || '');
+        // A genuinely different ASCII-only retry name, not the same
+        // normalized display title that already failed.
+        return /^\d+$/.test(id)
+            ? `HL_${id}`
+            : 'HL_UNKNOWN';
     }
 
     // Compare real indexed paths, never merely a media ID/category.
