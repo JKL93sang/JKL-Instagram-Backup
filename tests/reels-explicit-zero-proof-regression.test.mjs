@@ -87,6 +87,7 @@ reject('unverified string zero format', x => { x.state.profileInfo.total_clips_c
 reject('negative count', x => { x.state.profileInfo.total_clips_count = -1; });
 reject('profile has clips despite zero count', x => { x.state.profileInfo.has_clips = true; });
 reject('profile has any clips despite zero count', x => { x.state.profileInfo.has_any_clips = true; });
+reject('profile exposes latest reel despite zero count', x => { x.state.profileInfo.latest_reel_media = { pk: '123' }; });
 reject('other profile ID', x => { x.state.profileInfo.pk = 'other'; });
 reject('unknown profile ID', x => { x.state.profileInfo.pk = ''; });
 reject('public server pagination unknown', x => { x.state.shadow.pageInfoEnded = false; });
@@ -114,4 +115,4 @@ assert.ok(scan.indexOf('reconcileEmptyReelsCoverage();') <
 assert.ok(!extract('scanReels').includes('total_clips_count === 0'),
     'zero-count authorisation is centralized after source reconciliation, not an early shortcut');
 assert.ok(src.includes('Profile API: global='));
-console.log('Target-scoped Reels zero-count proof: explicit zero accepted, 21 contrary/missing/partial scenarios blocked.');
+console.log('Target-scoped Reels zero-count proof: explicit zero accepted, 22 contrary/missing/partial scenarios blocked.');
