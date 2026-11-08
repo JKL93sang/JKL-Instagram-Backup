@@ -9091,15 +9091,22 @@
         if (!pi || typeof pi !== 'object' || Array.isArray(pi)) {
             return fail('paging_info_missing');
         }
-        if (typeof pi.more_available !== 'boolean') {
-            return fail('more_available_missing');
+        // Instagram private clips API uses paging_info.max_id as its
+        // continuation contract (instagrapi). Some responses additionally
+        // expose more_available. Require at least one explicit marker.
+        const hasFlag = typeof pi.more_available === 'boolean';
+        const hasCursor = Object.prototype.hasOwnProperty.call(pi, 'max_id');
+        if (!hasFlag && !hasCursor) return fail('pagination_markers_missing');
+        if (pi.more_available !== undefined && !hasFlag) {
+            return fail('more_available_invalid_type');
         }
         if (pi.max_id != null && typeof pi.max_id !== 'string') {
             return fail('cursor_invalid_type');
         }
         const cursor = String(pi.max_id || '');
-        if (pi.more_available && !cursor) return fail('next_cursor_missing');
-        if (!pi.more_available && cursor) return fail('conflicting_end_cursor');
+        const moreAvailable = hasFlag ? pi.more_available : !!cursor;
+        if (moreAvailable && !cursor) return fail('next_cursor_missing');
+        if (!moreAvailable && cursor) return fail('conflicting_end_cursor');
 
         const medias = [];
         for (const item of data.items) {
@@ -9111,7 +9118,7 @@
         return {
             verified:true,
             medias,
-            moreAvailable:pi.more_available,
+            moreAvailable,
             cursor,
         };
     }
@@ -9236,7 +9243,7 @@
                 state.coverage.reels = true;
                 log('REELS authenticated clips complete: ' +
                     page + ' page(s), ' + discovered.size +
-                    ' Reel root(s), paging_info.more_available=false.');
+                    ' Reel root(s), verified terminal paging_info.');
                 updateStats();
                 return true;
             }
