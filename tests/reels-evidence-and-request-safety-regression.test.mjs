@@ -39,6 +39,7 @@ for (const [name, mutate] of [
     ['hydration unknown', {ownedHydrationVerified:false}],
     ['exclusive unknown', {exclusiveKnown:false}],
     ['exclusive reported', {exclusiveAvailable:true}],
+    ['SSR metadata conflict', {metadataConflict:true}],
 ]) {
     assert.equal(classify({...base,...mutate}).kind,'UNKNOWN',name);
 }
@@ -153,6 +154,7 @@ for (const [type, reply, flag] of [
     ['feedback',{status:200,body:'{"message":"feedback_required"}'},'feedbackRequired'],
     ['rate limit',{status:429,body:'{"status":"fail"}'},'rateLimited'],
     ['checkpoint',{status:200,body:'{"message":"challenge_required"}'},'apiUnhealthy'],
+    ['login expired HTTP 401',{status:401,body:'{"status":"fail"}'},'apiUnhealthy'],
 ]) {
     const x=gmScenario(reply);
     await assert.rejects(x.request({
