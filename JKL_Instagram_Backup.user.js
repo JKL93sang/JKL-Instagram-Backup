@@ -356,6 +356,44 @@
     }
 
     function gmRequest(options) {
+        // Bound GM transports to two concurrent in-flight requests.
+        // Any pending work is rejected after an Instagram safety circuit.
+        const gate = gmRequest._gate ||
+            (gmRequest._gate = { active:0, pending:[] });
+        const stopError = () => {
+            if (state.feedbackRequired) {
+                return feedbackCircuitBreak(state.feedbackMessage);
+            }
+            if (state.rateLimited) {
+                return rateLimitCircuitBreak(state.rateLimitMessage);
+            }
+            if (state.apiUnhealthy) {
+                return apiUnhealthyError(state.apiUnhealthyMessage);
+            }
+            if (state.cancelled && state.running) {
+                return new Error('Cancelled');
+            }
+            return null;
+        };
+        const pump = () => {
+            while (gate.active < 2 && gate.pending.length) {
+                const task = gate.pending.shift();
+                const denied = stopError();
+                if (denied) {
+                    task.reject(denied);
+                    continue;
+                }
+                gate.active++;
+                task.start();
+            }
+            const stopped = stopError();
+            if (stopped) {
+                for (const task of gate.pending.splice(0)) {
+                    task.reject(stopped);
+                }
+            }
+        };
+
         return new Promise((resolve, reject) => {
             // Workers can settle asynchronously after a fatal server reply.
             // No further GM requests are allowed once the session circuit trips.
@@ -395,7 +433,25 @@
             delete request.feedbackLabel;
             delete request.feedbackCheck;
 
-            GM_xmlhttpRequest({
+            gate.pending.push({
+                reject,
+                start: () => {
+                    let finished = false;
+                    const finish = (error, response) => {
+                        if (finished) return;
+                        finished = true;
+                        gate.active = Math.max(0, gate.active - 1);
+                        if (error) reject(error);
+                        else resolve(response);
+                        pump();
+                    };
+                    try {
+                        const stopped = stopError();
+                        if (stopped) {
+                            finish(stopped);
+                            return;
+                        }
+                        GM_xmlhttpRequest({
                 timeout: 30000,
                 ...request,
                 onload: response => {
@@ -425,11 +481,9 @@
                         Number(response?.status || 0) === 429 &&
                         /(^|\.)instagram\.com(?:\/|$)/i.test(url)
                     ) {
-                        reject(
-                            rateLimitCircuitBreak(
-                                `${feedbackLabel}: Instagram returned HTTP 429.`
-                            )
-                        );
+                        finish(rateLimitCircuitBreak(
+                            `${feedbackLabel}: Instagram returned HTTP 429.`
+                        ));
                         return;
                     }
 
@@ -438,7 +492,7 @@
                         apiLike &&
                         Number(response?.status || 0) === 401
                     ) {
-                        reject(apiUnhealthyError(
+                        finish(apiUnhealthyError(
                             `${feedbackLabel}: Instagram API returned HTTP 401; authenticated session cannot be trusted.`
                         ));
                         return;
@@ -449,11 +503,9 @@
                         apiLike &&
                         feedbackRequiredIn(payload)
                     ) {
-                        reject(
-                            feedbackCircuitBreak(
-                                `${feedbackLabel}: Instagram returned feedback_required.`
-                            )
-                        );
+                        finish(feedbackCircuitBreak(
+                            `${feedbackLabel}: Instagram returned feedback_required.`
+                        ));
                         return;
                     }
 
@@ -462,15 +514,13 @@
                         apiLike &&
                         instagramAuthChallengeIn(payload)
                     ) {
-                        reject(
-                            apiUnhealthyError(
-                                `${feedbackLabel}: Instagram authentication/checkpoint required; stopping requests.`
-                            )
-                        );
+                        finish(apiUnhealthyError(
+                            `${feedbackLabel}: Instagram authentication/checkpoint required; stopping requests.`
+                        ));
                         return;
                     }
 
-                    resolve(response);
+                    finish(null, response);
                 },
                 onerror: response => {
                     const status = Number(response?.status || 0);
@@ -485,14 +535,26 @@
 
                     const e = new Error(message);
                     e.status = status;
-                    reject(e);
+                    if (status === 429) {
+                        finish(rateLimitCircuitBreak(
+                            `${feedbackLabel}: Instagram returned HTTP 429.`
+                        ));
+                        return;
+                    }
+                    finish(e);
                 },
                 ontimeout: () => {
                     const e = new Error('GM request timeout');
                     e.code = 'GM_TIMEOUT';
-                    reject(e);
+                    finish(e);
                 },
             });
+                    } catch (error) {
+                        finish(error);
+                    }
+                },
+            });
+            pump();
         });
     }
 
