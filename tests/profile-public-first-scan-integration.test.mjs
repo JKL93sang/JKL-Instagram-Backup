@@ -16,6 +16,7 @@ const methods = [
     'assessProfileGridCrossSurfaceProof',
     'reconcileProfileGridCoverage',
     'explicitEmptyReelsProof',
+    'classifyReelsEvidence',
     'reconcileEmptyReelsCoverage',
     'requiredCoverage', 'incompleteCoverage',
     'scanAll',
