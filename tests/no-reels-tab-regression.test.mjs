@@ -27,7 +27,7 @@ function scenario({ hasLink = false, navOK = false } = {}) {
     const runner = new Function(
         'state', 'location', 'window', 'log', 'status',
         'pathNorm', 'findAnchor', 'go', 'scanReelsNativeCompletion', 'updateStats',
-        extract('scanReels') + '\\nreturn scanReels;'
+        extract('scanReels') + '\nreturn scanReels;'
     )(
         state, location, { scrollY: 0 },
         (msg, level) => logs.push({ msg, level }),
