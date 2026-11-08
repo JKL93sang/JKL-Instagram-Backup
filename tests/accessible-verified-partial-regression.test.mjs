@@ -99,7 +99,7 @@ function fixture({ highlights = 2 } = {}) {
     state.queue.set('connected-hidden', item('connected-hidden', 'POST',
         'CONNECTED_HIDDEN_AUTHORIZED', 'public-root', { visibility: 'hidden' }));
     state.queue.set('unproven-highlight', item('unproven-highlight', 'HIGHLIGHT',
-        'HIGHLIGHT:Bad', 'unproven-highlight'));
+        'UNVERIFIED_SOURCE', 'unproven-highlight'));
     state.queue.set('missing-url', item('missing-url', 'AVATAR', 'AVATAR',
         'missing-url', { url: '' }));
 
