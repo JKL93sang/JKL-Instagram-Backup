@@ -63,6 +63,9 @@ jobs:
       - name: Safe GraphQL response diagnostic regression tests
         run: node tests/json-endpoint-diagnostic-regression.test.mjs
 
+      - name: Instagram public SSR clips metadata identity and contradiction tests
+        run: node tests/profile-ssr-reels-evidence-regression.test.mjs
+
       - name: Explicit zero REELS metadata and independent public-grid proof tests
         run: node tests/reels-explicit-zero-proof-regression.test.mjs
 
