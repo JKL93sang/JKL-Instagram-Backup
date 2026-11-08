@@ -270,6 +270,45 @@ for (const [type, reply, flag] of [
     assert.equal(done[2].status,'rejected');
 }
 
+// onerror can carry an HTTP denial, not only a low-level socket error.
+// No follow-up GM call is permitted after a denial on this callback path.
+for (const [kind, event, expected] of [
+    ['feedback',{status:403,responseText:'{"message":"feedback_required"}'},
+        'feedbackRequired'],
+    ['expired auth',{status:401,responseText:'{"status":"fail"}'},
+        'apiUnhealthy'],
+    ['checkpoint',{status:403,responseText:'{"message":"challenge_required"}'},
+        'apiUnhealthy'],
+]) {
+    const state={
+        running:true,cancelled:false,scanComplete:false,scanOutcome:'RUNNING',
+        feedbackRequired:false,feedbackMessage:'',rateLimited:false,
+        rateLimitMessage:'',apiUnhealthy:false,apiUnhealthyMessage:'',
+    };
+    const sent=[];
+    const build=new Function('state','GM_xmlhttpRequest',
+        extract('feedbackRequiredIn')+
+        extract('instagramAuthChallengeIn')+
+        extract('feedbackCircuitBreak')+
+        extract('rateLimitCircuitBreak')+
+        extract('apiUnhealthyError')+
+        extract('gmRequest')+
+        '\nreturn gmRequest;'
+    );
+    const request=build(state,opts=>sent.push(opts));
+    const first=request({
+        method:'GET',url:'https://www.instagram.com/api/v1/users/1/info/',
+    });
+    assert.equal(sent.length,1);
+    sent[0].onerror(event);
+    await assert.rejects(first,undefined,kind);
+    assert.equal(state[expected],true,kind+' must open circuit');
+    await assert.rejects(request({
+        method:'GET',url:'https://www.instagram.com/api/v1/users/2/info/',
+    }));
+    assert.equal(sent.length,1,kind+' must prevent subsequent transport');
+}
+
 // An Instagram caption saying "feedback_required" is not a server error.
 // Use the actual parser and enforce the GET-only private REST rule at
 // the central GM transport boundary, while preserving approved Web GraphQL.
