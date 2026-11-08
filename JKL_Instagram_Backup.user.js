@@ -433,6 +433,31 @@
             delete request.feedbackLabel;
             delete request.feedbackCheck;
 
+            // Desktop Web transport is not a private-mobile API client.
+            // The verified PUBLIC shadow uses POST /api/graphql; no
+            // existing authenticated /api/v1/ feature requires POST.
+            // Refuse such calls locally to prevent another clips/user/
+            // experiment from reaching Instagram by accident.
+            try {
+                const endpoint = new URL(String(request.url || ''));
+                if (
+                    /^(?:www|i)\\.instagram\\.com$/i.test(endpoint.hostname) &&
+                    endpoint.pathname.startsWith('/api/v1/') &&
+                    String(request.method || 'GET').toUpperCase() !== 'GET'
+                ) {
+                    const e = new Error(
+                        'Unsafe private-mobile API method blocked before dispatch.'
+                    );
+                    e.code = 'IG_UNSUPPORTED_TRANSPORT';
+                    reject(e);
+                    return;
+                }
+            } catch (e) {
+                if (e?.code === 'IG_UNSUPPORTED_TRANSPORT') return reject(e);
+                // For non-Instagram media URLs, preserve the existing GM
+                // transport behavior (the URL is validated downstream).
+            }
+
             gate.pending.push({
                 reject,
                 start: () => {
@@ -558,24 +583,36 @@
         });
     }
 
+    // Inspect only protocol-level error controls, not arbitrary captions,
+    // comments, filenames or media metadata that might contain this token.
     function feedbackRequiredIn(value) {
-        if (value == null) {
-            return false;
+        if (value == null) return false;
+        let data = value;
+        if (typeof data === 'string') {
+            const raw = data.trim();
+            if (/^feedback_required$/i.test(raw) ||
+                /^Instagram returned feedback_required\\.?$/i.test(raw)) {
+                return true;
+            }
+            try { data = JSON.parse(raw); }
+            catch { return false; }
         }
+        if (!data || typeof data !== 'object') return false;
 
-        const text =
-            typeof value === 'string'
-                ? value
-                : (() => {
-                    try {
-                        return JSON.stringify(value);
-                    }
-                    catch {
-                        return String(value);
-                    }
-                })();
-
-        return /feedback_required/i.test(text);
+        const controls = [data];
+        if (data.error && typeof data.error === 'object') {
+            controls.push(data.error);
+        }
+        if (Array.isArray(data.errors)) {
+            controls.push(...data.errors.filter(e =>
+                e && typeof e === 'object'
+            ));
+        }
+        const matches = v => typeof v === 'string' &&
+            /(?:^|[\\s.:])feedback_required(?:$|[\\s.:])/i.test(v.trim());
+        return controls.some(x =>
+            [x.message,x.error_type,x.type,x.code,x.error].some(matches)
+        );
     }
 
     // Only inspect server control fields. Do not search arbitrary text
