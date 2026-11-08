@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.70
-// @description  Instagram backup: unique file per media, FAN CLUB / HIDDEN routing, verified subscriber partial backup.
+// @version      1.5.71
+// @description  TEST BUILD v1.5.71: safely handles missing REELS tab; unique media filing and subscriber partial backup.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/main/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/reels-absent-tab-safe-skip-v1.5.71/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/reels-absent-tab-safe-skip-v1.5.71/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/reels-absent-tab-safe-skip-v1.5.71/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.70', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.71', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -8669,6 +8669,24 @@
 
         const oldY =
             window.scrollY;
+
+        // A missing visible REELS tab is not a server-side
+        // empty-reels proof. Do not query fallback GraphQL without a
+        // native navigation entry to substantiate the media surface.
+        if (
+            pathNorm(location.pathname) !== pathNorm(target) &&
+            !findAnchor(target)
+        ) {
+            state.coverage.reels = false;
+            log(
+                'REELS tab absent in profile navigation. Cannot prove ' +
+                'empty REELS pagination; skipping unverified GraphQL fallback. ' +
+                'REELS stays INCOMPLETE.',
+                'warn'
+            );
+            updateStats();
+            return false;
+        }
 
         const nav =
             await go(target);
