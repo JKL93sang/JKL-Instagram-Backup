@@ -206,7 +206,8 @@ function scenario({
     await x.run();
     assert.equal(x.state.scanOutcome, 'INCOMPLETE',
         'REST empty sentinel alone is not explicit zero clips evidence');
-    assert.ok(x.logs.some(l => l.msg.includes('clips_absence_not_explicitly_reported')));
+    assert.ok(x.logs.some(l => l.msg.includes('REELS evidence=NOT_EXPOSED')));
+    assert.equal(x.state.reelsDiagnosis.kind, 'NOT_EXPOSED');
 }
 {
     const x = scenario({clips:null,latestReelMedia:0,ssrHasAnyClips:false});
