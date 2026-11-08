@@ -183,6 +183,34 @@ assert.equal(api.explicitEmptyReelsProof().verified, false,
     'positive SSR metadata blocks a contradictory authenticated count');
 state.profileInfo.total_clips_count = undefined;
 
+// Empty-sentinel values in REST and SSR are not evidence that clips EXIST.
+// They also cannot, by themselves, prove that an entire Reels feed is empty.
+for (const sentinel of [0, '0', false, '']) {
+    state.profileInfo.latest_reel_media = sentinel;
+    state.shadow.reelsEvidence = null;
+    assert.deepEqual(api.explicitEmptyReelsProof(), {
+        verified:false, reason:'clips_absence_not_explicitly_reported',
+    }, 'placeholder latest_reel_media without explicit zero cannot prove an empty feed');
+    state.shadow.reelsEvidence = falseSSR.reelsEvidence;
+    assert.equal(api.explicitEmptyReelsProof().verified, true,
+        'explicit SSR false must not be contradicted by empty latest_reel_media sentinel');
+    const ssr = parse(withOne({
+        has_any_clips:false, latest_reel_media:sentinel,
+    })).reelsEvidence;
+    assert.equal(ssr.latestReelPresent, false,
+        'empty SSR sentinel cannot be classified as an actual Reel');
+    assert.equal(ssr.consistent, true);
+}
+for (const reel of [{ pk:'123' }, 123, '123']) {
+    state.profileInfo.latest_reel_media = reel;
+    state.shadow.reelsEvidence = falseSSR.reelsEvidence;
+    assert.deepEqual(api.explicitEmptyReelsProof(), {
+        verified:false, reason:'profile_reports_clips',
+    }, 'actual REST latest-reel signal must block SSR absence proof');
+}
+delete state.profileInfo.latest_reel_media;
+state.shadow.reelsEvidence = null;
+
 // Provenance must be reset before each new scan, and assigned only
 // after a completed public SSR timeline, never from another profile.
 assert.ok(extract('resetCoverage').includes('state.shadow.reelsEvidence = null;'));
