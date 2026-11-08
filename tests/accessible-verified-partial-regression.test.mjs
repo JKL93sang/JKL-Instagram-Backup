@@ -26,6 +26,8 @@ const methods = [
     'partialSourceVerified', 'verifiedPartialMedia', 'partialSourceFingerprint',
     'clearPartialDownloadGrants', 'capturePartialDownloadGrants',
     'verifiedPartialDownloadIntegrity', 'authorizeDownloadScope', 'cleanUser',
+    'hiId', 'sanitizePathComponent', 'highlightFolderName',
+    'highlightFolderTitle', 'highlightFallbackFolderTitle', 'archiveDownloadPath',
 ].map(extract).join('\n');
 
 function item(id, type, origin, root = id, extra = {}) {
@@ -50,6 +52,7 @@ function fixture(highlights = 2) {
         queue: new Map(),
         partialDownloadGrants: { subscriber: null, accessible: null },
         verifiedSubscriberRootIds: new Set(),
+        highlightCatalog: new Map(),
         exclusive: { known: false, hasExclusiveFeedContent: false },
         hidden: {
             candidates: 0, recovered: 0, alreadyOwned: 0,
@@ -73,9 +76,22 @@ function fixture(highlights = 2) {
 
     state.queue.set('post-1', item('post-1', 'POST',
         'PROFILE_PUBLIC_SHADOW', 'public-root'));
+    const reels = ['18000000000000001', '18000000000000002',
+        '18000000000000003', '18000000000000004'];
+    for (const id of reels) {
+        state.highlightCatalog.set(id, {
+            id, title: '.', folder: 'Highlight [' + id + ']',
+        });
+    }
     for (let i = 0; i < highlights; i++) {
+        const group = highlights === 176
+            ? (i < 50 ? 0 : i < 142 ? 1 : i < 159 ? 2 : 3)
+            : i % 4;
+        const reelId = reels[group];
         const id = 'highlight-' + i;
-        state.queue.set(id, item(id, 'HIGHLIGHT', 'HIGHLIGHT:Winter'));
+        state.queue.set(id, item(id, 'HIGHLIGHT',
+            'HIGHLIGHT_REEL:' + reelId, id,
+            { highlightId: reelId, highlightIds: new Set([reelId]) }));
     }
     state.queue.set('story-1', item('story-1', 'STORY', 'STORY_WEB_GRAPHQL'));
     state.queue.set('avatar-1', item('avatar-1', 'AVATAR', 'AVATAR'));
@@ -99,7 +115,7 @@ function fixture(highlights = 2) {
     const h = new Function(
         'state', 'ui', 'HIDDEN_DISCOVERY_SOURCES',
         'DOWNLOAD_MODE', 'PARTIAL_DOWNLOAD_MODES', 'currentProfile',
-        'completedScanIntegrity', 'incompleteCoverage', 'log',
+        'completedScanIntegrity', 'incompleteCoverage', 'log', 'filename',
         methods + '\nreturn { verifiedAccessibleMedia, capturePartialDownloadGrants, ' +
         'verifiedPartialDownloadIntegrity, authorizeDownloadScope, clearPartialDownloadGrants };'
     )(
@@ -109,7 +125,7 @@ function fixture(highlights = 2) {
         () => 'jennnii97',
         () => ({ ok: false, reason: 'PROFILE/REELS incomplete' }),
         () => ['PROFILE grid', 'REELS tab'],
-        (...args) => logs.push(args)
+        (...args) => logs.push(args), m => m.filename
     );
     return { state, ui, logs, ...h };
 }
@@ -119,6 +135,17 @@ assert.equal(f.verifiedAccessibleMedia().length, 179,
     'only 1 public POST, 176 highlights, 1 story and 1 avatar qualify');
 f.capturePartialDownloadGrants();
 assert.equal(f.state.partialDownloadGrants.accessible.mediaCount, 179);
+const selectedHighlights = f.verifiedAccessibleMedia().filter(m => m.type === 'HIGHLIGHT');
+const groups = new Map();
+for (const m of selectedHighlights) {
+    const path = f.state.username + '/' +
+        f.state.username + ' - HIGHLIGHTS/' +
+        f.state.username + ' - Highlight [' + m.highlightId + ']/' + m.filename;
+    groups.set(m.highlightId, (groups.get(m.highlightId) || 0) + 1);
+    assert.ok(path.includes('Highlight [' + m.highlightId + ']'));
+}
+assert.deepEqual([...groups.values()], [50, 92, 17, 17],
+    'exactly four distinct highlights must retain their own 50/92/17/17 media');
 assert.equal(f.state.partialDownloadGrants.subscriber, null);
 assert.ok(Object.isFrozen(f.state.partialDownloadGrants.accessible));
 assert.ok(Object.isFrozen(f.state.partialDownloadGrants.accessible.mediaIds));
@@ -198,6 +225,9 @@ invalidatedBy('public root set changed', x => {
     x.state.shadow.postIds.add('other');
 });
 invalidatedBy('coverage revoked', x => { x.state.coverage.highlights = false; });
+invalidatedBy('highlight catalog changed', x => {
+    x.state.highlightCatalog.get('18000000000000001').title = 'Renamed';
+});
 invalidatedBy('scan retried', x => { x.state.scanOutcome = 'RUNNING'; });
 invalidatedBy('API circuit opened', x => { x.state.apiUnhealthy = true; });
 invalidatedBy('running again', x => { x.state.running = true; });
