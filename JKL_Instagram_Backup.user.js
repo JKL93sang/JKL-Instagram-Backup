@@ -189,6 +189,7 @@
             rootIds: new Set(),
             postIds: new Set(),
             reelIds: new Set(),
+            reelsEvidence: null,
         },
 
         hydration: {
@@ -1004,6 +1005,7 @@
         state.shadow.rootIds = new Set();
         state.shadow.postIds = new Set();
         state.shadow.reelIds = new Set();
+        state.shadow.reelsEvidence = null;
 
         state.hidden.pages = 0;
         state.hidden.candidates = 0;
@@ -7063,6 +7065,68 @@
         return `N/A(${state.shadow.reason || 'NOT_APPLICABLE'})`;
     }
 
+    // Read ONLY observed Instagram SSR profile metadata. An omitted field
+    // is unknown, never false/zero. Multiple SSR copies must agree before
+    // their values can authorize proof of an empty REELS surface.
+    function publicSSRReelsEvidence(candidates) {
+        const profileId = String(state.userId || '');
+        const username = String(state.username || '').toLowerCase();
+        const raws = (Array.isArray(candidates) ? candidates : [])
+            .map(x => x?.user)
+            .filter(u =>
+                String(u?.pk || '') === profileId &&
+                (
+                    !u?.username ||
+                    String(u.username).toLowerCase() === username
+                )
+            );
+
+        if (!profileId || !raws.length) return null;
+
+        const counts = [];
+        const flags = [];
+        let latestReelPresent = false;
+
+        for (const user of raws) {
+            if (typeof user.has_any_clips === 'boolean') {
+                flags.push(user.has_any_clips);
+            }
+            const raw = user.total_clips_count;
+            if (
+                typeof raw === 'number' && Number.isSafeInteger(raw) &&
+                raw >= 0
+            ) counts.push(raw);
+            else if (typeof raw === 'string' && /^\\d+$/.test(raw)) {
+                const count = Number(raw);
+                if (Number.isSafeInteger(count)) counts.push(count);
+            }
+
+            if (
+                user.latest_reel_media !== null &&
+                user.latest_reel_media !== undefined &&
+                user.latest_reel_media !== 0 &&
+                user.latest_reel_media !== '0'
+            ) latestReelPresent = true;
+        }
+
+        const hasAnyClips = flags.length ? flags[0] : null;
+        const totalClipsCount = counts.length ? counts[0] : null;
+        const consistent =
+            flags.every(v => v === hasAnyClips) &&
+            counts.every(v => v === totalClipsCount) &&
+            !(hasAnyClips === false && totalClipsCount > 0) &&
+            !(hasAnyClips === true && totalClipsCount === 0) &&
+            !(hasAnyClips === false && latestReelPresent) &&
+            !(totalClipsCount === 0 && latestReelPresent);
+
+        return Object.freeze({
+            profileId, username,
+            hasAnyClips, totalClipsCount,
+            latestReelPresent, consistent,
+            source: 'xig_user_by_username/public-profile-SSR',
+        });
+    }
+
     function parseAnonymousProfileHTML(html) {
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const candidates = [];
@@ -7136,6 +7200,7 @@
             pageInfo: best.conn.page_info || null,
             relayId,
             lsd,
+            reelsEvidence: publicSSRReelsEvidence(candidates),
         };
     }
 
@@ -7285,6 +7350,7 @@
         state.shadow.rootIds = new Set();
         state.shadow.postIds = new Set();
         state.shadow.reelIds = new Set();
+        state.shadow.reelsEvidence = null;
 
         if (state.profileInfo?.is_private === true) {
             state.shadow.applicable = false;
@@ -7662,7 +7728,21 @@
                 state.shadow.rootIds = new Set(roots.keys());
                 state.shadow.postIds = new Set(publicPosts.map(r => r.pk));
                 state.shadow.reelIds = new Set(publicReels.map(r => r.pk));
+                state.shadow.reelsEvidence = initial.reelsEvidence?.profileId ===
+                    String(state.userId || '')
+                    ? initial.reelsEvidence
+                    : null;
             }
+
+            const ssr = state.shadow.reelsEvidence;
+            log(
+                'PUBLIC shadow REELS metadata: ' +
+                'has_any_clips=' + (ssr?.hasAnyClips ?? '-') +
+                ', total_clips_count=' + (ssr?.totalClipsCount ?? '-') +
+                ', latest_reel_present=' + (ssr?.latestReelPresent ?? '-') +
+                ', consistent=' + (ssr?.consistent ?? '-') +
+                ', source=' + (ssr?.source || '-')
+            );
 
             updateStats();
 
