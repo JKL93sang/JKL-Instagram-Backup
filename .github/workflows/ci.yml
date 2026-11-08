@@ -63,6 +63,9 @@ jobs:
       - name: Safe GraphQL response diagnostic regression tests
         run: node tests/json-endpoint-diagnostic-regression.test.mjs
 
+      - name: Explicit zero REELS metadata and independent public-grid proof tests
+        run: node tests/reels-explicit-zero-proof-regression.test.mjs
+
       - name: REELS absent-tab safe skip regression tests
         run: node tests/no-reels-tab-regression.test.mjs
 
