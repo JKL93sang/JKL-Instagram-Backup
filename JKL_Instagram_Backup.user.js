@@ -357,6 +357,24 @@
 
     function gmRequest(options) {
         return new Promise((resolve, reject) => {
+            // Workers can settle asynchronously after a fatal server reply.
+            // No further GM requests are allowed once the session circuit trips.
+            if (state.feedbackRequired) {
+                reject(feedbackCircuitBreak(state.feedbackMessage));
+                return;
+            }
+            if (state.rateLimited) {
+                reject(rateLimitCircuitBreak(state.rateLimitMessage));
+                return;
+            }
+            if (state.apiUnhealthy) {
+                reject(apiUnhealthyError(state.apiUnhealthyMessage));
+                return;
+            }
+            if (state.cancelled && state.running) {
+                reject(new Error('Cancelled'));
+                return;
+            }
             if (typeof GM_xmlhttpRequest !== 'function') {
                 reject(new Error('GM_xmlhttpRequest unavailable'));
                 return;
@@ -428,6 +446,19 @@
                         return;
                     }
 
+                    if (
+                        feedbackCheck &&
+                        apiLike &&
+                        instagramAuthChallengeIn(payload)
+                    ) {
+                        reject(
+                            apiUnhealthyError(
+                                `${feedbackLabel}: Instagram authentication/checkpoint required; stopping requests.`
+                            )
+                        );
+                        return;
+                    }
+
                     resolve(response);
                 },
                 onerror: response => {
@@ -472,6 +503,33 @@
                 })();
 
         return /feedback_required/i.test(text);
+    }
+
+    // Only inspect server control fields. Do not search arbitrary text
+    // (captions or comments can contain words such as "login_required").
+    // This protects against continuing after an authentication challenge.
+    function instagramAuthChallengeIn(value) {
+        let data = value;
+        if (typeof value === 'string') {
+            try { data = JSON.parse(value); }
+            catch { return false; }
+        }
+        if (!data || typeof data !== 'object') return false;
+        const controls = [data];
+        if (data.error && typeof data.error === 'object') {
+            controls.push(data.error);
+        }
+        if (Array.isArray(data.errors)) {
+            controls.push(...data.errors.filter(x =>
+                x && typeof x === 'object'
+            ));
+        }
+        const denied = /^(?:login_required|challenge_required|checkpoint_required|checkpoint_challenge_required|consent_required|user_has_logged_out)$/i;
+        return controls.some(x =>
+            [x.message, x.error_type, x.type, x.code].some(
+                v => typeof v === 'string' && denied.test(v.trim())
+            )
+        );
     }
 
     function feedbackCircuitBreak(message) {
@@ -2645,6 +2703,20 @@
                 }
                 catch (e) {
                     last = e;
+                    // A hard auth failure is session-scoped, not a reason
+                    // to try alternate domains or retry six times.
+                    throwIfInstagramStop(e, label);
+                    const status = Number(e?.status || 0);
+                    if (status === 401 || status === 403) {
+                        throw apiUnhealthyError(
+                            `${label}: authenticated media-info denied (HTTP ${status}); stopped without retries.`
+                        );
+                    }
+                    if ([400, 404, 410, 422].includes(status)) {
+                        // A denied/absent media root may be legitimate, but
+                        // repeating the same request cannot make it valid.
+                        throw e;
+                    }
 
                     if (e?.code === 'IG_MEDIA_INFO_PROTOCOL') {
                         invalidJson200Endpoints++;
@@ -2849,6 +2921,16 @@
                     e,
                     label
                 );
+
+                const status = Number(e?.status || 0);
+                if (status === 401 || status === 403) {
+                    throw apiUnhealthyError(
+                        `${label}: authenticated bulk media-info denied (HTTP ${status}); stopped.`
+                    );
+                }
+                if ([400, 404, 410, 422].includes(status)) {
+                    throw e;
+                }
 
                 if (
                     Number(
@@ -4393,6 +4475,12 @@
                                         );
                                         return null;
                                     }
+                                    if (instagramAuthChallengeIn(text)) {
+                                        apiUnhealthyError(
+                                            `Native ${m.friendly}: authentication/checkpoint required.`
+                                        );
+                                        return null;
+                                    }
 
                                     try {
                                         return JSON.parse(text);
@@ -4652,6 +4740,12 @@
                                     if (feedbackRequiredIn(raw)) {
                                         feedbackCircuitBreak(
                                             `Native ${meta.friendly}: Instagram returned feedback_required.`
+                                        );
+                                        return;
+                                    }
+                                    if (instagramAuthChallengeIn(raw)) {
+                                        apiUnhealthyError(
+                                            `Native ${meta.friendly}: authentication/checkpoint required.`
                                         );
                                         return;
                                     }
@@ -4953,6 +5047,11 @@
                 if (feedbackRequiredIn(text)) {
                     throw feedbackCircuitBreak(
                         `${label}: Instagram returned feedback_required.`
+                    );
+                }
+                if (instagramAuthChallengeIn(text)) {
+                    throw apiUnhealthyError(
+                        `${label}: Instagram authentication/checkpoint required.`
                     );
                 }
 
