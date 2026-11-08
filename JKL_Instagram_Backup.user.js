@@ -7086,19 +7086,28 @@
         const counts = [];
         const flags = [];
         let latestReelPresent = false;
+        let invalidMetadata = false;
 
         for (const user of raws) {
             if (typeof user.has_any_clips === 'boolean') {
                 flags.push(user.has_any_clips);
             }
+            else if (user.has_any_clips !== undefined &&
+                user.has_any_clips !== null) {
+                invalidMetadata = true;
+            }
+
             const raw = user.total_clips_count;
             if (
                 typeof raw === 'number' && Number.isSafeInteger(raw) &&
                 raw >= 0
             ) counts.push(raw);
-            else if (typeof raw === 'string' && /^\d+$/.test(raw)) {
-                const count = Number(raw);
-                if (Number.isSafeInteger(count)) counts.push(count);
+            else if (typeof raw === 'string' && /^\d+$/.test(raw) &&
+                Number.isSafeInteger(Number(raw))) {
+                counts.push(Number(raw));
+            }
+            else if (raw !== undefined && raw !== null) {
+                invalidMetadata = true;
             }
 
             if (
@@ -7112,6 +7121,7 @@
         const hasAnyClips = flags.length ? flags[0] : null;
         const totalClipsCount = counts.length ? counts[0] : null;
         const consistent =
+            !invalidMetadata &&
             flags.every(v => v === hasAnyClips) &&
             counts.every(v => v === totalClipsCount) &&
             !(hasAnyClips === false && totalClipsCount > 0) &&
