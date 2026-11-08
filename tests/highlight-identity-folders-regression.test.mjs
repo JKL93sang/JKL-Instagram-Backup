@@ -20,19 +20,22 @@ const username = 'jennnii97';
 const state = {
     username, userId: '45790055326', cancelled: false,
     coverage: { highlights: false },
-    highlightCatalog: new Map(), queue: new Map(),
+    highlightCatalog: new Map(), highlightRenameNotices: new Set(),
+    ledgerDirty: 0, queue: new Map(),
     diskCanonical: new Set(), diskCanonicalMeta: new Map(),
     diskLocations: new Map(), diskPaths: new Map(), sessionPaths: new Map(),
     diskHidden: new Set(), diskStoryHighlight: new Set(), legacy: new Map(),
     settings: { force: false }, diskActive: false,
 };
-const logs = [], writeRequests = [];
+const logs = [], writeRequests = [], db = { profiles: {} };
+const titles = new Map(reelIds.map(id => [id, '.']));
 const helpers = [
     'sanitizePathComponent', 'hiId', 'highlightFolderName',
     'buildHighlightCatalog', 'highlightFolderTitle',
     'highlightFallbackFolderTitle', 'mediaArchiveCategory',
-    'archiveDownloadPath', 'matchesHighlightArchivePath',
-    'scanHighlights', 'indexFolder', 'existingReason',
+    'archiveDownloadPath', 'highlightArchivePathIdentity',
+    'matchesHighlightArchivePath', 'reconcileHighlightTitleHistory',
+    'reportHighlightFolderRenames', 'scanHighlights', 'indexFolder', 'existingReason',
     'downloadAttempt',
 ].map(extract).join('\n');
 
@@ -42,15 +45,19 @@ const testApi = new Function(
     'fetchWebStoryReel', 'throwIfInstagramStop', 'addMedia',
     'updateStats', 'sleep', 'rand',
     'filename', 'canonicalShortcode', 'legacyMatch', 'GM_download',
+    'loadDb', 'flushLedger',
     helpers + '\nreturn { highlightFolderName, buildHighlightCatalog, ' +
-        'archiveDownloadPath, matchesHighlightArchivePath, scanHighlights, ' +
+        'archiveDownloadPath, highlightArchivePathIdentity, ' +
+        'matchesHighlightArchivePath, scanHighlights, ' +
         'indexFolder, existingReason, downloadAttempt };'
 )(
     state,
     { PAGE_MIN: 0, PAGE_MAX: 0 },
     async () => ({
         data: {
-            edges: reelIds.map(id => ({ node: { id: 'highlight:' + id, title: '.' } })),
+            edges: reelIds.map(id => ({ node: {
+                id: 'highlight:' + id, title: titles.get(id),
+            } })),
             page_info: { has_next_page: false },
         },
         source: 'graphql',
@@ -93,7 +100,8 @@ const testApi = new Function(
     options => {
         writeRequests.push(options);
         queueMicrotask(() => options.onload());
-    }
+    },
+    () => db, () => { state.ledgerDirty = 0; }
 );
 
 const success = await testApi.scanHighlights();
@@ -176,6 +184,43 @@ assert.ok(longPath.split('/').at(-2).length <= 120);
 assert.ok(source.includes("state.highlightCatalog = buildHighlightCatalog(tray)"));
 assert.ok(source.includes('state.diskPaths.get(id)'));
 assert.ok(source.includes('GM_info?.downloadMode'));
+
+// Rename the FIRST existing highlight in Instagram, without changing its ID
+// or adding any media. This must not trigger new downloads on re-index.
+titles.set(reelIds[0], 'Vacances 2026');
+assert.equal(await testApi.scanHighlights(), true);
+assert.equal(state.queue.size, 176);
+const renamed = testApi.archiveDownloadPath(first);
+assert.ok(renamed.includes('Vacances 2026 [' + reelIds[0] + ']'));
+assert.notEqual(renamed, pathFirst);
+assert.equal(testApi.matchesHighlightArchivePath(first, pathFirst), true,
+    'old title, same reel ID is still a legitimate saved file');
+const oldTitleMatch = testApi.highlightArchivePathIdentity(first, pathFirst);
+assert.equal(oldTitleMatch.matched, true);
+assert.equal(oldTitleMatch.renamed, true);
+assert.equal(oldTitleMatch.reelId, reelIds[0]);
+assert.equal(testApi.highlightArchivePathIdentity(first, oldPath).matched, false);
+testApi.indexFolder([indexedFile(pathFirst)]);
+assert.equal(testApi.existingReason(first), 'DISK',
+    'title change must never trigger re-download of an already archived reel');
+assert.ok(logs.some(x => String(x[0]).includes('HIGHLIGHT RENAMED [' + reelIds[0] + ']')),
+    'title changes must be recognized from persisted metadata');
+assert.ok(logs.some(x => String(x[0]).includes('HIGHLIGHT FOLDER RENAME [' + reelIds[0] + ']')),
+    'old local folder should be reported rather than silently duplicated');
+assert.equal(db.profiles[state.userId].highlights[reelIds[0]].title, 'Vacances 2026');
+assert.equal(db.profiles[state.userId].highlights[reelIds[1]].title, '.',
+    'only the actually renamed reel is affected');
+
+// If the title changes twice, the same reel ID must still resolve the archive.
+titles.set(reelIds[0], 'Été 2027');
+assert.equal(await testApi.scanHighlights(), true);
+assert.equal(state.queue.size, 176);
+assert.equal(testApi.existingReason(first), 'DISK');
+assert.equal(db.profiles[state.userId].highlights[reelIds[0]].title, 'Été 2027');
+
+// A filename in another reel folder must NEVER be accepted as this reel.
+const wrongIdentity = pathFirst.replace(reelIds[0], reelIds[1]);
+assert.equal(testApi.matchesHighlightArchivePath(first, wrongIdentity), false);
 
 console.log(
     'Four same-title highlights kept distinct (50/92/17/17); path repair, ' +
