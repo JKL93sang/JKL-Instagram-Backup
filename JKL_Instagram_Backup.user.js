@@ -11723,11 +11723,19 @@
             if (state.diskLocations.get(id)?.has(mediaArchiveCategory(m))) {
                 // Matching type and ID are insufficient for highlights:
                 // the actual indexed reel directory must also match.
+                if (m.type !== 'HIGHLIGHT') return 'DISK';
                 if (
-                    m.type !== 'HIGHLIGHT' ||
                     [...(state.diskPaths.get(id) || [])]
                         .some(p => matchesHighlightArchivePath(m, p))
                 ) return 'DISK';
+
+                // Newly repaired files are not part of the *old* directory
+                // scan. Honor this session's accepted requested path to
+                // avoid downloading them twice before the next re-index.
+                if (
+                    [...(state.sessionPaths.get(id) || [])]
+                        .some(p => matchesHighlightArchivePath(m, p))
+                ) return 'SESSION';
             }
 
             // Legacy matches have no reliable visibility information.
