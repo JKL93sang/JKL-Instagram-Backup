@@ -42,6 +42,7 @@ function fixture() {
         'pathNorm', 'findAnchor', 'log',
         extract('verifiedPublicGridPrimaryProof') +
         extract('explicitEmptyReelsProof') +
+        extract('classifyReelsEvidence') +
         extract('reconcileEmptyReelsCoverage') +
         '\nreturn { verifiedPublicGridPrimaryProof, ' +
         'explicitEmptyReelsProof, reconcileEmptyReelsCoverage };'
@@ -72,7 +73,7 @@ delete missingCount.state.profileInfo.total_clips_count;
 assert.equal(missingCount.explicitEmptyReelsProof().verified, false);
 missingCount.reconcileEmptyReelsCoverage();
 assert.equal(missingCount.state.coverage.reels, false);
-assert.ok(missingCount.logs.some(x => x[0].includes('Keeping REELS INCOMPLETE')));
+assert.ok(missingCount.logs.some(x => x[0].includes('No speculative REELS requests')));
 
 function reject(label, mutate) {
     const x = fixture();
