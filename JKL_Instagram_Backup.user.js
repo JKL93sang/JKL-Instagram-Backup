@@ -202,6 +202,7 @@
 
         rootCatalog: new Map(),
         highlightCatalog: new Map(), // Instagram reel ID -> stable archive folder
+        highlightRenameNotices: new Set(),
         queue: new Map(),
 
         // Authorized only after full authenticated media-info, never previews.
@@ -1011,6 +1012,7 @@
         state.hidden.recoveredCodes = [];
         state.verifiedSubscriberRootIds.clear();
         state.highlightCatalog.clear();
+        state.highlightRenameNotices.clear();
         clearPartialDownloadGrants();
 
         state.hydration.totalRoots = 0;
@@ -1658,6 +1660,95 @@
 
     function matchesHighlightArchivePath(m, relativePath) {
         return highlightArchivePathIdentity(m, relativePath).matched;
+    }
+
+    // A renamed highlight remains the SAME Instagram collection. This
+    // metadata is kept per profile so renames can be recognized across
+    // browser sessions, even when the user has not indexed a local folder.
+    function reconcileHighlightTitleHistory() {
+        if (!state.coverage.highlights || !state.userId) return 0;
+
+        const db = loadDb();
+        const profile = db.profiles[state.userId] ||= {
+            userId: state.userId,
+            username: state.username,
+            updatedAt: null,
+            media: {},
+        };
+        profile.highlights ||= {};
+
+        let changes = 0;
+        let renames = 0;
+        for (const [id, current] of state.highlightCatalog) {
+            const previous = profile.highlights[id];
+            if (previous?.title === current.title) continue;
+
+            if (previous && typeof previous.title === 'string') {
+                renames++;
+                log(
+                    `HIGHLIGHT RENAMED [${id}]: "${previous.title}" → ` +
+                    `"${current.title}". Same Instagram reel, NOT a new highlight. ` +
+                    'Existing files remain linked by reel ID.',
+                    'warn'
+                );
+            }
+
+            profile.highlights[id] = {
+                id, title: current.title, folder: current.folder,
+                lastSeenAt: new Date().toISOString(),
+            };
+            changes++;
+        }
+
+        if (changes) {
+            profile.updatedAt = new Date().toISOString();
+            state.ledgerDirty += changes;
+            try {
+                flushLedger(true);
+            }
+            catch (e) {
+                log('Could not persist HIGHLIGHT rename history: ' + e.message, 'warn');
+            }
+        }
+        return renames;
+    }
+
+    // Firefox file inputs only index paths; they cannot rename local folders.
+    // Announce verified old-folder locations without treating them as new
+    // media or starting another download.
+    function reportHighlightFolderRenames() {
+        if (!state.diskActive || !state.highlightCatalog.size) return 0;
+        const seen = new Map();
+
+        for (const media of state.queue.values()) {
+            if (media.type !== 'HIGHLIGHT' || !media.highlightId) continue;
+            for (const path of state.diskPaths.get(String(media.id)) || []) {
+                const identity = highlightArchivePathIdentity(media, path);
+                if (!identity.matched || !identity.renamed) continue;
+
+                const key = [
+                    identity.reelId, identity.oldFolder, identity.expectedFolder,
+                ].join('|');
+                if (!seen.has(key)) {
+                    seen.set(key, { ...identity, mediaIds: new Set() });
+                }
+                seen.get(key).mediaIds.add(String(media.id));
+            }
+        }
+
+        for (const [key, entry] of seen) {
+            if (state.highlightRenameNotices.has(key)) continue;
+            state.highlightRenameNotices.add(key);
+            log(
+                `HIGHLIGHT FOLDER RENAME [${entry.reelId}]: ` +
+                `"${entry.oldFolder}" → "${entry.expectedFolder}" ` +
+                `(${entry.mediaIds.size} indexed files). ` +
+                'Same collection: downloads are SKIPPED. ' +
+                'Rename the folder manually on disk; Firefox cannot do it via SCAN LOCAL FOLDER.',
+                'warn'
+            );
+        }
+        return seen.size;
     }
 
     function archiveDownloadPath(
@@ -10199,6 +10290,11 @@
         state.coverage.highlights =
             allOk;
 
+        if (allOk) {
+            reconcileHighlightTitleHistory();
+            reportHighlightFolderRenames();
+        }
+
         updateStats();
 
         log(
@@ -11519,6 +11615,7 @@
         state.diskLocations.clear();
         state.diskPaths.clear();
         state.sessionPaths.clear();
+        state.highlightRenameNotices.clear();
         state.diskHidden.clear();
         state.diskStoryHighlight.clear();
         state.legacy.clear();
@@ -11668,6 +11765,7 @@
 
         state.diskIndexStats = counts;
         state.diskActive = true;
+        reportHighlightFolderRenames();
 
         updateStats();
 
