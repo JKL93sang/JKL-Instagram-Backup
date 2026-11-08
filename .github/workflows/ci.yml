@@ -87,5 +87,8 @@ jobs:
       - name: Verified accessible partial backup and immutable provenance tests
         run: node tests/accessible-verified-partial-regression.test.mjs
 
+      - name: Distinct highlight reel identity, path grouping and archive repair tests
+        run: node tests/highlight-identity-folders-regression.test.mjs
+
       - name: Unique FAN CLUB / flat HIDDEN category routing tests
         run: node tests/single-copy-archive-routing-regression.test.mjs
