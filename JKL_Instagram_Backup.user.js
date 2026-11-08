@@ -5686,7 +5686,10 @@
                 `private=${u?.is_private === true ? 'YES' : 'NO'}, ` +
                 `exclusive=${state.exclusive.hasExclusiveFeedContent ? 'YES' : 'NO'}, ` +
                 `fan_club_id=${state.exclusive.fanClubId || '-'}, ` +
-                `subscribers=${state.exclusive.subscriberCount ?? '-'}.`
+                `subscribers=${state.exclusive.subscriberCount ?? '-'}, ` +
+                `total_clips_count=${u?.total_clips_count ?? '-'}, ` +
+                `has_clips=${typeof u?.has_clips === 'boolean' ? u.has_clips : '-'}, ` +
+                `has_any_clips=${typeof u?.has_any_clips === 'boolean' ? u.has_any_clips : '-'}.`
             );
 
             return true;
@@ -11218,6 +11221,88 @@
         return { verified: true, reason: 'public_server_end_exact_counter', count };
     }
 
+    // A missing REELS navigation link is *not* proof of zero Reels.
+    // A target-scoped Instagram profile API can also return an explicit
+    // clips count. Accept absence only when that raw count is exactly
+    // zero AND the independent public timeline is exhausted, the account
+    // matches, no Reel root is observed, and the tab is genuinely absent.
+    // Unknown, nonzero and conflicting metadata always fail closed.
+    function explicitEmptyReelsProof() {
+        const fail = reason => ({ verified: false, reason });
+        const info = state.profileInfo;
+        const raw = info?.total_clips_count;
+        const validCount = typeof raw === 'number'
+            ? Number.isSafeInteger(raw) && raw >= 0
+            : typeof raw === 'string' && /^\d+$/.test(raw);
+        if (!validCount || Number(raw) !== 0) {
+            return fail('clips_count_not_explicit_zero');
+        }
+        if (
+            info?.has_clips === true ||
+            info?.has_any_clips === true
+        ) return fail('profile_reports_clips');
+
+        const id = String(info?.pk || info?.id || '').split('_')[0];
+        if (!id || id !== String(state.userId || '')) {
+            return fail('profile_clip_count_identity_unverified');
+        }
+        if (!verifiedPublicGridPrimaryProof().verified) {
+            return fail('public_main_grid_not_verified');
+        }
+        if (
+            state.coverage.profileGrid !== true ||
+            state.coverage.connectedHidden !== true ||
+            state.coverage.ownedHydration !== true ||
+            state.hidden.candidates !== 0 ||
+            state.hidden.recovered !== 0 ||
+            state.hidden.previewOnly !== 0 ||
+            state.hidden.failed !== 0 ||
+            state.roots.REEL.size !== 0 ||
+            state.shadow.reelIds.size !== 0 ||
+            (net.reelsByUserId.get(state.userId)?.size || 0) !== 0
+        ) return fail('other_reel_or_hidden_source_unreconciled');
+
+        const target = `/${state.username}/reels/`;
+        if (
+            pathNorm(location.pathname) === pathNorm(target) ||
+            findAnchor(target)
+        ) return fail('reels_tab_present');
+
+        return {
+            verified: true,
+            reason: 'target_profile_explicit_zero_clips_and_public_grid_end',
+        };
+    }
+
+    function reconcileEmptyReelsCoverage() {
+        if (
+            !scanSelected('reel') ||
+            state.coverage.reels === true
+        ) return;
+
+        const proof = explicitEmptyReelsProof();
+        if (proof.verified) {
+            state.coverage.reels = true;
+            log(
+                'REELS independently proven EMPTY: authenticated target ' +
+                'profile reports total_clips_count=0; PUBLIC grid ended ' +
+                'and fully reconciles the official media counter; ' +
+                'no Reel/hidden candidate or REELS tab exists. ' +
+                'No unverified GraphQL query was attempted.'
+            );
+        }
+        else {
+            const count = state.profileInfo?.total_clips_count;
+            log(
+                'REELS absent-tab zero proof unavailable: ' +
+                proof.reason + ', raw_total_clips_count=' +
+                (count === undefined || count === null ? '-' : String(count)) +
+                '. Keeping REELS INCOMPLETE.',
+                'warn'
+            );
+        }
+    }
+
     function reconcileProfileGridCoverage() {
         if (
             state.coverage.profileGrid ||
@@ -11532,6 +11617,7 @@
             // incomplete. Reconcile once all selected passes have
             // completed, using strict cross-surface evidence.
             reconcileProfileGridCoverage();
+            reconcileEmptyReelsCoverage();
             updateStats();
 
             logScanProfilerSummary(
