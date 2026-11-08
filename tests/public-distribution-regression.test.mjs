@@ -75,9 +75,9 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.75');
+assert.equal(metadataVersion, '1.5.76');
 assert.equal(metadataVersion, appVersion);
-assert.match(meta('description'), /TEST BUILD v1\.5\.75/i,
+assert.match(meta('description'), /TEST BUILD v1\.5\.76/i,
     'The isolated candidate must remain labelled TEST');
 
 
