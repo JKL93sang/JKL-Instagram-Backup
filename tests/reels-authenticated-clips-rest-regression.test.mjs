@@ -78,7 +78,7 @@ function scenario(queue, mutate = () => {}) {
     assert.equal(form.get('target_user_id'), '45790055326');
     assert.equal(form.get('max_id'), '');
     assert.equal(form.get('include_feed_video'), 'true');
-    assert.ok(x.logs.some(l => l.msg.includes('paging_info.more_available=false')));
+    assert.ok(x.logs.some(l => l.msg.includes('verified terminal paging_info')));
 }
 {
     const x = scenario([
@@ -91,11 +91,31 @@ function scenario(queue, mutate = () => {}) {
     assert.ok(x.inserted.every(x => x.source === 'REEL_AUTHENTICATED_CLIPS_V1' &&
         x.type === 'REEL'));
 }
+{
+    // instagrapi's actual private-API parser relies on paging_info.max_id;
+    // more_available may be omitted, but max_id must be explicitly present.
+    const x = scenario([response({
+        status:'ok',items:[],paging_info:{max_id:null},
+    })]);
+    assert.equal(await x.scanReelsAuthenticatedWithoutTab(),true);
+    assert.equal(x.state.coverage.reels,true);
+}
+{
+    const x = scenario([
+        response({status:'ok',items:[{media:media('301')}],
+            paging_info:{max_id:'next'}}),
+        response({status:'ok',items:[{media:media('302')}],
+            paging_info:{max_id:null}}),
+    ]);
+    assert.equal(await x.scanReelsAuthenticatedWithoutTab(),true);
+    assert.equal(x.requests.length,2);
+    assert.deepEqual([...x.state.roots.REEL],['301','302']);
+}
 for (const [name, invalid] of [
     ['status missing', {items:[],paging_info:{more_available:false,max_id:null}}],
     ['items missing', {status:'ok',paging_info:{more_available:false,max_id:null}}],
     ['paging_info missing', {status:'ok',items:[]}],
-    ['has_more unknown', {status:'ok',items:[],paging_info:{max_id:null}}],
+    ['pagination markers missing', {status:'ok',items:[],paging_info:{}}],
     ['continuation cursor missing', page([],true,null)],
     ['end marker contradiction', page([],false,'cursor')],
     ['media wrapper missing', {status:'ok',items:[{}],paging_info:{more_available:false,max_id:null}}],
