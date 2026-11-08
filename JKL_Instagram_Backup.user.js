@@ -8755,15 +8755,15 @@
             ) !==
             pathNorm(target)
         ) {
+            state.coverage.reels = false;
             log(
-                'Could not open REELS tab. Running GraphQL completion pass.',
+                'Could not open REELS tab. No verified native REELS ' +
+                'pagination was captured; REELS stays INCOMPLETE. ' +
+                'Skipping obsolete static GraphQL fallback.',
                 'warn'
             );
-
-            return scanReelsFallback({
-                reason: 'native_navigation_failed',
-                nativeRoots: state.roots.REEL.size,
-            });
+            updateStats();
+            return false;
         }
 
         const processed =
@@ -9036,20 +9036,12 @@
                 `reason=${nativeEndReason}.`
             );
 
-            /*
-             * v1.4.3 FIX:
-             *
-             * v1.4.2 only ran the GraphQL fallback when BOTH the network
-             * capture and DOM were completely empty. A partial native scan
-             * (for example 23 roots while more existed) therefore prevented
-             * the fallback from ever running.
-             *
-             * The GraphQL pass is now ALWAYS used as a completion pass.
-             * addMedia() and the REEL root Set already deduplicate overlaps,
-             * so replaying the first pages is safe.
-             */
+            // Do not use the old fixed REELS GraphQL doc_id. A native
+            // server-end is sufficient only when its target-scoped request
+            // was observed; otherwise replay only a VERIFIED native cursor
+            // contract. Missing evidence leaves REELS INCOMPLETE.
             const completed =
-                await scanReelsFallback({
+                await scanReelsNativeCompletion({
                     reason: nativeEndReason,
                     nativeRoots,
                     nativeEnded,
@@ -9120,228 +9112,217 @@
         }
     }
 
-    async function scanReelsFallback(context = {}) {
-        const startRoots =
-            state.roots.REEL.size;
+    function verifiedReelNativeContinuation(uid) {
+        const initial = net.reelNativeInitialByUserId.get(uid);
+        const continuation = net.reelNativeContinuationByUserId.get(uid);
+        const audit = net.reelNativeAuditByUserId.get(uid);
 
-        const nativeRoots =
-            Number(
-                context.nativeRoots ??
-                startRoots
-            );
+        const valid = contract => !!(
+            contract &&
+            REEL_NAMES.has(contract.friendly) &&
+            /^\\d+$/.test(contract.docId) &&
+            contract.variables &&
+            typeof contract.variables === 'object' &&
+            contract.template?.body &&
+            typeof contract.template.body === 'object' &&
+            requestTargetsCurrentProfile({
+                variables: contract.variables,
+            })
+        );
 
-        const reason =
-            String(
-                context.reason ||
-                'completion'
+        if (
+            !audit ||
+            audit.initial < 1 ||
+            audit.continuation < 1 ||
+            !valid(initial) ||
+            !valid(continuation) ||
+            !['after','max_id','data.after','data.max_id'].includes(
+                continuation.cursorPath
+            )
+        ) return null;
+
+        const observed = reelNativeCursorField(continuation.variables);
+        if (
+            !observed ||
+            observed.path !== continuation.cursorPath ||
+            !observed.value
+        ) return null;
+
+        return continuation;
+    }
+
+    function reelNativeContinuationVariables(contract, cursor) {
+        if (!contract || !cursor) return null;
+
+        const vars = JSON.parse(JSON.stringify(contract.variables || {}));
+        const field = String(contract.cursorPath || '');
+        const rootField = field === 'after' || field === 'max_id';
+        const nestedField = field === 'data.after' || field === 'data.max_id';
+        if (rootField === nestedField) return null;
+
+        const target = rootField ? vars : vars.data;
+        const key = field.split('.').pop();
+        if (!target || !Object.prototype.hasOwnProperty.call(target, key)) {
+            return null;
+        }
+
+        const observed = reelNativeCursorField(vars);
+        if (!observed || observed.path !== field || !observed.value) return null;
+
+        target[key] = String(cursor);
+        return vars;
+    }
+
+    async function scanReelsNativeCompletion(context = {}) {
+        const uid = String(state.userId || '');
+        const audit = net.reelNativeAuditByUserId.get(uid);
+        const pageInfo = net.reelPageInfo.get(uid);
+        const startRoots = state.roots.REEL.size;
+
+        if (
+            pageInfo?.has_next_page === false &&
+            audit?.initial >= 1 &&
+            audit?.lastHasNext === 'false'
+        ) {
+            log(
+                'REELS native pagination ended on target-scoped ' +
+                'Instagram page_info.has_next_page=false; no GraphQL ' +
+                'fallback required.'
             );
+            return true;
+        }
+
+        const firstCursor = String(pageInfo?.end_cursor || '');
+        const contract = verifiedReelNativeContinuation(uid);
 
         log(
-            `REEL GraphQL completion starting: ` +
-            `native=${nativeRoots}, ` +
-            `current=${startRoots}, ` +
-            `reason=${reason}.`,
+            'REELS native completion: reason=' +
+            String(context.reason || 'unknown') +
+            ', roots=' + startRoots +
+            ', initial=' + (audit?.initial || 0) +
+            ', continuation=' + (audit?.continuation || 0) +
+            ', cursor_schema=' + (audit?.cursorPath || '-') +
+            ', has_next=' + (pageInfo?.has_next_page ?? 'unknown') +
+            ', verified_contract=' + !!contract + '.',
             'warn'
         );
 
-        state.coverage.reels = false;
-
-        let after = null;
-        let gotResponse = false;
-        let ended = false;
-        let endReason = 'max_pages';
-        let pages = 0;
-        let totalEdges = 0;
-
-        const seenCursors =
-            new Set();
-
-        for (
-            let page = 1;
-            page <= APP.REEL_MAX_SCROLLS;
-            page++
+        if (
+            pageInfo?.has_next_page !== true ||
+            !firstCursor ||
+            !contract
         ) {
-            if (
-                state.cancelled
-            ) {
-                throw new Error(
-                    'Cancelled'
-                );
+            log(
+                'REELS completion: missing server-side end or verified ' +
+                'native continuation contract. Preserving discovered ' +
+                'media but leaving REELS INCOMPLETE. Obsolete static ' +
+                'GraphQL fallback was NOT requested.',
+                'warn'
+            );
+            return false;
+        }
+
+        let cursor = firstCursor;
+        let completed = false;
+        let pages = 0;
+        let edges = 0;
+        let endReason = 'limit';
+        const seen = new Set();
+
+        for (let page = 1; page <= APP.REEL_MAX_SCROLLS; page++) {
+            if (state.cancelled) throw new Error('Cancelled');
+
+            if (seen.has(cursor)) {
+                endReason = 'cursor_repeated';
+                break;
+            }
+            seen.add(cursor);
+
+            const vars = reelNativeContinuationVariables(contract, cursor);
+            if (!vars) {
+                endReason = 'invalid_native_cursor_contract';
+                break;
             }
 
-            const vars = {
-                data: {
-                    include_feed_video: true,
-                    page_size: 12,
-                    target_user_id: state.userId,
-                },
-            };
-
-            if (after) {
-                vars.data.max_id = after;
-            }
-
-            let d;
-
+            let response;
             try {
-                d = await gql(
-                    APP.REEL_FALLBACK_DOC,
+                response = await webRelayGql(
+                    contract.docId,
                     vars,
-                    'PolarisProfileReelsTabContentQuery'
+                    contract.friendly,
+                    {
+                        endpoint:contract.endpoint,
+                        nativeTemplate:contract.template,
+                        rootField:
+                            contract.template.headers?.['x-root-field-name'] ||
+                            REEL_CONNECTION_KEY,
+                    }
                 );
-
-                gotResponse = true;
             }
             catch (e) {
-                throwIfInstagramStop(e, 'REEL GraphQL completion: Instagram returned feedback_required.');
-
-                endReason =
-                    `graphql_error:${e.message}`;
-
+                // A real, identity-scoped authenticated native request that
+                // returns 429/feedback_required/HTML must still trigger the
+                // existing safety circuit; never pretend it was an empty page.
+                throwIfInstagramStop(e, 'REELS verified native pagination');
+                endReason = 'native_relay_request_failed';
                 log(
-                    `REEL GraphQL completion failed on page ${page}: ` +
-                    `${e.message}`,
+                    'REELS verified native pagination request failed; ' +
+                    'leaving REELS INCOMPLETE.',
                     'warn'
                 );
-
                 break;
             }
 
-            const c = reelConn(d);
-
-            if (!c) {
-                endReason =
-                    'connection_missing';
-
-                log(
-                    `REEL GraphQL completion page ${page}: ` +
-                    `connection missing.`,
-                    'warn'
-                );
-
+            const c = reelConn(response);
+            if (!c || !Array.isArray(c.edges)) {
+                endReason = 'connection_missing';
                 break;
             }
-
-            const edges =
-                c?.edges || [];
 
             pages++;
-            totalEdges += edges.length;
-
-            const beforePage =
-                state.roots.REEL.size;
-
-            for (
-                const e
-                of edges
-            ) {
-                addMedia(
-                    edgeNode(e),
-                    'REEL',
-                    'REEL_FALLBACK'
-                );
+            edges += c.edges.length;
+            const before = state.roots.REEL.size;
+            for (const edge of c.edges) {
+                addMedia(edgeNode(edge), 'REEL', 'REEL_NATIVE_RELAY');
             }
-
-            const afterPage =
-                state.roots.REEL.size;
-
-            const added =
-                afterPage -
-                beforePage;
-
+            const recovered = state.roots.REEL.size - before;
             updateStats();
-
             log(
-                `REEL GraphQL page ${page}: ` +
-                `edges=${edges.length}, ` +
-                `new=${added}, ` +
-                `total=${afterPage}, ` +
-                `has_next=${c?.page_info?.has_next_page ?? 'unknown'}.`
+                'REELS verified native page ' + page +
+                ': edges=' + c.edges.length +
+                ', new=' + recovered +
+                ', total=' + state.roots.REEL.size +
+                ', has_next=' +
+                (c?.page_info?.has_next_page ?? 'unknown') + '.'
             );
 
-            if (
-                c?.page_info?.has_next_page ===
-                    false
-            ) {
-                ended = true;
-                endReason =
-                    'page_info_end';
+            if (c?.page_info?.has_next_page === false) {
+                completed = true;
+                endReason = 'server_page_info_end';
                 break;
             }
 
-            const next =
-                String(
-                    c?.page_info?.end_cursor ||
-                    ''
-                );
-
-            if (!edges.length) {
-                endReason =
-                    'empty_page_without_end';
+            const next = String(c?.page_info?.end_cursor || '');
+            if (!c.edges.length || !next) {
+                endReason = !c.edges.length
+                    ? 'empty_page_without_end'
+                    : 'missing_cursor';
                 break;
             }
 
-            if (!next) {
-                endReason =
-                    'missing_cursor';
-                break;
-            }
-
-            if (
-                seenCursors.has(next)
-            ) {
-                endReason =
-                    'repeated_cursor';
-
-                log(
-                    `REEL GraphQL completion cursor repeated on page ${page}; stopping.`,
-                    'warn'
-                );
-
-                break;
-            }
-
-            seenCursors.add(next);
-            after = next;
-
-            await sleep(
-                rand(
-                    APP.PAGE_MIN,
-                    APP.PAGE_MAX
-                )
-            );
+            cursor = next;
+            await sleep(rand(APP.PAGE_MIN, APP.PAGE_MAX));
         }
-
-        if (!gotResponse) {
-            ended = false;
-        }
-
-        state.coverage.reels =
-            gotResponse && ended;
-
-        const finalRoots =
-            state.roots.REEL.size;
-
-        const recovered =
-            Math.max(
-                0,
-                finalRoots -
-                startRoots
-            );
-
-        updateStats();
 
         log(
-            `REEL GraphQL completion complete: ` +
-            `pages=${pages}, ` +
-            `edges=${totalEdges}, ` +
-            `recovered=${recovered}, ` +
-            `REEL=${finalRoots}, ` +
-            `end=${endReason}, ` +
-            `ended=${state.coverage.reels}.`
+            'REELS verified native completion: pages=' + pages +
+            ', edges=' + edges +
+            ', recovered=' + (state.roots.REEL.size-startRoots) +
+            ', end=' + endReason +
+            ', ended=' + completed + '.',
+            completed ? 'info' : 'warn'
         );
-
-        return state.coverage.reels;
+        return completed;
     }
 
     async function scanTaggedGraphQL() {
