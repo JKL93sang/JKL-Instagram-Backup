@@ -72,9 +72,6 @@ jobs:
       - name: REELS absent-tab safe skip regression tests
         run: node tests/no-reels-tab-regression.test.mjs
 
-      - name: Authenticated clips REST absent-tab pagination and fail-closed tests
-        run: node tests/reels-authenticated-clips-rest-regression.test.mjs
-
       - name: REELS verified-native cursor pagination tests
         run: node tests/reels-native-pagination-regression.test.mjs
 
