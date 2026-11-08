@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.72
-// @description  TEST BUILD v1.5.72: native-verified REELS pagination, safe fallback guards, local archive counters.
+// @version      1.5.73
+// @description  TEST BUILD v1.5.73: verified accessible partial downloads, native REELS safety, indexed archive.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.72', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.73', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -191,6 +191,7 @@
         // Authorized only after full authenticated media-info, never previews.
         verifiedSubscriberRootIds: new Set(),
         verifiedSubscriberSnapshot: null,
+        verifiedAccessibleSnapshot: null,
 
         roots: {
             POST: new Set(),
@@ -959,6 +960,7 @@
         state.scanQueueSize = 0;
         state.scanQueueFingerprint = '';
         state.verifiedSubscriberSnapshot = null;
+        state.verifiedAccessibleSnapshot = null;
     }
 
     function resetCoverage() {
@@ -987,6 +989,7 @@
         state.hidden.recoveredCodes = [];
         state.verifiedSubscriberRootIds.clear();
         state.verifiedSubscriberSnapshot = null;
+        state.verifiedAccessibleSnapshot = null;
 
         state.hydration.totalRoots = 0;
         state.hydration.hydratedRoots = 0;
@@ -5794,9 +5797,22 @@
             }
         }
         else if (state.queue.size > 0) {
-            downloadValue = 'LOCKED';
-            downloadDetail =
-                'Waiting for a COMPLETE scan';
+            if (state.verifiedAccessibleSnapshot) {
+                downloadValue = 'PARTIAL READY';
+                downloadDetail =
+                    state.verifiedAccessibleSnapshot.mediaCount +
+                    ' verified accessible media · full backup locked';
+            }
+            else if (state.verifiedSubscriberSnapshot) {
+                downloadValue = 'SUBSCRIBER PARTIAL';
+                downloadDetail =
+                    state.verifiedSubscriberSnapshot.mediaCount +
+                    ' verified subscriber media · full backup locked';
+            }
+            else {
+                downloadValue = 'LOCKED';
+                downloadDetail = 'Waiting for a COMPLETE scan';
+            }
         }
 
         const missingCoverage =
@@ -9713,16 +9729,14 @@
         const target =
             reels.find(
                 reel =>
-                    hiId(
-                        reel?.id
-                    ) ===
-                    String(state.userId)
-            ) ||
-            (
-                reels.length === 1
-                    ? reels[0]
-                    : null
-            );
+                    hiId(reel?.id) === String(state.userId)
+            ) || null;
+
+        if (reels.length && !target) {
+            log('STORY: no reel matched the verified profile ID.', 'warn');
+            updateStats();
+            return false;
+        }
 
         const items =
             target == null
@@ -10027,16 +10041,8 @@
 
             const reel =
                 reels.find(
-                    candidate =>
-                        hiId(
-                            candidate?.id
-                        ) === id
-                ) ||
-                (
-                    reels.length === 1
-                        ? reels[0]
-                        : null
-                );
+                    candidate => hiId(candidate?.id) === id
+                ) || null;
 
             const items =
                 reel?.items;
@@ -10297,6 +10303,12 @@
                 hiddenDiscoverySources(m)
                     .sort()
                     .join(','),
+                m.sources instanceof Set
+                    ? [...m.sources].map(String).sort().join(',')
+                    : '',
+                m.rootIds instanceof Set
+                    ? [...m.rootIds].map(String).sort().join(',')
+                    : '',
             ].join('|'))
             .sort()
             .join('\n');
@@ -10412,6 +10424,174 @@
             media.length !== snap.mediaCount ||
             media.map(m => String(m.id)).sort().join('|') !== snap.mediaIds
         ) return fail('verified subscriber media set changed');
+
+        return { ok: true, reason: '', media };
+    }
+
+
+    // Only independently proven, accessible surfaces are included.
+    // REELS, TAGGED, subscriber media and unverified PROFILE-only items
+    // never enter this bounded partial download.
+    function verifiedAccessibleMedia() {
+        const shadowVerified =
+            state.scanPlan?.post === true &&
+            state.coverage.publicShadow === true &&
+            state.coverage.ownedHydration === true &&
+            state.shadow.applicable === true &&
+            state.shadow.pageInfoEnded === true &&
+            String(state.shadow.profileId || '') === String(state.userId || '') &&
+            state.shadow.postIds instanceof Set;
+
+        return [...state.queue.values()].filter(m => {
+            if (
+                !m?.url || !m?.id || !m?.filename ||
+                !(m.sources instanceof Set) ||
+                ['FAN CLUB', 'HIDDEN'].includes(mediaArchiveCategory(m))
+            ) return false;
+
+            const id = String(m.id);
+
+            if (m.type === 'POST') {
+                return shadowVerified &&
+                    m.rootIds instanceof Set &&
+                    [...m.rootIds].some(rootId =>
+                        state.shadow.postIds.has(String(rootId))
+                    ) &&
+                    (
+                        m.sources.has('PROFILE_PUBLIC_SHADOW') ||
+                        m.sources.has('OWNED_DEEP_HYDRATION')
+                    );
+            }
+
+            if (m.type === 'HIGHLIGHT') {
+                return state.scanPlan?.highlight === true &&
+                    state.coverage.highlights === true &&
+                    state.roots.HIGHLIGHT.has(id) &&
+                    [...m.sources].some(s => String(s).startsWith('HIGHLIGHT:'));
+            }
+
+            if (m.type === 'STORY') {
+                return state.scanPlan?.story === true &&
+                    state.coverage.story === true &&
+                    state.roots.STORY.has(id) &&
+                    m.sources.has('STORY_WEB_GRAPHQL');
+            }
+
+            if (m.type === 'AVATAR') {
+                return state.scanPlan?.avatar === true &&
+                    state.coverage.avatar === true &&
+                    state.roots.AVATAR.has(id) &&
+                    m.sources.has('AVATAR');
+            }
+
+            return false;
+        });
+    }
+
+    // Bind surface completion proof and individual root identities to the
+    // immutable snapshot, not merely the number of discovered files.
+    function accessibleSourceProofFingerprint() {
+        return JSON.stringify({
+            userId: String(state.userId || ''),
+            plan: {
+                post: state.scanPlan?.post === true,
+                reel: state.scanPlan?.reel === true,
+                highlight: state.scanPlan?.highlight === true,
+                story: state.scanPlan?.story === true,
+                avatar: state.scanPlan?.avatar === true,
+            },
+            coverage: {
+                publicShadow: state.coverage.publicShadow === true,
+                ownedHydration: state.coverage.ownedHydration === true,
+                highlights: state.coverage.highlights === true,
+                story: state.coverage.story === true,
+                avatar: state.coverage.avatar === true,
+            },
+            shadow: {
+                applicable: state.shadow.applicable === true,
+                ended: state.shadow.pageInfoEnded === true,
+                profileId: String(state.shadow.profileId || ''),
+                postIds: [...state.shadow.postIds].map(String).sort(),
+            },
+            roots: {
+                highlight: [...state.roots.HIGHLIGHT].map(String).sort(),
+                story: [...state.roots.STORY].map(String).sort(),
+                avatar: [...state.roots.AVATAR].map(String).sort(),
+            },
+        });
+    }
+
+    function captureVerifiedAccessibleSnapshot() {
+        state.verifiedAccessibleSnapshot = null;
+
+        if (
+            state.scanOutcome !== 'INCOMPLETE' ||
+            state.scanComplete ||
+            state.running ||
+            state.cancelled ||
+            state.feedbackRequired ||
+            state.rateLimited ||
+            state.apiUnhealthy ||
+            !state.scanPlan ||
+            !state.userId ||
+            !state.username
+        ) return;
+
+        const media = verifiedAccessibleMedia();
+        if (!media.length) return;
+
+        state.verifiedAccessibleSnapshot = Object.freeze({
+            userId: String(state.userId),
+            username: String(state.username),
+            queueSize: state.queue.size,
+            queueFingerprint: scanDownloadFingerprint(),
+            sourceProof: accessibleSourceProofFingerprint(),
+            mediaIds: Object.freeze(media.map(m => String(m.id)).sort()),
+            mediaCount: media.length,
+        });
+
+        log(
+            'ACCESSIBLE PARTIAL READY: ' + media.length +
+            ' media from independently verified surfaces. ' +
+            'PROFILE / REELS may still be INCOMPLETE; this is NOT a full archive.',
+            'warn'
+        );
+    }
+
+    function verifiedAccessibleDownloadIntegrity() {
+        const fail = reason => ({ ok: false, reason });
+        const snap = state.verifiedAccessibleSnapshot;
+
+        if (!snap || state.scanOutcome !== 'INCOMPLETE' || state.scanComplete) {
+            return fail('no verified accessible snapshot from finished INCOMPLETE scan');
+        }
+        if (
+            state.running ||
+            state.cancelled ||
+            state.feedbackRequired ||
+            state.rateLimited ||
+            state.apiUnhealthy
+        ) return fail('scan/session stopped or Instagram safety circuit active');
+
+        if (
+            String(state.userId) !== snap.userId ||
+            String(state.username) !== snap.username ||
+            cleanUser(ui.username?.value || currentProfile()) !== snap.username
+        ) return fail('profile identity/input changed after scan');
+
+        if (
+            state.queue.size !== snap.queueSize ||
+            scanDownloadFingerprint() !== snap.queueFingerprint ||
+            accessibleSourceProofFingerprint() !== snap.sourceProof
+        ) return fail('verified accessible inventory or provenance changed');
+
+        const media = verifiedAccessibleMedia();
+        if (
+            !media.length ||
+            media.length !== snap.mediaCount ||
+            media.map(m => String(m.id)).sort().join('|') !==
+                snap.mediaIds.join('|')
+        ) return fail('verified accessible media set changed');
 
         return { ok: true, reason: '', media };
     }
@@ -11115,7 +11295,7 @@
                 state.scanOutcome = 'INCOMPLETE';
 
                 status(
-                    `Scan INCOMPLETE: ${incomplete.join(', ') || 'scan state invalid'}. Do not download yet.`,
+                    `Scan INCOMPLETE: ${incomplete.join(', ') || 'scan state invalid'}. Full download locked; verified partial modes may be available.`,
                     'warn'
                 );
 
@@ -11129,6 +11309,8 @@
                 // Only after every scan phase has stopped. This never
                 // changes PROFILE coverage or scanOutcome to COMPLETE.
                 captureVerifiedSubscriberSnapshot();
+                captureVerifiedAccessibleSnapshot();
+                updateStats();
             }
         }
         catch (e) {
@@ -12372,9 +12554,12 @@
 
         // Standard archive path still requires an immutable COMPLETE scan.
         // Only a separate explicit action may select the verified subset.
-        const scanIntegrity = authorizedOnly
-            ? verifiedSubscriberDownloadIntegrity()
-            : completedScanIntegrity();
+        const accessibleOnly = authorizedOnly === 'accessible';
+        const scanIntegrity = accessibleOnly
+            ? verifiedAccessibleDownloadIntegrity()
+            : authorizedOnly
+                ? verifiedSubscriberDownloadIntegrity()
+                : completedScanIntegrity();
 
         if (!scanIntegrity.ok) {
             status(
@@ -12382,7 +12567,7 @@
                 'warn'
             );
             log(
-                `Archive guard blocked ${authorizedOnly ? 'verified subscriber' : 'full'} download: ` +
+                `Archive guard blocked ${accessibleOnly ? 'verified accessible' : authorizedOnly ? 'verified subscriber' : 'full'} download: ` +
                 `${scanIntegrity.reason}.`,
                 'warn'
             );
@@ -12446,10 +12631,13 @@
                     ? state.diskCanonical.size
                     : state.queue.size;
 
-                const message = authorizedOnly
-                    ? `Verified subscriber subset already saved: ${mediaScope.length} ` +
-                      `media inspected (PARTIAL PROFILE; scan still INCOMPLETE).`
-                    : `Archive already complete for this scan — ` +
+                const message = accessibleOnly
+                    ? `Verified accessible subset already saved: ${mediaScope.length} ` +
+                      `media inspected (PARTIAL; full scan still INCOMPLETE).`
+                    : authorizedOnly
+                        ? `Verified subscriber subset already saved: ${mediaScope.length} ` +
+                          `media inspected (PARTIAL PROFILE; scan still INCOMPLETE).`
+                        : `Archive already complete for this scan — ` +
                       `${state.queue.size}/${state.queue.size} scan media verified` +
                       `${state.diskActive ? ` on disk (${verified} indexed).` : '.'}`;
 
@@ -12469,7 +12657,7 @@
             const batchStartedAt = performance.now();
 
             log(
-                `${authorizedOnly ? 'Starting VERIFIED SUBSCRIBER PARTIAL download' : 'Starting download'}: ` +
+                `${accessibleOnly ? 'Starting VERIFIED ACCESSIBLE PARTIAL download' : authorizedOnly ? 'Starting VERIFIED SUBSCRIBER PARTIAL download' : 'Starting download'}: ` +
                 `${pending.length} media jobs, ` +
                 `${downloadPlan.total} physical writes (one per media), ` +
                 `${workerCount} worker, ` +
@@ -12554,7 +12742,7 @@
 
             const p = state.downloadProgress;
             const summary =
-                `${authorizedOnly ? 'VERIFIED SUBSCRIBER PARTIAL' : 'Download batch'} finished: ` +
+                `${accessibleOnly ? 'VERIFIED ACCESSIBLE PARTIAL' : authorizedOnly ? 'VERIFIED SUBSCRIBER PARTIAL' : 'Download batch'} finished: ` +
                 `${completed} media jobs processed, ` +
                 `${p.succeeded}/${downloadPlan.total} physical writes succeeded, ` +
                 `${p.failed} failed, ${p.blocked} blocked; ` +
@@ -12586,6 +12774,10 @@
 
     async function downloadVerifiedSubscriberPartial() {
         return downloadMissing(true);
+    }
+
+    async function downloadVerifiedAccessiblePartial() {
+        return downloadMissing('accessible');
     }
 
     async function syncAll() {
@@ -12800,6 +12992,7 @@
                 'scan',
                 'download',
                 'downloadAuthorized',
+                'downloadAccessible',
                 'sync',
                 'username',
                 'cbPost',
@@ -15859,6 +16052,14 @@
 
                     <button
                         class="action"
+                        id="jkl-download-accessible"
+                        title="Save only identity- and source-verified public POST, HIGHLIGHT, STORY and AVATAR files. REELS, TAGGED and subscriber media are excluded. The scan remains INCOMPLETE."
+                    >
+                        DOWNLOAD VERIFIED ACCESSIBLE (PARTIAL)
+                    </button>
+
+                    <button
+                        class="action"
                         id="jkl-download-authorized"
                         title="Save only authenticated subscriber media already verified by media-info. This is NOT a COMPLETE profile backup."
                     >
@@ -16124,6 +16325,11 @@
                     '#jkl-download'
                 ),
 
+            downloadAccessible:
+                b.querySelector(
+                    '#jkl-download-accessible'
+                ),
+
             downloadAuthorized:
                 b.querySelector(
                     '#jkl-download-authorized'
@@ -16338,6 +16544,9 @@
 
         ui.downloadAuthorized.onclick =
             downloadVerifiedSubscriberPartial;
+
+        ui.downloadAccessible.onclick =
+            downloadVerifiedAccessiblePartial;
 
         ui.sync.onclick =
             syncAll;
