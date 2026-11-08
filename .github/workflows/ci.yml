@@ -63,6 +63,9 @@ jobs:
       - name: Safe GraphQL response diagnostic regression tests
         run: node tests/json-endpoint-diagnostic-regression.test.mjs
 
+      - name: REELS absent-tab safe skip regression tests
+        run: node tests/no-reels-tab-regression.test.mjs
+
       - name: Native Relay profile pagination regression tests
         run: node tests/native-profile-relay-regression.test.mjs
 
