@@ -26,6 +26,8 @@ const net = {
     gridNativeAuditByUser:new Map(),
     gridNativeContinuationByUser:new Map(),
     gridNativeInitialByUser:new Map(),
+    gridCaptureSeenAtByUser:new Map(),
+    gridBootstrapConsumedByUser:new Set(),
 };
 const friendly = 'PolarisProfilePostsTabContentQuery_connection';
 const makeConnection = (hasNext, mediaId='123') => ({
