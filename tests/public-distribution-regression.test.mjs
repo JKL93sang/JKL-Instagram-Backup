@@ -75,9 +75,9 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.81');
+assert.equal(metadataVersion, '1.5.82');
 assert.equal(metadataVersion, appVersion);
-assert.match(meta('description'), /TEST v1\.5\.81/i,
+assert.match(meta('description'), /TEST v1\.5\.82/i,
     'This branch must be clearly labeled TEST');
 
 
