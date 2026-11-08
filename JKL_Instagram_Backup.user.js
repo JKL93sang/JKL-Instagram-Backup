@@ -11239,7 +11239,9 @@
         }
         if (
             info?.has_clips === true ||
-            info?.has_any_clips === true
+            info?.has_any_clips === true ||
+            (info?.latest_reel_media !== undefined &&
+                info?.latest_reel_media !== null)
         ) return fail('profile_reports_clips');
 
         const id = String(info?.pk || info?.id || '').split('_')[0];
