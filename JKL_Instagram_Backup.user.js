@@ -12536,7 +12536,7 @@
         }
     }
 
-    async function downloadMissing(authorizedOnly = false) {
+    async function downloadMissing(mode = DOWNLOAD_MODE.COMPLETE) {
         if (
             state.running ||
             state.downloading
@@ -12555,14 +12555,9 @@
             return;
         }
 
-        // Standard archive path still requires an immutable COMPLETE scan.
-        // Only a separate explicit action may select the verified subset.
-        const accessibleOnly = authorizedOnly === 'accessible';
-        const scanIntegrity = accessibleOnly
-            ? verifiedAccessibleDownloadIntegrity()
-            : authorizedOnly
-                ? verifiedSubscriberDownloadIntegrity()
-                : completedScanIntegrity();
+        // Every download must resolve one explicit, evidence-bounded scope.
+        // Invalid or unknown modes fail closed.
+        const scanIntegrity = authorizeDownloadScope(mode);
 
         if (!scanIntegrity.ok) {
             status(
@@ -12570,27 +12565,15 @@
                 'warn'
             );
             log(
-                `Archive guard blocked ${accessibleOnly ? 'verified accessible' : authorizedOnly ? 'verified subscriber' : 'full'} download: ` +
+                `Archive guard blocked ${DOWNLOAD_MODE_LABEL[mode] || mode} download: ` +
                 `${scanIntegrity.reason}.`,
                 'warn'
             );
             return;
         }
 
-        if (!authorizedOnly) {
-            const incomplete = incompleteCoverage();
-            if (incomplete.length) {
-                status(
-                    `Download blocked: incomplete ${incomplete.join(', ')}.`,
-                    'warn'
-                );
-                return;
-            }
-        }
-
-        const mediaScope = authorizedOnly
-            ? scanIntegrity.media
-            : [...state.queue.values()];
+        const mediaScope = scanIntegrity.media;
+        const isPartial = mode !== DOWNLOAD_MODE.COMPLETE;
 
         const unverified =
             unverifiedArchiveHistory(mediaScope);
@@ -12634,13 +12617,11 @@
                     ? state.diskCanonical.size
                     : state.queue.size;
 
-                const message = accessibleOnly
-                    ? `Verified accessible subset already saved: ${mediaScope.length} ` +
-                      `media inspected (PARTIAL; full scan still INCOMPLETE).`
-                    : authorizedOnly
-                        ? `Verified subscriber subset already saved: ${mediaScope.length} ` +
-                          `media inspected (PARTIAL PROFILE; scan still INCOMPLETE).`
-                        : `Archive already complete for this scan — ` +
+                const message = isPartial
+                    ? `${DOWNLOAD_MODE_LABEL[mode]} subset already saved: ` +
+                      `${mediaScope.length} media inspected ` +
+                      `(PARTIAL; scan still INCOMPLETE).`
+                    : `Archive already complete for this scan — ` +
                       `${state.queue.size}/${state.queue.size} scan media verified` +
                       `${state.diskActive ? ` on disk (${verified} indexed).` : '.'}`;
 
@@ -12660,7 +12641,7 @@
             const batchStartedAt = performance.now();
 
             log(
-                `${accessibleOnly ? 'Starting VERIFIED ACCESSIBLE PARTIAL download' : authorizedOnly ? 'Starting VERIFIED SUBSCRIBER PARTIAL download' : 'Starting download'}: ` +
+                `${mode === DOWNLOAD_MODE.COMPLETE ? 'Starting download' : 'Starting ' + DOWNLOAD_MODE_LABEL[mode] + ' download'}: ` +
                 `${pending.length} media jobs, ` +
                 `${downloadPlan.total} physical writes (one per media), ` +
                 `${workerCount} worker, ` +
@@ -12745,15 +12726,15 @@
 
             const p = state.downloadProgress;
             const summary =
-                `${accessibleOnly ? 'VERIFIED ACCESSIBLE PARTIAL' : authorizedOnly ? 'VERIFIED SUBSCRIBER PARTIAL' : 'Download batch'} finished: ` +
+                `${DOWNLOAD_MODE_LABEL[mode]} finished: ` +
                 `${completed} media jobs processed, ` +
                 `${p.succeeded}/${downloadPlan.total} physical writes succeeded, ` +
                 `${p.failed} failed, ${p.blocked} blocked; ` +
                 `${batchElapsed.toFixed(2)} s, ${average.toFixed(2)} s/job.` +
-                (authorizedOnly ? ' Overall PROFILE scan remains INCOMPLETE.' : '');
+                (isPartial ? ' Overall PROFILE scan remains INCOMPLETE.' : '');
 
-            log(summary, p.failed || p.blocked || authorizedOnly ? 'warn' : 'info');
-            status(summary, p.failed || p.blocked || authorizedOnly ? 'warn' : 'ok');
+            log(summary, p.failed || p.blocked || isPartial ? 'warn' : 'info');
+            status(summary, p.failed || p.blocked || isPartial ? 'warn' : 'ok');
         }
 
         finally {
@@ -12773,14 +12754,6 @@
 
             updateStats();
         }
-    }
-
-    async function downloadVerifiedSubscriberPartial() {
-        return downloadMissing(true);
-    }
-
-    async function downloadVerifiedAccessiblePartial() {
-        return downloadMissing('accessible');
     }
 
     async function syncAll() {
@@ -16543,13 +16516,13 @@
             scanAll;
 
         ui.download.onclick =
-            () => downloadMissing(false);
+            () => downloadMissing(DOWNLOAD_MODE.COMPLETE);
 
         ui.downloadAuthorized.onclick =
-            downloadVerifiedSubscriberPartial;
+            () => downloadMissing(DOWNLOAD_MODE.SUBSCRIBER);
 
         ui.downloadAccessible.onclick =
-            downloadVerifiedAccessiblePartial;
+            () => downloadMissing(DOWNLOAD_MODE.ACCESSIBLE);
 
         ui.sync.onclick =
             syncAll;
