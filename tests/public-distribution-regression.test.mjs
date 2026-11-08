@@ -23,7 +23,7 @@ const expectedRepo =
     'https://github.com/JKL93sang/JKL-Instagram-Backup';
 
 const expectedRaw =
-    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js';
+    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/public-ssr-reels-evidence-v1.5.79/JKL_Instagram_Backup.user.js';
 
 assert.equal(
     meta('name'),
@@ -48,7 +48,7 @@ assert.equal(
 
 assert.equal(
     meta('source'),
-    expectedRepo + '/blob/main/JKL_Instagram_Backup.user.js'
+    expectedRepo + '/blob/fix/public-ssr-reels-evidence-v1.5.79/JKL_Instagram_Backup.user.js'
 );
 
 assert.equal(
@@ -75,10 +75,10 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.78');
+assert.equal(metadataVersion, '1.5.79');
 assert.equal(metadataVersion, appVersion);
-assert.ok(!/TEST BUILD/i.test(meta('description')),
-    'Official main distribution must not claim to be a test build');
+assert.match(meta('description'), /TEST v1\\.5\\.79/i,
+    'This branch must be clearly labeled TEST');
 
 
 
