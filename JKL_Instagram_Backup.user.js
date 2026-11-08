@@ -3966,7 +3966,7 @@
         // Save only the parameters of successfully observed, target-scoped
         // native traffic. Static REEL_FALLBACK_DOC is not completion proof.
         if (
-            !/^\\d+$/.test(String(meta?.docId || '')) ||
+            !/^\d+$/.test(String(meta?.docId || '')) ||
             !variables ||
             typeof variables !== 'object' ||
             !meta.bodyFields ||
@@ -9066,7 +9066,7 @@
             /*
              * Anti-loss cross-check: every REEL visibly present in the native
              * DOM must also be represented in the final exhaustive REEL root
-             * set. GraphQL reaching page_info_end is necessary, but it must
+             * set. A verified native server end is necessary, but it must
              * not override evidence of a visible root that still could not be
              * resolved.
              */
@@ -9090,7 +9090,7 @@
 
                 log(
                     `REELS incomplete: ${unresolvedVisible.length} visible DOM root(s) ` +
-                    `remain unresolved after GraphQL completion.`,
+                    `remain unresolved after verified native completion.`,
                     'warn'
                 );
             }
@@ -9136,7 +9136,7 @@
         const valid = contract => !!(
             contract &&
             REEL_NAMES.has(contract.friendly) &&
-            /^\\d+$/.test(contract.docId) &&
+            /^\d+$/.test(contract.docId) &&
             contract.variables &&
             typeof contract.variables === 'object' &&
             contract.template?.body &&
