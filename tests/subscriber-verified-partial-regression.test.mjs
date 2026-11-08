@@ -2,348 +2,246 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 
 const source = fs.readFileSync(
-    new URL('../JKL_Instagram_Backup.user.js', import.meta.url),
-    'utf8'
+    new URL('../JKL_Instagram_Backup.user.js', import.meta.url), 'utf8'
 );
 
 function extract(name) {
-    let start = source.indexOf('    function ' + name + '(');
-    if (start < 0) start = source.indexOf('    async function ' + name + '(');
-    assert.ok(start >= 0, 'missing function ' + name);
+    const match = source.match(
+        new RegExp('    (?:async )?function ' + name + '\\(')
+    );
+    assert.ok(match, 'missing function ' + name);
+    const start = match.index;
     const end = source.indexOf('\n    }\n', start);
-    assert.ok(end > start, 'missing end of function ' + name);
+    assert.ok(end > start, 'missing end of ' + name);
     return source.slice(start, end + 7);
 }
 
+const MODE = Object.freeze({
+    COMPLETE: 'complete', SUBSCRIBER: 'subscriber', ACCESSIBLE: 'accessible',
+});
+const MODE_LABEL = Object.freeze({
+    complete: 'Download batch',
+    subscriber: 'VERIFIED SUBSCRIBER PARTIAL',
+    accessible: 'VERIFIED ACCESSIBLE PARTIAL',
+});
 const methods = [
-    'hiddenDiscoverySources',
-    'mediaArchiveCategory',
-    'scanDownloadFingerprint',
-    'verifiedSubscriberMedia',
-    'captureVerifiedSubscriberSnapshot',
-    'verifiedSubscriberDownloadIntegrity',
-    'cleanUser',
+    'mediaArchiveCategory', 'hiddenDiscoverySources', 'scanDownloadFingerprint',
+    'verifiedSubscriberMedia', 'verifiedAccessibleMedia',
+    'accessibleSourceProofFingerprint', 'subscriberSourceProofVerified',
+    'partialSourceVerified', 'verifiedPartialMedia', 'partialSourceFingerprint',
+    'clearPartialDownloadGrants', 'capturePartialDownloadGrants',
+    'verifiedPartialDownloadIntegrity', 'authorizeDownloadScope', 'cleanUser',
 ].map(extract).join('\n');
 
 function fixture() {
     const state = {
-        username: 'subscriber.test',
-        userId: '710001',
-        scanOutcome: 'INCOMPLETE',
-        scanPlan: { post: true, reel: true },
+        username: 'subscriber.test', userId: '710001',
+        scanPlan: { post: true, reel: true, story: false, highlight: false, avatar: false },
+        scanOutcome: 'INCOMPLETE', scanComplete: false,
         queue: new Map(),
         verifiedSubscriberRootIds: new Set(),
-        verifiedSubscriberSnapshot: null,
-        running: false,
-        cancelled: false,
-        feedbackRequired: false,
-        rateLimited: false,
-        apiUnhealthy: false,
+        partialDownloadGrants: { subscriber: null, accessible: null },
+        running: false, downloading: false, cancelled: false,
+        feedbackRequired: false, rateLimited: false, apiUnhealthy: false,
         exclusive: { known: true, hasExclusiveFeedContent: true },
         coverage: {
-            profileGrid: false,
-            publicShadow: true,
-            connectedHidden: true,
-            ownedHydration: true,
+            profileGrid: false, publicShadow: false,
+            connectedHidden: true, ownedHydration: true,
         },
         hidden: {
-            candidates: 65,
-            recovered: 65,
-            alreadyOwned: 0,
-            previewOnly: 0,
-            failed: 0,
+            candidates: 65, recovered: 65, alreadyOwned: 0,
+            previewOnly: 0, failed: 0,
+        },
+        shadow: {
+            applicable: false, pageInfoEnded: false, profileId: '',
+            postIds: new Set(),
+        },
+        roots: {
+            HIGHLIGHT: new Set(), STORY: new Set(), AVATAR: new Set(),
         },
     };
+
     for (let i = 0; i < 65; i++) {
         const rootId = String(900000 + i);
         const id = String(1100000 + i);
         state.verifiedSubscriberRootIds.add(rootId);
         state.queue.set(id, {
-            id, type: 'POST',
-            filename: id + '.jpg',
+            id, type: 'POST', filename: id + '.jpg',
             url: 'https://example.test/owned-' + id,
             sources: new Set(['CONNECTED_HIDDEN_AUTHORIZED']),
             rootIds: new Set([rootId]),
         });
     }
-
-    // Anonymous and unverified media must never enter the partial subset.
-    state.queue.set('public', {
-        id: 'public', type: 'POST', filename: 'public.jpg',
-        url: 'https://example.test/public',
-        sources: new Set(['PROFILE_PUBLIC_SHADOW']),
-        rootIds: new Set(['public-root']),
-    });
-    state.queue.set('unverified', {
-        id: 'unverified', type: 'POST', filename: 'unverified.jpg',
-        url: 'https://example.test/unverified',
-        sources: new Set(['CONNECTED_HIDDEN_AUTHORIZED']),
-        rootIds: new Set(['unverified-root']),
-    });
-    state.queue.set('preview-only', {
-        id: 'preview-only', type: 'POST', filename: 'preview.jpg',
-        url: 'https://example.test/preview',
-        sources: new Set(['OTHER']),
-        rootIds: new Set(['900000']),
-    });
+    const extraneous = [
+        ['public', 'PROFILE_PUBLIC_SHADOW', 'other'],
+        ['preview-only', 'OTHER', '900000'],
+        ['unverified', 'CONNECTED_HIDDEN_AUTHORIZED', 'missing-root'],
+    ];
+    for (const [id, origin, root] of extraneous) {
+        state.queue.set(id, {
+            id, type: 'POST', filename: id + '.jpg',
+            url: 'https://example.test/' + id,
+            sources: new Set([origin]), rootIds: new Set([root]),
+        });
+    }
 
     const ui = { username: { value: 'subscriber.test' } };
     const logs = [];
-    const hiddenSources = new Set([
-        'PROFILE_PUBLIC_SHADOW',
-        'CONNECTED_HIDDEN_AUTHORIZED',
-    ]);
-    const h = new Function(
+    const f = new Function(
         'state', 'ui', 'HIDDEN_DISCOVERY_SOURCES',
-        'log', 'currentProfile',
-        methods + '\nreturn { verifiedSubscriberMedia, ' +
-        'captureVerifiedSubscriberSnapshot, verifiedSubscriberDownloadIntegrity };'
+        'DOWNLOAD_MODE', 'PARTIAL_DOWNLOAD_MODES', 'currentProfile',
+        'completedScanIntegrity', 'incompleteCoverage', 'log',
+        methods + '\nreturn {' +
+            'verifiedSubscriberMedia, clearPartialDownloadGrants, ' +
+            'capturePartialDownloadGrants, verifiedPartialDownloadIntegrity, ' +
+            'authorizeDownloadScope };'
     )(
-        state, ui, hiddenSources,
-        (...args) => logs.push(args), () => 'subscriber.test'
+        state, ui,
+        new Set(['PROFILE_PUBLIC_SHADOW', 'CONNECTED_HIDDEN_AUTHORIZED']),
+        MODE, [MODE.SUBSCRIBER, MODE.ACCESSIBLE],
+        () => 'subscriber.test',
+        () => ({ ok: false, reason: 'PROFILE is not complete' }),
+        () => ['PROFILE grid'],
+        (...args) => logs.push(args),
     );
-    return { state, ui, logs, ...h };
+    return { state, ui, logs, ...f };
 }
 
-const f = fixture();
-f.captureVerifiedSubscriberSnapshot();
-assert.ok(f.state.verifiedSubscriberSnapshot);
-assert.equal(f.state.verifiedSubscriberSnapshot.mediaCount, 65);
-assert.equal(f.state.verifiedSubscriberRootIds.size, 65);
-assert.equal(f.verifiedSubscriberMedia().length, 65);
-assert.equal(f.verifiedSubscriberDownloadIntegrity().ok, true);
-assert.equal(f.verifiedSubscriberDownloadIntegrity().media.length, 65);
-assert.equal(f.state.scanOutcome, 'INCOMPLETE');
-assert.equal(f.state.coverage.profileGrid, false);
-assert.ok(f.logs.some(x => x[0].includes('PARTIAL READY')));
+const base = fixture();
+base.capturePartialDownloadGrants();
+assert.equal(base.state.partialDownloadGrants.subscriber.mediaCount, 65);
+assert.equal(base.state.partialDownloadGrants.accessible, null);
+assert.equal(base.verifiedPartialDownloadIntegrity(MODE.SUBSCRIBER).ok, true);
+assert.equal(base.verifiedPartialDownloadIntegrity(MODE.ACCESSIBLE).ok, false);
+assert.equal(base.authorizeDownloadScope(MODE.COMPLETE).ok, false);
+assert.equal(base.authorizeDownloadScope('unexpected').ok, false);
+assert.equal(base.state.scanOutcome, 'INCOMPLETE');
+assert.ok(Object.isFrozen(base.state.partialDownloadGrants.subscriber));
+assert.ok(Object.isFrozen(base.state.partialDownloadGrants.subscriber.mediaIds));
+assert.ok(base.logs.some(x => x[0].includes('SUBSCRIBER PARTIAL READY')));
 
-function rejectBeforeSnapshot(label, mutate) {
-    const x = fixture();
-    mutate(x);
-    x.captureVerifiedSubscriberSnapshot();
-    assert.equal(x.state.verifiedSubscriberSnapshot, null, label);
+function rejectBefore(label, mutate) {
+    const x = fixture(); mutate(x); x.capturePartialDownloadGrants();
+    assert.equal(x.state.partialDownloadGrants.subscriber, null, label);
 }
-rejectBeforeSnapshot('complete scan uses standard mode', x => {
-    x.state.scanOutcome = 'COMPLETE';
-});
-rejectBeforeSnapshot('unknown exclusive entitlement', x => {
-    x.state.exclusive.known = false;
-});
-rejectBeforeSnapshot('nonexclusive profile', x => {
+rejectBefore('COMPLETE not partial', x => { x.state.scanOutcome = 'COMPLETE'; });
+rejectBefore('no subscriber entitlement', x => {
     x.state.exclusive.hasExclusiveFeedContent = false;
 });
-rejectBeforeSnapshot('post scan missing', x => {
-    x.state.scanPlan.post = false;
-});
-rejectBeforeSnapshot('reel scan missing', x => {
-    x.state.scanPlan.reel = false;
-});
-rejectBeforeSnapshot('preview-only candidate', x => {
-    x.state.hidden.previewOnly = 1;
-});
-rejectBeforeSnapshot('unverified media-info', x => {
-    x.state.hidden.failed = 1;
-});
-rejectBeforeSnapshot('discovery unfinished', x => {
-    x.state.coverage.connectedHidden = false;
-});
-rejectBeforeSnapshot('hydration unfinished', x => {
-    x.state.coverage.ownedHydration = false;
-});
-rejectBeforeSnapshot('candidate pagination incomplete', x => {
-    x.state.hidden.candidates = 66;
-});
-rejectBeforeSnapshot('root registration missing', x => {
+rejectBefore('unknown entitlement', x => { x.state.exclusive.known = false; });
+rejectBefore('no POST scan', x => { x.state.scanPlan.post = false; });
+rejectBefore('no REEL scan', x => { x.state.scanPlan.reel = false; });
+rejectBefore('candidate mismatch', x => { x.state.hidden.candidates = 66; });
+rejectBefore('preview only', x => { x.state.hidden.previewOnly = 1; });
+rejectBefore('hidden request failure', x => { x.state.hidden.failed = 1; });
+rejectBefore('no hydrated roots', x => { x.state.coverage.ownedHydration = false; });
+rejectBefore('no complete hidden scan', x => { x.state.coverage.connectedHidden = false; });
+rejectBefore('lost authorized root', x => {
     x.state.verifiedSubscriberRootIds.delete('900000');
 });
-rejectBeforeSnapshot('Instagram rate-limit', x => {
-    x.state.rateLimited = true;
-});
-rejectBeforeSnapshot('feedback_required', x => {
-    x.state.feedbackRequired = true;
-});
-rejectBeforeSnapshot('API unhealthy', x => {
-    x.state.apiUnhealthy = true;
-});
-rejectBeforeSnapshot('scan cancelled', x => {
-    x.state.cancelled = true;
-});
+rejectBefore('cancelled scan', x => { x.state.cancelled = true; });
+rejectBefore('429 safety', x => { x.state.rateLimited = true; });
+rejectBefore('feedback safety', x => { x.state.feedbackRequired = true; });
+rejectBefore('unhealthy API', x => { x.state.apiUnhealthy = true; });
 
-function rejectAfterSnapshot(label, mutate) {
-    const x = fixture();
-    x.captureVerifiedSubscriberSnapshot();
-    assert.equal(x.verifiedSubscriberDownloadIntegrity().ok, true, label);
+function rejectAfter(label, mutate) {
+    const x = fixture(); x.capturePartialDownloadGrants();
+    assert.equal(x.verifiedPartialDownloadIntegrity(MODE.SUBSCRIBER).ok, true);
     mutate(x);
-    assert.equal(x.verifiedSubscriberDownloadIntegrity().ok, false, label);
+    assert.equal(x.verifiedPartialDownloadIntegrity(MODE.SUBSCRIBER).ok, false, label);
 }
-rejectAfterSnapshot('profile changed', x => {
-    x.state.userId = 'different';
+rejectAfter('account ID changed', x => { x.state.userId = 'other'; });
+rejectAfter('username input changed', x => { x.ui.username.value = 'other'; });
+rejectAfter('queue grew', x => { x.state.queue.set('new', {}); });
+rejectAfter('signed URL changed', x => {
+    x.state.queue.get('1100000').url += '?changed';
 });
-rejectAfterSnapshot('username changed', x => {
-    x.ui.username.value = 'other.user';
-});
-rejectAfterSnapshot('queue grew', x => {
-    x.state.queue.set('new', { id: 'new', type: 'POST' });
-});
-rejectAfterSnapshot('signed URL mutated', x => {
-    x.state.queue.get('1100000').url += '?changed=1';
-});
-rejectAfterSnapshot('subscriber authorization mutated', x => {
-    x.state.verifiedSubscriberRootIds.delete('900000');
-});
-rejectAfterSnapshot('source was altered', x => {
+rejectAfter('media source changed', x => {
     x.state.queue.get('1100000').sources.delete('CONNECTED_HIDDEN_AUTHORIZED');
 });
-rejectAfterSnapshot('media root changed', x => {
-    x.state.queue.get('1100000').rootIds.delete('900000');
+rejectAfter('root ownership changed', x => {
+    x.state.queue.get('1100000').rootIds.clear();
 });
-rejectAfterSnapshot('hydration no longer valid', x => {
-    x.state.coverage.ownedHydration = false;
+rejectAfter('authorized roots changed', x => {
+    x.state.verifiedSubscriberRootIds.delete('900000');
 });
-rejectAfterSnapshot('stop due to feedback', x => {
-    x.state.feedbackRequired = true;
-});
-rejectAfterSnapshot('stop due to rate-limit', x => {
-    x.state.rateLimited = true;
-});
-rejectAfterSnapshot('scan retried', x => {
-    x.state.scanOutcome = 'RUNNING';
-});
-rejectAfterSnapshot('candidate status changed', x => {
-    x.state.hidden.previewOnly = 1;
-});
+rejectAfter('hydration revoked', x => { x.state.coverage.ownedHydration = false; });
+rejectAfter('scan rerun', x => { x.state.scanOutcome = 'RUNNING'; });
+rejectAfter('running scan', x => { x.state.running = true; });
+rejectAfter('feedback circuit', x => { x.state.feedbackRequired = true; });
 
-const download = extract('downloadMissing');
-assert.ok(download.includes('verifiedSubscriberDownloadIntegrity()'));
-assert.ok(download.includes('completedScanIntegrity()'));
-assert.ok(download.includes('if (!authorizedOnly)'));
-assert.ok(download.includes('incompleteCoverage()'));
-assert.ok(download.includes('mediaScope'));
-assert.ok(download.includes('unverifiedArchiveHistory(mediaScope)'));
-assert.ok(download.includes('scanIntegrity.media'));
-assert.ok(download.includes('OVERALL PROFILE') === false);
-assert.ok(source.includes('downloadVerifiedSubscriberPartial'));
-assert.ok(source.includes('DOWNLOAD SUBSCRIBER VERIFIED (PARTIAL)'));
-assert.ok(source.includes('ui.download.onclick =\n            () => downloadMissing(false)'));
-assert.ok(source.includes('state.verifiedSubscriberRootIds.add(String(pk))'));
-assert.ok(source.includes("source === 'OWNED_DEEP_HYDRATION'"));
-assert.ok(source.includes('ownerId !== String(state.userId)'));
-assert.ok(source.includes('queuedUnitsForRoot(pk)'));
-assert.ok(source.includes('Overall PROFILE scan remains INCOMPLETE.'));
-assert.ok(source.includes('physical writes succeeded'));
-assert.ok(!source.includes("state.scanOutcome = 'COMPLETE';\n                captureVerifiedSubscriberSnapshot()"));
-
-
-/*
- * Exercise the real downloadMissing control flow with a fake transport.
- * This test never contacts Instagram or downloads actual media.
- */
-function simulatedRunner(x, { ledgerBlocked = false, failLast = false } = {}) {
-    const saved = [];
-    const seenScopes = [];
-    const statuses = [];
-    const record = {
-        disabled: [],
-        flushes: [],
-    };
-    const beginDownloadProgress = pending => {
-        const main = pending.length;
-        const hidden = 0;
+function simulatedDownload(x, { ledgerBlocked = false, failLast = false } = {}) {
+    const saved = [], scopes = [], messages = [], disabled = [], flushes = [];
+    const beginDownloadProgress = media => {
         x.state.downloadProgress = {
-            status: 'running', total: main,
-            completed: 0, succeeded: 0, failed: 0,
-            blocked: 0, current: '',
+            status: 'running', total: media.length, completed: 0,
+            succeeded: 0, failed: 0, blocked: 0, current: '',
         };
-        return { main, hidden, total: main };
-    };
-    const downloadOne = async m => {
-        saved.push(m.id);
-        const p = x.state.downloadProgress;
-        p.completed += 1;
-        if (failLast && saved.length === 65) {
-            p.failed++;
-        } else {
-            p.succeeded++;
-        }
-        return true;
+        return { main: media.length, hidden: 0, total: media.length };
     };
     const run = new Function(
-        'state', 'status', 'log',
-        'verifiedSubscriberDownloadIntegrity',
-        'completedScanIntegrity', 'incompleteCoverage',
-        'unverifiedArchiveHistory', 'disable', 'existingReason',
-        'isHiddenMedia', 'hiddenCopyExistingReason',
-        'beginDownloadProgress', 'APP', 'sleep',
-        'downloadOne', 'updateStats', 'flushLedger',
+        'state', 'status', 'log', 'authorizeDownloadScope', 'DOWNLOAD_MODE',
+        'DOWNLOAD_MODE_LABEL', 'unverifiedArchiveHistory', 'disable',
+        'existingReason', 'beginDownloadProgress', 'APP', 'sleep', 'downloadOne',
+        'updateStats', 'flushLedger',
         extract('downloadMissing') + '\nreturn downloadMissing;'
     )(
         x.state,
-        (message, level) => statuses.push({ message, level }),
-        (...parts) => x.logs.push(parts),
-        x.verifiedSubscriberDownloadIntegrity,
-        () => ({ ok: false, reason: 'PROFILE is not complete' }),
-        () => ['PROFILE grid'],
-        records => {
-            seenScopes.push([...records].map(m => m.id));
-            return ledgerBlocked
-                ? { total: 1, ledger: 1 }
-                : { total: 0, ledger: 0 };
+        (message, level) => messages.push({ message, level }),
+        (...args) => x.logs.push(args),
+        x.authorizeDownloadScope,
+        MODE, MODE_LABEL,
+        media => {
+            scopes.push([...media].map(x => x.id));
+            return ledgerBlocked ? { total: 1, ledger: 1 } : { total: 0, ledger: 0 };
         },
-        disabled => record.disabled.push(disabled),
-        () => null,
-        m => m.sources.has('CONNECTED_HIDDEN_AUTHORIZED'),
+        value => disabled.push(value),
         () => null,
         beginDownloadProgress,
         { DOWNLOAD_WORKERS: 1, DOWNLOAD_DELAY: 0, DOWNLOAD_RETRIES: 3 },
         async () => {},
-        downloadOne,
-        () => {},
-        value => record.flushes.push(value),
+        async media => {
+            saved.push(media.id);
+            x.state.downloadProgress.completed++;
+            if (failLast && saved.length === 65) x.state.downloadProgress.failed++;
+            else x.state.downloadProgress.succeeded++;
+        },
+        () => {}, value => flushes.push(value)
     );
-    return { run, saved, seenScopes, statuses, record };
+    return { run, saved, scopes, messages, disabled, flushes };
 }
 
-const x = fixture();
-x.captureVerifiedSubscriberSnapshot();
-const simulate = simulatedRunner(x);
-await simulate.run(false);
-assert.equal(simulate.saved.length, 0,
-    'normal download must remain blocked on an incomplete PROFILE');
-assert.ok(simulate.statuses.some(e => e.message.includes('PROFILE is not complete')));
-await simulate.run(true);
-assert.equal(simulate.saved.length, 65,
-    'partial download must dispatch only verified media');
-assert.ok(!simulate.saved.includes('public'));
-assert.ok(!simulate.saved.includes('unverified'));
-assert.ok(!simulate.saved.includes('preview-only'));
-assert.equal(simulate.seenScopes[0].length, 65);
+const x = fixture(); x.capturePartialDownloadGrants();
+const test = simulatedDownload(x);
+await test.run(MODE.COMPLETE);
+await test.run(MODE.ACCESSIBLE);
+await test.run('unknown');
+assert.equal(test.saved.length, 0, 'other modes must never acquire subscriber data');
+await test.run(MODE.SUBSCRIBER);
+assert.equal(test.saved.length, 65);
+assert.equal(new Set(test.saved).size, 65);
+assert.ok(!test.saved.includes('public'));
+assert.ok(!test.saved.includes('preview-only'));
+assert.ok(!test.saved.includes('unverified'));
+assert.equal(test.scopes[0].length, 65);
 assert.equal(x.state.downloadProgress.succeeded, 65);
-assert.equal(x.state.downloadProgress.failed, 0);
 assert.equal(x.state.scanOutcome, 'INCOMPLETE');
-assert.equal(x.state.downloading, false);
-assert.deepEqual(simulate.record.disabled, [true, false]);
-assert.deepEqual(simulate.record.flushes, [true]);
-assert.ok(simulate.statuses.some(e => e.message.includes('PARTIAL')));
+assert.deepEqual(test.disabled, [true, false]);
+assert.deepEqual(test.flushes, [true]);
 
-const blocked = fixture();
-blocked.captureVerifiedSubscriberSnapshot();
-const blockedRun = simulatedRunner(blocked, { ledgerBlocked: true });
-await blockedRun.run(true);
-assert.equal(blockedRun.saved.length, 0,
-    'historical ledger must not bypass local-folder verification');
-assert.equal(blockedRun.seenScopes[0].length, 65);
+const blocked = fixture(); blocked.capturePartialDownloadGrants();
+const blockedTest = simulatedDownload(blocked, { ledgerBlocked: true });
+await blockedTest.run(MODE.SUBSCRIBER);
+assert.equal(blockedTest.saved.length, 0);
+assert.ok(blockedTest.messages.some(x => x.message.includes('SCAN LOCAL FOLDER')));
 
-const failed = fixture();
-failed.captureVerifiedSubscriberSnapshot();
-const failedRun = simulatedRunner(failed, { failLast: true });
-await failedRun.run(true);
-assert.equal(failedRun.saved.length, 65);
+const failed = fixture(); failed.capturePartialDownloadGrants();
+const failedTest = simulatedDownload(failed, { failLast: true });
+await failedTest.run(MODE.SUBSCRIBER);
+assert.equal(failedTest.saved.length, 65);
 assert.equal(failed.state.downloadProgress.succeeded, 64);
 assert.equal(failed.state.downloadProgress.failed, 1);
-assert.equal(failed.state.downloadProgress.blocked, 0);
-assert.ok(failedRun.statuses.some(e =>
-    e.level === 'warn' &&
-    e.message.includes('64/65 physical writes succeeded')
+assert.ok(failedTest.messages.some(x =>
+    x.level === 'warn' && x.message.includes('64/65 physical writes succeeded')
 ));
-
-console.log('Subscriber-authorized partial backup safety regression tests passed.');
+console.log('Unified subscriber evidence grant, mode safety and download tests passed.');
