@@ -84,6 +84,7 @@ const proof = assess(p);
 assert.equal(proof.verified, false);
 assert.equal(proof.reason, 'connected_surfaces_not_equivalent');
 
-assert.ok(source.includes("'PolarisProfileReelsTabContentQuery'"));\nassert.ok(!source.includes('async function scanReelsFallback('));
+assert.ok(source.includes("'PolarisProfileReelsTabContentQuery'"));
+assert.ok(!source.includes('async function scanReelsFallback('));
 assert.ok(source.includes('=== SCAN STOPPED — INSTAGRAM API UNHEALTHY ==='));
 console.log('No-REELS-tab safe skip and completeness guard regression tests passed.');
