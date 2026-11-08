@@ -10524,10 +10524,11 @@
     function captureVerifiedAccessibleSnapshot() {
         state.verifiedAccessibleSnapshot = null;
 
+        // Scan is still marked running until scanAll.finally; all phases
+        // have completed at this point. The DOWNLOAD guard checks running.
         if (
             state.scanOutcome !== 'INCOMPLETE' ||
             state.scanComplete ||
-            state.running ||
             state.cancelled ||
             state.feedbackRequired ||
             state.rateLimited ||
