@@ -560,9 +560,25 @@
 
                     const e = new Error(message);
                     e.status = status;
+                    // Some GM implementations report a denied HTTP response
+                    // through onerror, not onload. Apply the same hard stop
+                    // semantics in BOTH transport callback paths.
                     if (status === 429) {
                         finish(rateLimitCircuitBreak(
                             `${feedbackLabel}: Instagram returned HTTP 429.`
+                        ));
+                        return;
+                    }
+                    const body = response?.responseText ?? response?.response;
+                    if (feedbackRequiredIn(body)) {
+                        finish(feedbackCircuitBreak(
+                            `${feedbackLabel}: Instagram returned feedback_required.`
+                        ));
+                        return;
+                    }
+                    if (status === 401 || instagramAuthChallengeIn(body)) {
+                        finish(apiUnhealthyError(
+                            `${feedbackLabel}: Instagram authentication/checkpoint required; stopping requests.`
                         ));
                         return;
                     }
@@ -571,6 +587,11 @@
                 ontimeout: () => {
                     const e = new Error('GM request timeout');
                     e.code = 'GM_TIMEOUT';
+                    finish(e);
+                },
+                onabort: () => {
+                    const e = new Error('GM request aborted');
+                    e.code = 'GM_ABORTED';
                     finish(e);
                 },
             });
