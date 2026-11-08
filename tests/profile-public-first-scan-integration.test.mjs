@@ -26,7 +26,7 @@ function scenario({
     publicCount = 1, hasClips = false, identityMatches = true,
     noTab = true, hiddenCandidates = 0,
     ssrHasAnyClips = null, ssrClipsCount = null,
-    ssrConsistent = true,
+    ssrConsistent = true, latestReelMedia = undefined,
 } = {}) {
     const userId = '45790055326';
     const postId = '800123';
@@ -111,6 +111,7 @@ function scenario({
                 is_private: privateProfile,
                 total_clips_count: clips,
                 has_clips: hasClips,
+                ...(latestReelMedia !== undefined ? { latest_reel_media:latestReelMedia } : {}),
             };
             state.expected = 1;
             state.exclusive.known = true;
@@ -198,6 +199,25 @@ function scenario({
     assert.equal(x.state.coverage.reels, false);
     assert.equal(x.nativeCalls, 0, 'good PROFILE proof survives missing Reel metadata');
     assert.equal(x.partialGrants, 1);
+}
+{
+    const x = scenario({clips:null,latestReelMedia:0});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'INCOMPLETE',
+        'REST empty sentinel alone is not explicit zero clips evidence');
+    assert.ok(x.logs.some(l => l.msg.includes('clips_absence_not_explicitly_reported')));
+}
+{
+    const x = scenario({clips:null,latestReelMedia:0,ssrHasAnyClips:false});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'COMPLETE',
+        'REST placeholder cannot contradict explicit SSR absence');
+}
+{
+    const x = scenario({clips:null,latestReelMedia:{pk:'123'},ssrHasAnyClips:false});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'INCOMPLETE',
+        'positive REST latest reel contradicts SSR absence');
 }
 {
     const x = scenario({clips:null,ssrHasAnyClips:false});
