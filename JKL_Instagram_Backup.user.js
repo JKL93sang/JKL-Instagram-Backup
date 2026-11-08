@@ -12650,6 +12650,22 @@
         const mediaScope = scanIntegrity.media;
         const isPartial = mode !== DOWNLOAD_MODE.COMPLETE;
 
+        // GM_download reports successful transfers, not whether Firefox
+        // actually created the requested nested directories.
+        if (mediaScope.some(m => m.type === 'HIGHLIGHT')) {
+            const downloadMode = typeof GM_info !== 'undefined'
+                ? String(GM_info?.downloadMode || '')
+                : '';
+            if (downloadMode && downloadMode !== 'browser') {
+                log(
+                    'Tampermonkey Download Mode=' + downloadMode +
+                    ': nested HIGHLIGHT directories are not guaranteed. ' +
+                    'Use Browser API mode and verify with SCAN LOCAL FOLDER.',
+                    'warn'
+                );
+            }
+        }
+
         const unverified =
             unverifiedArchiveHistory(mediaScope);
 
