@@ -163,7 +163,7 @@ reject(mkReclassified,p=>{
 },'public_roots_not_reconciled');
 const mainGridWithIndependentReels = mkReclassified();
 mainGridWithIndependentReels.reelsComplete = false;
-assert.deepEqual(assess(mainGridWithIndependentReels), reclassified,
+assert.deepEqual(assess(mainGridWithIndependentReels), assess(reclassified),
     'unknown REELS tab must not invalidate identity-proven main-grid roots');
 reject(mkReclassified,p=>{
     p.shadowPageInfoEnd=false;
