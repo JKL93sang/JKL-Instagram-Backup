@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.80
-// @description  TEST v1.5.80: classify latest_reel_media sentinels precisely without granting unsupported REELS completeness.
+// @version      1.5.81
+// @description  TEST v1.5.81: Story timestamps are not Reels; verify absent-tab Reels with paginated authenticated clips.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,10 +31,10 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.80', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.81', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
-        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
+        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, REEL_REST_MAX_PAGES: 200, REEL_REST_PAGE_SIZE: 50, TAGGED_MAX_PAGES: 5000,
         REEL_SCROLL_MIN: 350, REEL_SCROLL_MAX: 1600, REEL_SCROLL_POLL: 120,
         PAGE_MIN: 650, PAGE_MAX: 1250, SHADOW_PAGE_MIN: 250, SHADOW_PAGE_MAX: 450, SHADOW_MAX_PAGES: 200, DOWNLOAD_DELAY: 0, DOWNLOAD_WORKERS: 1, DOWNLOAD_RETRIES: 3, LEDGER_FLUSH_EVERY: 25, DL_DIAG_SAMPLES: 20, MAX_LOG: 300,
         HYDRATE_MIN: 180, HYDRATE_MAX: 320, HYDRATE_RETRIES: 3, HYDRATE_WORKERS: 4, HYDRATE_LARGE_THRESHOLD: 250, HYDRATE_LARGE_WORKERS: 2, HYDRATE_BULK_THRESHOLD: 100, HYDRATE_BULK_SIZE: 20, HYDRATE_SINGLE_FALLBACK_CAP: 100,
@@ -5692,7 +5692,7 @@
                 `total_clips_count=${u?.total_clips_count ?? '-'}, ` +
                 `has_clips=${typeof u?.has_clips === 'boolean' ? u.has_clips : '-'}, ` +
                 `has_any_clips=${typeof u?.has_any_clips === 'boolean' ? u.has_any_clips : '-'}, ` +
-                `latest_reel_media=${u?.latest_reel_media == null ? '-' : (
+                `latest_story_timestamp=${u?.latest_reel_media == null ? '-' : (
                     u.latest_reel_media === 0 || u.latest_reel_media === '0' ||
                     u.latest_reel_media === false || u.latest_reel_media === ''
                         ? 'empty-sentinel' : 'present-' + typeof u.latest_reel_media
@@ -7133,8 +7133,7 @@
             counts.every(v => v === totalClipsCount) &&
             !(hasAnyClips === false && totalClipsCount > 0) &&
             !(hasAnyClips === true && totalClipsCount === 0) &&
-            !(hasAnyClips === false && latestReelPresent) &&
-            !(totalClipsCount === 0 && latestReelPresent);
+            true;
 
         return Object.freeze({
             profileId, username,
@@ -7756,7 +7755,7 @@
                 'PUBLIC shadow REELS metadata: ' +
                 'has_any_clips=' + (ssr?.hasAnyClips ?? '-') +
                 ', total_clips_count=' + (ssr?.totalClipsCount ?? '-') +
-                ', latest_reel_present=' + (ssr?.latestReelPresent ?? '-') +
+                ', story_timestamp_present=' + (ssr?.latestReelPresent ?? '-') +
                 ', consistent=' + (ssr?.consistent ?? '-') +
                 ', source=' + (ssr?.source || '-')
             );
@@ -9103,14 +9102,7 @@
             !findAnchor(target)
         ) {
             state.coverage.reels = false;
-            log(
-                'REELS tab absent in profile navigation. Cannot prove ' +
-                'empty REELS pagination; skipping unverified GraphQL fallback. ' +
-                'REELS stays INCOMPLETE.',
-                'warn'
-            );
-            updateStats();
-            return false;
+            return await scanReelsAuthenticatedWithoutTab();
         }
 
         const nav =
@@ -11364,15 +11356,8 @@
             apiCount > 0 ||
             info?.has_clips === true ||
             info?.has_any_clips === true ||
-            (info?.latest_reel_media !== undefined &&
-                info?.latest_reel_media !== null &&
-                info?.latest_reel_media !== 0 &&
-                info?.latest_reel_media !== '0' &&
-                info?.latest_reel_media !== false &&
-                info?.latest_reel_media !== '') ||
             ssr?.hasAnyClips === true ||
-            ssr?.totalClipsCount > 0 ||
-            ssr?.latestReelPresent === true
+            ssr?.totalClipsCount > 0
         ) return fail('profile_reports_clips');
 
         if (!apiZero && !ssrZero) {
@@ -11433,7 +11418,7 @@
             const count = state.profileInfo?.total_clips_count;
             log(
                 'REELS absent-tab zero proof unavailable: ' +
-                proof.reason + ', raw_latest_reel_media=' +
+                proof.reason + ', raw_latest_story_timestamp=' +
                 (state.profileInfo?.latest_reel_media == null ? '-' : (
                     state.profileInfo.latest_reel_media === 0 ||
                     state.profileInfo.latest_reel_media === '0' ||
