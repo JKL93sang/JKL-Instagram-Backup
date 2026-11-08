@@ -441,7 +441,7 @@
             try {
                 const endpoint = new URL(String(request.url || ''));
                 if (
-                    /^(?:www|i)\\.instagram\\.com$/i.test(endpoint.hostname) &&
+                    /^(?:www|i)\.instagram\.com$/i.test(endpoint.hostname) &&
                     endpoint.pathname.startsWith('/api/v1/') &&
                     String(request.method || 'GET').toUpperCase() !== 'GET'
                 ) {
@@ -591,7 +591,7 @@
         if (typeof data === 'string') {
             const raw = data.trim();
             if (/^feedback_required$/i.test(raw) ||
-                /^Instagram returned feedback_required\\.?$/i.test(raw)) {
+                /^Instagram returned feedback_required\.?$/i.test(raw)) {
                 return true;
             }
             try { data = JSON.parse(raw); }
@@ -609,7 +609,7 @@
             ));
         }
         const matches = v => typeof v === 'string' &&
-            /(?:^|[\\s.:])feedback_required(?:$|[\\s.:])/i.test(v.trim());
+            /(?:^|[\s.:])feedback_required(?:$|[\s.:])/i.test(v.trim());
         return controls.some(x =>
             [x.message,x.error_type,x.type,x.code,x.error].some(matches)
         );
