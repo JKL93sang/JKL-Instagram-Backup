@@ -177,7 +177,7 @@ function scenario({
     assert.ok(x.logs.some(l => l.msg.includes('=== SCAN FINISHED — COMPLETE ===')));
 }
 {
-    const x = scenario({clips:undefined});
+    const x = scenario({clips:null});
     await x.run();
     assert.equal(x.state.scanOutcome, 'INCOMPLETE');
     assert.equal(x.state.coverage.profileGrid, true);
