@@ -436,6 +436,17 @@
                     if (
                         feedbackCheck &&
                         apiLike &&
+                        Number(response?.status || 0) === 401
+                    ) {
+                        reject(apiUnhealthyError(
+                            `${feedbackLabel}: Instagram API returned HTTP 401; authenticated session cannot be trusted.`
+                        ));
+                        return;
+                    }
+
+                    if (
+                        feedbackCheck &&
+                        apiLike &&
                         feedbackRequiredIn(payload)
                     ) {
                         reject(
@@ -5041,6 +5052,11 @@
                 if (Number(r.status || 0) === 429) {
                     throw rateLimitCircuitBreak(
                         `${label}: Instagram returned HTTP 429.`
+                    );
+                }
+                if (Number(r.status || 0) === 401) {
+                    throw apiUnhealthyError(
+                        `${label}: Instagram API returned HTTP 401; stopping authenticated requests.`
                     );
                 }
 
@@ -11534,6 +11550,9 @@
                 ? 'clips_observed_without_exhaustive_pagination'
                 : 'native_tab_without_server_end',
         };
+        if (x.metadataConflict) return {
+            kind:'UNKNOWN', reason:'contradictory_clips_metadata',
+        };
         if (x.publicGridVerified &&
             x.connectedHiddenVerified &&
             x.ownedHydrationVerified &&
@@ -11593,6 +11612,7 @@
             proven:state.coverage.reels === true,
             nativeTab,
             knownClips,
+            metadataConflict:ssr?.consistent === false,
             publicGridVerified:verifiedPublicGridPrimaryProof().verified,
             connectedHiddenVerified:state.coverage.connectedHidden === true &&
                 state.hidden.failed === 0 &&
