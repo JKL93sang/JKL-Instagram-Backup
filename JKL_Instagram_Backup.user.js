@@ -7132,8 +7132,7 @@
             flags.every(v => v === hasAnyClips) &&
             counts.every(v => v === totalClipsCount) &&
             !(hasAnyClips === false && totalClipsCount > 0) &&
-            !(hasAnyClips === true && totalClipsCount === 0) &&
-            true;
+            !(hasAnyClips === true && totalClipsCount === 0);
 
         return Object.freeze({
             profileId, username,
@@ -9073,6 +9072,187 @@
             await sleep(APP.REEL_SCROLL_POLL);
         }
 
+        return false;
+    }
+
+
+    // Different Instagram surfaces use the same word "reel": latest_reel_media
+    // is a Story timestamp, not evidence about the short-video clips feed.
+    // A successful, identity-scoped paginated clips/user/ response is needed.
+    function parseAuthenticatedClipsPage(data) {
+        const fail = reason => ({ verified:false, reason });
+        if (!data || typeof data !== 'object' || Array.isArray(data) ||
+            data.status !== 'ok' ||
+            (Array.isArray(data.errors) && data.errors.length)) {
+            return fail('invalid_status');
+        }
+        if (!Array.isArray(data.items)) return fail('items_missing');
+        const pi = data.paging_info;
+        if (!pi || typeof pi !== 'object' || Array.isArray(pi)) {
+            return fail('paging_info_missing');
+        }
+        if (typeof pi.more_available !== 'boolean') {
+            return fail('more_available_missing');
+        }
+        if (pi.max_id != null && typeof pi.max_id !== 'string') {
+            return fail('cursor_invalid_type');
+        }
+        const cursor = String(pi.max_id || '');
+        if (pi.more_available && !cursor) return fail('next_cursor_missing');
+        if (!pi.more_available && cursor) return fail('conflicting_end_cursor');
+
+        const medias = [];
+        for (const item of data.items) {
+            if (!item?.media || !normalizePk(item.media)) {
+                return fail('invalid_clips_media');
+            }
+            medias.push(item.media);
+        }
+        return {
+            verified:true,
+            medias,
+            moreAvailable:pi.more_available,
+            cursor,
+        };
+    }
+
+    async function scanReelsAuthenticatedWithoutTab() {
+        const uid = String(state.userId || '');
+        const username = String(state.username || '');
+        const infoId = String(
+            state.profileInfo?.pk || state.profileInfo?.id || ''
+        ).split('_')[0];
+        if (!/^\d+$/.test(uid) || !username || infoId !== uid) {
+            log('REELS authenticated clips skipped: target identity unverified.', 'warn');
+            return false;
+        }
+
+        log('REELS navigation absent; checking authenticated clips/user/ server pagination.');
+        let cursor = '';
+        const seenCursors = new Set();
+        const discovered = new Set();
+
+        for (let page = 1; page <= APP.REEL_REST_MAX_PAGES; page++) {
+            if (state.cancelled) throw new Error('Cancelled');
+            if (String(state.userId || '') !== uid ||
+                String(state.username || '') !== username) {
+                log('REELS clips aborted: target profile changed.', 'warn');
+                return false;
+            }
+
+            let res;
+            try {
+                res = await gmRequest({
+                    method:'POST',
+                    url:'https://www.instagram.com/api/v1/clips/user/',
+                    data:new URLSearchParams({
+                        target_user_id:uid,
+                        max_id:cursor,
+                        page_size:String(APP.REEL_REST_PAGE_SIZE),
+                        include_feed_video:'true',
+                    }).toString(),
+                    headers:headers({
+                        'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8',
+                        'User-Agent':APP.MOBILE_UA,
+                    }),
+                    feedbackLabel:'REELS authenticated clips',
+                });
+            }
+            catch (e) {
+                throwIfInstagramStop(e, 'REELS authenticated clips');
+                log('REELS clips request failed (' +
+                    String(e?.code || 'transport') +
+                    '); no empty-feed proof.', 'warn');
+                return false;
+            }
+
+            if (Number(res?.status || 0) !== 200) {
+                log('REELS clips HTTP ' + Number(res?.status || 0) +
+                    '; no empty-feed proof.', 'warn');
+                return false;
+            }
+            const targetUrl = String(res.finalUrl || res.responseURL || '');
+            if (targetUrl) {
+                try {
+                    const u = new URL(targetUrl);
+                    if (u.origin !== 'https://www.instagram.com' ||
+                        u.pathname !== '/api/v1/clips/user/') {
+                        log('REELS clips redirected outside endpoint; INCOMPLETE.', 'warn');
+                        return false;
+                    }
+                }
+                catch {
+                    log('REELS clips invalid final request destination.', 'warn');
+                    return false;
+                }
+            }
+
+            let data;
+            try { data = JSON.parse(String(res.responseText || '')); }
+            catch {
+                log('REELS clips returned HTTP 200 non-JSON; not zero clips.', 'warn');
+                return false;
+            }
+            if (feedbackRequiredIn(data)) {
+                throw feedbackCircuitBreak(
+                    'REELS authenticated clips: Instagram returned feedback_required.'
+                );
+            }
+
+            const parsed = parseAuthenticatedClipsPage(data);
+            if (!parsed.verified) {
+                log('REELS clips page ' + page + ' invalid (' + parsed.reason +
+                    '); INCOMPLETE.', 'warn');
+                return false;
+            }
+
+            for (const media of parsed.medias) {
+                const id = String(normalizePk(media));
+                discovered.add(id);
+                addMedia(media, 'REEL', 'REEL_AUTHENTICATED_CLIPS_V1');
+            }
+            log('REELS clips page ' + page + ': items=' + parsed.medias.length +
+                ', unique=' + discovered.size +
+                ', more_available=' + parsed.moreAvailable + '.');
+            updateStats();
+
+            if (!parsed.moreAvailable) {
+                const missingKnown = [...state.roots.REEL].filter(
+                    id => !discovered.has(String(id))
+                );
+                const contradictoryZero = discovered.size === 0 && (
+                    Number(state.profileInfo?.total_clips_count) > 0 ||
+                    state.profileInfo?.has_clips === true ||
+                    state.profileInfo?.has_any_clips === true ||
+                    state.shadow.reelsEvidence?.hasAnyClips === true ||
+                    Number(state.shadow.reelsEvidence?.totalClipsCount) > 0
+                );
+                if (missingKnown.length || contradictoryZero) {
+                    log('REELS clips server-end contradicts ' +
+                        (contradictoryZero ? 'positive clip metadata' : 'known Reel roots') +
+                        '; INCOMPLETE.', 'warn');
+                    return false;
+                }
+                state.coverage.reels = true;
+                log('REELS authenticated clips complete: ' +
+                    page + ' page(s), ' + discovered.size +
+                    ' Reel root(s), paging_info.more_available=false.');
+                updateStats();
+                return true;
+            }
+
+            if (!parsed.cursor || seenCursors.has(parsed.cursor)) {
+                log('REELS clips pagination cursor missing/repeated; INCOMPLETE.', 'warn');
+                return false;
+            }
+            seenCursors.add(parsed.cursor);
+            cursor = parsed.cursor;
+            if (page < APP.REEL_REST_MAX_PAGES) {
+                await sleep(rand(APP.PAGE_MIN, APP.PAGE_MAX));
+            }
+        }
+
+        log('REELS clips maximum pages reached without server-end; INCOMPLETE.', 'warn');
         return false;
     }
 
