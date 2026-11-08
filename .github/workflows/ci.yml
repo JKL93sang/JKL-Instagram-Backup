@@ -72,6 +72,9 @@ jobs:
       - name: Local archive indexed counts presentation tests
         run: node tests/local-archive-index-display-regression.test.mjs
 
+      - name: Native PROFILE bootstrap capture lifecycle and no-reentry tests
+        run: node tests/profile-native-bootstrap-regression.test.mjs
+
       - name: Native Relay profile pagination regression tests
         run: node tests/native-profile-relay-regression.test.mjs
 
