@@ -177,6 +177,99 @@ for (const [type, reply, flag] of [
     assert.equal(x.calls(),1);
 }
 
+// Deterministically test the real global GM dispatcher with five callers
+// and deliberately delayed network callbacks. 5 starts => only two requests
+// on the wire. A feedback_required reply must discard queued (not sent) jobs.
+{
+    const state={
+        running:true,cancelled:false,scanComplete:false,scanOutcome:'RUNNING',
+        feedbackRequired:false,feedbackMessage:'',rateLimited:false,
+        rateLimitMessage:'',apiUnhealthy:false,apiUnhealthyMessage:'',
+    };
+    const sent=[];
+    const gm=(opts)=>{sent.push(opts);};
+    const build=new Function('state','GM_xmlhttpRequest',
+        extract('feedbackRequiredIn') +
+        extract('instagramAuthChallengeIn') +
+        extract('feedbackCircuitBreak') +
+        extract('rateLimitCircuitBreak') +
+        extract('apiUnhealthyError') +
+        extract('gmRequest') +
+        '\\nreturn gmRequest;'
+    );
+    const request=build(state,gm);
+    const promises=Array.from({length:5},(_,i)=>
+        request({
+            method:'GET',
+            url:'https://www.instagram.com/api/v1/users/'+i+'/info/',
+        })
+    );
+    const results=Promise.allSettled(promises);
+    assert.equal(sent.length,2,'at most two simultaneous GM requests');
+    sent[0].onload({
+        status:200,
+        responseText:'{"status":"ok"}',
+        responseHeaders:'content-type: application/json',
+    });
+    assert.equal(sent.length,3,'one slot released permits exactly one queued request');
+    sent[1].onload({
+        status:200,
+        responseText:'{"message":"feedback_required"}',
+        responseHeaders:'content-type: application/json',
+    });
+    assert.equal(state.feedbackRequired,true);
+    assert.equal(sent.length,3,'no fourth or fifth dispatch after first feedback');
+    sent[2].onload({
+        status:200,
+        responseText:'{"status":"ok"}',
+        responseHeaders:'content-type: application/json',
+    });
+    const settled=await results;
+    assert.deepEqual(settled.map(x=>x.status),
+        ['fulfilled','rejected','fulfilled','rejected','rejected'],
+        'already-sent responses may finish, but pending requests are rejected');
+    assert.equal(sent.length,3);
+    await assert.rejects(request({
+        method:'GET',url:'https://www.instagram.com/api/v1/users/7/info/',
+    }));
+    assert.equal(sent.length,3,'subsequent attempts cannot restart dispatch');
+}
+{
+    const state={
+        running:true,cancelled:false,scanComplete:false,scanOutcome:'RUNNING',
+        feedbackRequired:false,feedbackMessage:'',rateLimited:false,
+        rateLimitMessage:'',apiUnhealthy:false,apiUnhealthyMessage:'',
+    };
+    const sent=[];
+    const build=new Function('state','GM_xmlhttpRequest',
+        extract('feedbackRequiredIn') +
+        extract('instagramAuthChallengeIn') +
+        extract('feedbackCircuitBreak') +
+        extract('rateLimitCircuitBreak') +
+        extract('apiUnhealthyError') +
+        extract('gmRequest') +
+        '\\nreturn gmRequest;'
+    );
+    const request=build(state,opts=>sent.push(opts));
+    const first=request({method:'GET',
+        url:'https://www.instagram.com/api/v1/users/1/info/'});
+    const pending=request({method:'GET',
+        url:'https://www.instagram.com/api/v1/users/2/info/'});
+    const third=request({method:'GET',
+        url:'https://www.instagram.com/api/v1/users/3/info/'});
+    const settled=Promise.allSettled([first,pending,third]);
+    assert.equal(sent.length,2);
+    sent[0].onerror({status:429,error:'network denied'});
+    assert.equal(state.rateLimited,true,
+        '429 from onerror, not just onload, must open circuit');
+    assert.equal(sent.length,2,
+        'pending request must never be dispatched after onerror 429');
+    sent[1].onerror({status:0,error:'disconnected'});
+    const done=await settled;
+    assert.equal(done[0].status,'rejected');
+    assert.equal(done[2].status,'rejected');
+}
+
 // Authenticated media-info must not spray the same request at 2 domains
 // across 3 retries after a server access denial.
 function mediaInfoScenario(status) {
