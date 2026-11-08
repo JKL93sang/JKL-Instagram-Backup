@@ -3936,19 +3936,18 @@
         data,
         meta
     ) {
+        const knownFriendly = GRID_NAMES.has(String(meta?.friendly || ''));
+        // Instagram can rename persisted queries without changing the
+        // actual response contract. Trust a newly named query ONLY when
+        // its response contains the exact timeline connection key and
+        // the native request is explicitly scoped to this profile.
+        const exactTimelineConnection = !!keyedConnection(
+            data, GRID_CONNECTION_KEY
+        );
         if (
-            !GRID_NAMES.has(
-                String(
-                    meta?.friendly ||
-                    ''
-                )
-            ) ||
-            !requestTargetsCurrentProfile(
-                meta
-            )
-        ) {
-            return;
-        }
+            (!knownFriendly && !exactTimelineConnection) ||
+            !requestTargetsCurrentProfile(meta)
+        ) return;
 
         const user =
             gridUser(meta);
@@ -4038,13 +4037,14 @@
             if (
                 meta.variables &&
                 typeof meta.variables === 'object' &&
-                GRID_NAMES.has(String(meta.friendly || ''))
+                (knownFriendly || exactTimelineConnection)
             ) {
                 try {
                     const verifiedContract = {
                         docId:String(meta.docId),
                         friendly:String(meta.friendly),
                         endpoint:meta.endpoint === 'api' ? 'api' : 'query',
+                        timelineKeyVerified: exactTimelineConnection,
                         variables:JSON.parse(JSON.stringify(meta.variables)),
                         template:{
                             body:JSON.parse(JSON.stringify(meta.bodyFields || {})),
@@ -8325,7 +8325,8 @@
         function validNative(request) {
             return !!(
                 request &&
-                GRID_NAMES.has(request.friendly) &&
+                (GRID_NAMES.has(request.friendly) ||
+                    request.timelineKeyVerified === true) &&
                 /^\d+$/.test(request.docId) &&
                 request.variables &&
                 typeof request.variables === 'object' &&
