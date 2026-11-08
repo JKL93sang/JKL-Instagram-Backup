@@ -195,7 +195,7 @@ for (const [type, reply, flag] of [
         extract('rateLimitCircuitBreak') +
         extract('apiUnhealthyError') +
         extract('gmRequest') +
-        '\\nreturn gmRequest;'
+        '\nreturn gmRequest;'
     );
     const request=build(state,gm);
     const promises=Array.from({length:5},(_,i)=>
@@ -248,7 +248,7 @@ for (const [type, reply, flag] of [
         extract('rateLimitCircuitBreak') +
         extract('apiUnhealthyError') +
         extract('gmRequest') +
-        '\\nreturn gmRequest;'
+        '\nreturn gmRequest;'
     );
     const request=build(state,opts=>sent.push(opts));
     const first=request({method:'GET',
