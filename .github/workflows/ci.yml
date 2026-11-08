@@ -81,6 +81,9 @@ jobs:
       - name: Native capture provenance, privacy and transport isolation tests
         run: node tests/native-capture-provenance-regression.test.mjs
 
+      - name: Public-first PROFILE completion with independent REELS guard
+        run: node tests/profile-public-first-regression.test.mjs
+
       - name: PROFILE cross-surface pagination proof regression tests
         run: node tests/profile-cross-surface-proof-regression.test.mjs
 
