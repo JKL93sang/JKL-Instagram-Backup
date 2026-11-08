@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.82
-// @description  TEST v1.5.82: remove unsafe private-mobile clips fallback; retain Story/Reels separation and verified accessible partial archive.
+// @version      1.5.83
+// @description  TEST v1.5.83: deterministic REELS evidence states, no speculative probes, and stricter authenticated-request circuit breakers.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.82', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.83', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -237,6 +237,8 @@
         scanPlan: null,
         scanComplete: false,
         scanOutcome: 'NONE',
+        // Diagnostic only. Never authorizes COMPLETE or full download.
+        reelsDiagnosis: {kind:'NOT_SCANNED', reason:'', source:''},
         scanUserId: '',
         scanQueueSize: 0,
         scanQueueFingerprint: '',
@@ -993,6 +995,7 @@
         for (const key of Object.keys(state.coverage)) {
             state.coverage[key] = false;
         }
+        state.reelsDiagnosis = {kind:'NOT_SCANNED', reason:'', source:''};
 
         state.shadow.applicable = true;
         state.shadow.reason = '';
@@ -6014,9 +6017,14 @@
             !state.userId
                 ? 'NOT SCANNED'
                 : (
-                    missingCoverage.length
-                        ? 'INCOMPLETE'
-                        : 'COVERAGE OK'
+                    state.scanOutcome === 'INCOMPLETE' &&
+                    missingCoverage.length === 1 &&
+                    missingCoverage[0] === 'REELS tab' &&
+                    state.reelsDiagnosis?.kind === 'NOT_EXPOSED'
+                        ? 'VERIFIED PARTIAL'
+                        : missingCoverage.length
+                            ? 'INCOMPLETE'
+                            : 'COVERAGE OK'
                 );
 
         const coverageClass =
@@ -11410,45 +11418,120 @@
         };
     }
 
-    function reconcileEmptyReelsCoverage() {
-        if (
-            !scanSelected('reel') ||
-            state.coverage.reels === true
-        ) return;
+    // Three different questions must NEVER be conflated:
+    // 1. Was REELS independently proven complete?
+    // 2. Is a native Reels surface exposed to this browser?
+    // 3. Can another verified surface still be archived?
+    // NOT_EXPOSED is a UI observation, not a claim of zero clips.
+    // The result is diagnostic only and cannot grant full download.
+    function classifyReelsEvidence(input) {
+        const x = input || {};
+        if (!x.selected) return {kind:'NOT_SELECTED', reason:'selection_off'};
+        if (x.proven) return {
+            kind:'PROVEN', reason:'independent_reels_server_proof',
+        };
+        if (x.nativeTab || x.knownClips) return {
+            kind:'UNVERIFIED', reason:x.knownClips
+                ? 'clips_observed_without_exhaustive_pagination'
+                : 'native_tab_without_server_end',
+        };
+        if (x.publicGridVerified &&
+            x.connectedHiddenVerified &&
+            x.ownedHydrationVerified &&
+            x.exclusiveKnown && !x.exclusiveAvailable) {
+            return {
+                kind:'NOT_EXPOSED',
+                reason:'no_native_reels_tab_and_no_explicit_zero_metadata',
+            };
+        }
+        return {
+            kind:'UNKNOWN',
+            reason:'insufficient_independent_surface_evidence',
+        };
+    }
 
-        const proof = explicitEmptyReelsProof();
-        if (proof.verified) {
-            state.coverage.reels = true;
-            log(
-                'REELS independently proven EMPTY: explicit Instagram ' +
-                'source=' + proof.source + '; PUBLIC grid ended and fully ' +
-                'reconciles the official media counter; no Reel/hidden ' +
-                'candidate or REELS tab exists. No unverified GraphQL ' +
-                'query was attempted.'
-            );
+    function reconcileEmptyReelsCoverage() {
+        if (!scanSelected('reel')) {
+            state.reelsDiagnosis = {
+                kind:'NOT_SELECTED', reason:'selection_off', source:'',
+            };
+            return;
         }
-        else {
-            const count = state.profileInfo?.total_clips_count;
-            log(
-                'REELS absent-tab zero proof unavailable: ' +
-                proof.reason + ', raw_latest_story_timestamp=' +
-                (state.profileInfo?.latest_reel_media == null ? '-' : (
-                    state.profileInfo.latest_reel_media === 0 ||
-                    state.profileInfo.latest_reel_media === '0' ||
-                    state.profileInfo.latest_reel_media === false ||
-                    state.profileInfo.latest_reel_media === ''
-                        ? 'empty-sentinel'
-                        : 'present-' + typeof state.profileInfo.latest_reel_media
-                )) + ', raw_total_clips_count=' +
-                (count === undefined || count === null ? '-' : String(count)) +
-                ', ssr_has_any_clips=' +
-                (state.shadow.reelsEvidence?.hasAnyClips ?? '-') +
-                ', ssr_total_clips_count=' +
-                (state.shadow.reelsEvidence?.totalClipsCount ?? '-') +
-                '. Keeping REELS INCOMPLETE.',
-                'warn'
-            );
+
+        let proof = null;
+        if (state.coverage.reels !== true) {
+            proof = explicitEmptyReelsProof();
+            if (proof.verified) {
+                state.coverage.reels = true;
+                log(
+                    'REELS independently proven EMPTY: explicit Instagram ' +
+                    'source=' + proof.source + '; PUBLIC grid ended and fully ' +
+                    'reconciles the official media counter; no Reel/hidden ' +
+                    'candidate or REELS tab exists. No unverified GraphQL ' +
+                    'query was attempted.'
+                );
+            }
         }
+
+        const count = state.profileInfo?.total_clips_count;
+        const ssr = state.shadow.reelsEvidence;
+        const tabPath = `/${state.username}/reels/`;
+        const nativeTab = pathNorm(location.pathname) === pathNorm(tabPath) ||
+            !!findAnchor(tabPath);
+        const knownClips = (
+            state.roots.REEL.size > 0 ||
+            (net.reelsByUserId.get(state.userId)?.size || 0) > 0 ||
+            state.shadow.reelIds.size > 0 ||
+            Number(count) > 0 ||
+            state.profileInfo?.has_clips === true ||
+            state.profileInfo?.has_any_clips === true ||
+            ssr?.hasAnyClips === true ||
+            Number(ssr?.totalClipsCount) > 0
+        );
+
+        const verdict = classifyReelsEvidence({
+            selected:true,
+            proven:state.coverage.reels === true,
+            nativeTab,
+            knownClips,
+            publicGridVerified:verifiedPublicGridPrimaryProof().verified,
+            connectedHiddenVerified:state.coverage.connectedHidden === true &&
+                state.hidden.failed === 0 &&
+                state.hidden.previewOnly === 0,
+            ownedHydrationVerified:state.coverage.ownedHydration === true,
+            exclusiveKnown:state.exclusive.known === true,
+            exclusiveAvailable:state.exclusive.hasExclusiveFeedContent === true,
+        });
+
+        state.reelsDiagnosis = Object.freeze({
+            ...verdict,
+            source:proof?.verified ? proof.source :
+                state.coverage.reels === true
+                    ? 'native_web_reels_connection'
+                    : '',
+        });
+
+        if (state.coverage.reels === true) return;
+
+        // A non-exposed tab is not a failed network attempt, nor is it
+        // proof of no Reels. The other independently verified sources may
+        // still be archived using immutable accessible-partial grants.
+        const detail = state.reelsDiagnosis.kind === 'NOT_EXPOSED'
+            ? 'No REELS tab or explicit zero-count was exposed. ' +
+              'All other selected verifiable surfaces can finish normally; ' +
+              'full REELS exhaustiveness is UNKNOWN, not zero.'
+            : 'No verified REELS server-end: ' +
+              (proof?.reason || state.reelsDiagnosis.reason) + '.';
+        log(
+            'REELS evidence=' + state.reelsDiagnosis.kind +
+            ', reason=' + state.reelsDiagnosis.reason +
+            ', raw_total_clips_count=' +
+            (count == null ? '-' : String(count)) +
+            ', ssr_has_any_clips=' + (ssr?.hasAnyClips ?? '-') +
+            ', ssr_total_clips_count=' + (ssr?.totalClipsCount ?? '-') +
+            '. ' + detail + ' No speculative REELS requests.',
+            'warn'
+        );
     }
 
     function reconcileProfileGridCoverage() {
@@ -11830,8 +11913,16 @@
                 state.scanComplete = false;
                 state.scanOutcome = 'INCOMPLETE';
 
+                const isolatedReelsUnknown =
+                    incomplete.length === 1 &&
+                    incomplete[0] === 'REELS tab' &&
+                    state.reelsDiagnosis?.kind === 'NOT_EXPOSED';
+
                 status(
-                    `Scan INCOMPLETE: ${incomplete.join(', ') || 'scan state invalid'}. Full download locked; verified partial modes may be available.`,
+                    isolatedReelsUnknown
+                        ? 'Verified exposed sources complete; REELS not exposed/unknown. ' +
+                          'Full download locked; verified accessible partial archive available.'
+                        : `Scan INCOMPLETE: ${incomplete.join(', ') || 'scan state invalid'}. Full download locked; verified partial modes may be available.`,
                     'warn'
                 );
 
@@ -11839,6 +11930,14 @@
                     `Accessible scan incomplete: ${incomplete.join(', ') || 'scan state invalid'}.`,
                     'warn'
                 );
+
+                if (isolatedReelsUnknown) {
+                    log(
+                        'EXPOSED SOURCES VERIFIED — REELS UNOBSERVABLE. ' +
+                        'This is NOT a full archive. No further REELS API probes were made.',
+                        'warn'
+                    );
+                }
 
                 log('=== SCAN FINISHED — INCOMPLETE ===', 'warn');
 
