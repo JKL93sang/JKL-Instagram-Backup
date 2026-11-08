@@ -70,6 +70,7 @@ const api = new Function(
     extract('parseAnonymousProfileHTML') +
     extract('verifiedPublicGridPrimaryProof') +
     extract('explicitEmptyReelsProof') +
+    extract('classifyReelsEvidence') +
     extract('reconcileEmptyReelsCoverage') +
     '\nreturn { publicSSRReelsEvidence, parseAnonymousProfileHTML, ' +
     'verifiedPublicGridPrimaryProof, explicitEmptyReelsProof, ' +
