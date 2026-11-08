@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.79
-// @description  TEST v1.5.79: use raw PUBLIC SSR has_any_clips false/zero as independent REELS absence proof when REST counter is unavailable.
+// @version      1.5.80
+// @description  TEST v1.5.80: classify latest_reel_media sentinels precisely without granting unsupported REELS completeness.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.79', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.80', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -5691,7 +5691,12 @@
                 `subscribers=${state.exclusive.subscriberCount ?? '-'}, ` +
                 `total_clips_count=${u?.total_clips_count ?? '-'}, ` +
                 `has_clips=${typeof u?.has_clips === 'boolean' ? u.has_clips : '-'}, ` +
-                `has_any_clips=${typeof u?.has_any_clips === 'boolean' ? u.has_any_clips : '-'}.`
+                `has_any_clips=${typeof u?.has_any_clips === 'boolean' ? u.has_any_clips : '-'}, ` +
+                `latest_reel_media=${u?.latest_reel_media == null ? '-' : (
+                    u.latest_reel_media === 0 || u.latest_reel_media === '0' ||
+                    u.latest_reel_media === false || u.latest_reel_media === ''
+                        ? 'empty-sentinel' : 'present-' + typeof u.latest_reel_media
+                )}.`
             );
 
             return true;
@@ -7114,7 +7119,9 @@
                 user.latest_reel_media !== null &&
                 user.latest_reel_media !== undefined &&
                 user.latest_reel_media !== 0 &&
-                user.latest_reel_media !== '0'
+                user.latest_reel_media !== '0' &&
+                user.latest_reel_media !== false &&
+                user.latest_reel_media !== ''
             ) latestReelPresent = true;
         }
 
@@ -11358,7 +11365,11 @@
             info?.has_clips === true ||
             info?.has_any_clips === true ||
             (info?.latest_reel_media !== undefined &&
-                info?.latest_reel_media !== null) ||
+                info?.latest_reel_media !== null &&
+                info?.latest_reel_media !== 0 &&
+                info?.latest_reel_media !== '0' &&
+                info?.latest_reel_media !== false &&
+                info?.latest_reel_media !== '') ||
             ssr?.hasAnyClips === true ||
             ssr?.totalClipsCount > 0 ||
             ssr?.latestReelPresent === true
@@ -11422,7 +11433,15 @@
             const count = state.profileInfo?.total_clips_count;
             log(
                 'REELS absent-tab zero proof unavailable: ' +
-                proof.reason + ', raw_total_clips_count=' +
+                proof.reason + ', raw_latest_reel_media=' +
+                (state.profileInfo?.latest_reel_media == null ? '-' : (
+                    state.profileInfo.latest_reel_media === 0 ||
+                    state.profileInfo.latest_reel_media === '0' ||
+                    state.profileInfo.latest_reel_media === false ||
+                    state.profileInfo.latest_reel_media === ''
+                        ? 'empty-sentinel'
+                        : 'present-' + typeof state.profileInfo.latest_reel_media
+                )) + ', raw_total_clips_count=' +
                 (count === undefined || count === null ? '-' : String(count)) +
                 ', ssr_has_any_clips=' +
                 (state.shadow.reelsEvidence?.hasAnyClips ?? '-') +
