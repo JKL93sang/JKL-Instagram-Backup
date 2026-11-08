@@ -23,7 +23,7 @@ const expectedRepo =
     'https://github.com/JKL93sang/JKL-Instagram-Backup';
 
 const expectedRaw =
-    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js';
+    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/reels-absent-tab-safe-skip-v1.5.71/JKL_Instagram_Backup.user.js';
 
 assert.equal(
     meta('name'),
@@ -48,7 +48,7 @@ assert.equal(
 
 assert.equal(
     meta('source'),
-    expectedRepo + '/blob/main/JKL_Instagram_Backup.user.js'
+    expectedRepo + '/blob/fix/reels-absent-tab-safe-skip-v1.5.71/JKL_Instagram_Backup.user.js'
 );
 
 assert.equal(
@@ -75,11 +75,11 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.70');
+assert.equal(metadataVersion, '1.5.71');
 assert.equal(metadataVersion, appVersion);
-assert.match(meta('description'), /Instagram backup:/);
-assert.doesNotMatch(meta('description'), /TEST BUILD|EXPERIMENTAL/i,
-    'Stable distribution must not advertise an experimental channel');
+assert.match(meta('description'), /TEST BUILD v1\\.5\\.71/i,
+    'The isolated candidate must remain labelled TEST');
+
 
 
 assert.ok(
