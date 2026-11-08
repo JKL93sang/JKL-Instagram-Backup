@@ -270,6 +270,59 @@ for (const [type, reply, flag] of [
     assert.equal(done[2].status,'rejected');
 }
 
+// An Instagram caption saying "feedback_required" is not a server error.
+// Use the actual parser and enforce the GET-only private REST rule at
+// the central GM transport boundary, while preserving approved Web GraphQL.
+{
+    const detect=new Function(
+        extract('feedbackRequiredIn')+'\nreturn feedbackRequiredIn;'
+    )();
+    assert.equal(detect('feedback_required'),true);
+    assert.equal(detect('Instagram returned feedback_required.'),true);
+    assert.equal(detect('{"status":"fail","message":"feedback_required"}'),true);
+    assert.equal(detect({errors:[{message:'feedback_required'}]}),true);
+    assert.equal(detect({
+        status:'ok',items:[{caption:{text:'feedback_required'}}],
+    }),false,'media captions must not be promoted to Instagram control fields');
+    assert.equal(detect('<html>Somebody posted feedback_required</html>'),false);
+}
+{
+    const state={
+        running:true,cancelled:false,scanComplete:false,scanOutcome:'RUNNING',
+        feedbackRequired:false,feedbackMessage:'',rateLimited:false,
+        rateLimitMessage:'',apiUnhealthy:false,apiUnhealthyMessage:'',
+    };
+    let sent=0;
+    const dispatcher=new Function('state','GM_xmlhttpRequest',
+        extract('feedbackRequiredIn')+
+        extract('instagramAuthChallengeIn')+
+        extract('feedbackCircuitBreak')+
+        extract('rateLimitCircuitBreak')+
+        extract('apiUnhealthyError')+
+        extract('gmRequest')+
+        '\nreturn gmRequest;'
+    )(state,opts=>{
+        sent++;
+        opts.onload({status:200,responseText:'{"status":"ok"}',
+            responseHeaders:'content-type: application/json'});
+    });
+    for(const host of ['www.instagram.com','i.instagram.com']) {
+        await assert.rejects(dispatcher({
+            method:'POST',
+            url:'https://'+host+'/api/v1/clips/user/',
+        }),e=>e.code==='IG_UNSUPPORTED_TRANSPORT');
+        assert.equal(sent,0,'private REST POST must be rejected locally');
+    }
+    await dispatcher({
+        method:'POST',url:'https://www.instagram.com/api/graphql',
+    });
+    assert.equal(sent,1,'existing Web GraphQL POST must remain functional');
+    await dispatcher({
+        method:'GET',url:'https://www.instagram.com/api/v1/users/1/info/',
+    });
+    assert.equal(sent,2,'known profile REST GET must remain functional');
+}
+
 // Authenticated media-info must not spray the same request at 2 domains
 // across 3 retries after a server access denial.
 function mediaInfoScenario(status) {
