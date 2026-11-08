@@ -1,5 +1,15 @@
 # JKL Instagram Backup
 
+## Experimental v1.5.71 — missing REELS navigation safety
+
+This **TEST-only** patch fixes a reproducible control-flow problem from [issue #15](https://github.com/JKL93sang/JKL-Instagram-Backup/issues/15): a public profile with one POST and **no visible REELS tab** triggers a legacy GraphQL reels fallback whose HTTP 200 response is redirected HTML instead of JSON.
+
+If no actual REELS navigation link is available and the browser is not already on the REELS path, the script **does not send this speculative GraphQL fallback**. It records that REELS was **not verified** and proceeds to remaining scan phases. On profiles with a real REELS tab, the existing navigation and fallback behavior remains untouched.
+
+**This is a safety fix, not proof of an empty reels feed.** A profile with no REELS tab and only a public POST may still finish `INCOMPLETE` and refuse **DOWNLOAD MISSING**. Never turn the mere absence of a UI tab into proof of completed server pagination. Authenticated subscriber-only partial downloads retain their independent verified-media guard.
+
+[Install experimental v1.5.71](https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/reels-absent-tab-safe-skip-v1.5.71/JKL_Instagram_Backup.user.js). Do **not** merge or change the stable `main` until a real browser scan verifies the safe skip and no regressions.
+
 ## Stable v1.5.70 — one file per media, FAN CLUB / HIDDEN routing
 
 This release combines the v1.5.68 verified subscriber-partial backup (successfully tested on a real authenticated session) with the new single-file archive layout. **The new routing is covered by CI tests; it has not yet been verified on a new live browser download.**
