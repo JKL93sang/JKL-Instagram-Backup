@@ -50,6 +50,21 @@
         MOBILE_UA: 'Mozilla/5.0 (Linux; Android 10; Pixel 7 XL) AppleWebKit/537.36 (KHTML, like Gecko) Version/5.0 Chrome/117.0.5938.60 Mobile Safari/537.36 Instagram 307.0.0.34.111',
     });
 
+    const DOWNLOAD_MODE = Object.freeze({
+        COMPLETE: 'complete',
+        SUBSCRIBER: 'subscriber',
+        ACCESSIBLE: 'accessible',
+    });
+    const PARTIAL_DOWNLOAD_MODES = Object.freeze([
+        DOWNLOAD_MODE.SUBSCRIBER,
+        DOWNLOAD_MODE.ACCESSIBLE,
+    ]);
+    const DOWNLOAD_MODE_LABEL = Object.freeze({
+        [DOWNLOAD_MODE.COMPLETE]: 'Download batch',
+        [DOWNLOAD_MODE.SUBSCRIBER]: 'VERIFIED SUBSCRIBER PARTIAL',
+        [DOWNLOAD_MODE.ACCESSIBLE]: 'VERIFIED ACCESSIBLE PARTIAL',
+    });
+
     const GRID_NAMES = new Set([
         'PolarisProfilePostsQuery',
         'PolarisProfilePostsQuery_connection',
@@ -190,8 +205,7 @@
 
         // Authorized only after full authenticated media-info, never previews.
         verifiedSubscriberRootIds: new Set(),
-        verifiedSubscriberSnapshot: null,
-        verifiedAccessibleSnapshot: null,
+        partialDownloadGrants: { subscriber: null, accessible: null },
 
         roots: {
             POST: new Set(),
@@ -949,6 +963,12 @@
             `${kind} · ${m?.filename || m?.id || 'media'}`;
     }
 
+    function clearPartialDownloadGrants() {
+        for (const mode of PARTIAL_DOWNLOAD_MODES) {
+            state.partialDownloadGrants[mode] = null;
+        }
+    }
+
     function invalidateCompletedScan(reason = 'SCAN_INVALIDATED') {
         if (!state.scanPlan) {
             return;
@@ -959,8 +979,7 @@
         state.scanUserId = '';
         state.scanQueueSize = 0;
         state.scanQueueFingerprint = '';
-        state.verifiedSubscriberSnapshot = null;
-        state.verifiedAccessibleSnapshot = null;
+        clearPartialDownloadGrants();
     }
 
     function resetCoverage() {
@@ -988,8 +1007,7 @@
         state.hidden.failed = 0;
         state.hidden.recoveredCodes = [];
         state.verifiedSubscriberRootIds.clear();
-        state.verifiedSubscriberSnapshot = null;
-        state.verifiedAccessibleSnapshot = null;
+        clearPartialDownloadGrants();
 
         state.hydration.totalRoots = 0;
         state.hydration.hydratedRoots = 0;
@@ -5797,16 +5815,16 @@
             }
         }
         else if (state.queue.size > 0) {
-            if (state.verifiedAccessibleSnapshot) {
+            if (state.partialDownloadGrants.accessible) {
                 downloadValue = 'PARTIAL READY';
                 downloadDetail =
-                    state.verifiedAccessibleSnapshot.mediaCount +
+                    state.partialDownloadGrants.accessible.mediaCount +
                     ' verified accessible media · full backup locked';
             }
-            else if (state.verifiedSubscriberSnapshot) {
+            else if (state.partialDownloadGrants.subscriber) {
                 downloadValue = 'SUBSCRIBER PARTIAL';
                 downloadDetail =
-                    state.verifiedSubscriberSnapshot.mediaCount +
+                    state.partialDownloadGrants.subscriber.mediaCount +
                     ' verified subscriber media · full backup locked';
             }
             else {
@@ -10329,106 +10347,6 @@
         );
     }
 
-    function captureVerifiedSubscriberSnapshot() {
-        state.verifiedSubscriberSnapshot = null;
-
-        // INCOMPLETE is preserved: this grants only a bounded, explicit
-        // per-media backup path, not an alternative PROFILE completeness proof.
-        if (
-            state.scanOutcome !== 'INCOMPLETE' ||
-            state.cancelled ||
-            state.feedbackRequired ||
-            state.rateLimited ||
-            state.apiUnhealthy ||
-            !state.scanPlan?.post ||
-            !state.scanPlan?.reel ||
-            !state.exclusive.known ||
-            !state.exclusive.hasExclusiveFeedContent ||
-            !state.coverage.connectedHidden ||
-            !state.coverage.ownedHydration ||
-            state.hidden.candidates < 1 ||
-            state.hidden.failed !== 0 ||
-            state.hidden.previewOnly !== 0 ||
-            state.hidden.recovered < 1 ||
-            state.hidden.candidates !==
-                state.hidden.recovered + state.hidden.alreadyOwned ||
-            state.verifiedSubscriberRootIds.size !== state.hidden.recovered ||
-            !state.userId
-        ) return;
-
-        const media = verifiedSubscriberMedia();
-        if (!media.length) return;
-
-        state.verifiedSubscriberSnapshot = Object.freeze({
-            userId: String(state.userId),
-            username: String(state.username),
-            queueSize: state.queue.size,
-            queueFingerprint: scanDownloadFingerprint(),
-            verifiedRoots: [...state.verifiedSubscriberRootIds].sort().join('|'),
-            mediaIds: media.map(m => String(m.id)).sort().join('|'),
-            mediaCount: media.length,
-        });
-
-        log(
-            'SUBSCRIBER PARTIAL READY: ' +
-            state.hidden.recovered + ' authenticated roots, ' +
-            media.length + ' downloadable media. Overall PROFILE ' +
-            'remains INCOMPLETE. Use only the separate verified-media action.',
-            'warn'
-        );
-    }
-
-    function verifiedSubscriberDownloadIntegrity() {
-        const fail = reason => ({ ok: false, reason });
-        const snap = state.verifiedSubscriberSnapshot;
-
-        if (!snap || state.scanOutcome !== 'INCOMPLETE') {
-            return fail('no verified subscriber snapshot from finished INCOMPLETE scan');
-        }
-        if (
-            state.running ||
-            state.cancelled ||
-            state.feedbackRequired ||
-            state.rateLimited ||
-            state.apiUnhealthy
-        ) return fail('scan/session stopped or Instagram safety circuit active');
-
-        if (
-            !state.exclusive.known ||
-            !state.exclusive.hasExclusiveFeedContent ||
-            !state.coverage.connectedHidden ||
-            !state.coverage.ownedHydration ||
-            state.hidden.failed !== 0 ||
-            state.hidden.previewOnly !== 0 ||
-            state.hidden.candidates !==
-                state.hidden.recovered + state.hidden.alreadyOwned ||
-            state.verifiedSubscriberRootIds.size !== state.hidden.recovered ||
-            [...state.verifiedSubscriberRootIds].sort().join('|') !==
-                snap.verifiedRoots
-        ) return fail('subscriber source authorization or hydration not verified');
-
-        if (
-            String(state.userId) !== snap.userId ||
-            String(state.username) !== snap.username ||
-            cleanUser(ui.username?.value || currentProfile()) !== snap.username
-        ) return fail('profile identity/input changed after scan');
-
-        if (
-            state.queue.size !== snap.queueSize ||
-            scanDownloadFingerprint() !== snap.queueFingerprint
-        ) return fail('scan media inventory changed after verification');
-
-        const media = verifiedSubscriberMedia();
-        if (
-            !media.length ||
-            media.length !== snap.mediaCount ||
-            media.map(m => String(m.id)).sort().join('|') !== snap.mediaIds
-        ) return fail('verified subscriber media set changed');
-
-        return { ok: true, reason: '', media };
-    }
-
-
     // Only independently proven, accessible surfaces are included.
     // REELS, TAGGED, subscriber media and unverified PROFILE-only items
     // never enter this bounded partial download.
@@ -10521,11 +10439,74 @@
         });
     }
 
-    function captureVerifiedAccessibleSnapshot() {
-        state.verifiedAccessibleSnapshot = null;
 
-        // Scan is still marked running until scanAll.finally; all phases
-        // have completed at this point. The DOWNLOAD guard checks running.
+    // Source-level rules. Authorization, fingerprints and expiry are shared.
+    function subscriberSourceProofVerified() {
+        return state.scanPlan?.post === true &&
+            state.scanPlan?.reel === true &&
+            state.exclusive.known === true &&
+            state.exclusive.hasExclusiveFeedContent === true &&
+            state.coverage.connectedHidden === true &&
+            state.coverage.ownedHydration === true &&
+            state.hidden.candidates > 0 &&
+            state.hidden.recovered > 0 &&
+            state.hidden.failed === 0 &&
+            state.hidden.previewOnly === 0 &&
+            state.hidden.candidates ===
+                state.hidden.recovered + state.hidden.alreadyOwned &&
+            state.verifiedSubscriberRootIds.size === state.hidden.recovered;
+    }
+
+    function partialSourceVerified(mode) {
+        if (mode === DOWNLOAD_MODE.SUBSCRIBER) {
+            return subscriberSourceProofVerified();
+        }
+        if (mode === DOWNLOAD_MODE.ACCESSIBLE) {
+            return !!state.scanPlan && !!state.userId && !!state.username;
+        }
+        return false;
+    }
+
+    function verifiedPartialMedia(mode) {
+        if (mode === DOWNLOAD_MODE.SUBSCRIBER) return verifiedSubscriberMedia();
+        if (mode === DOWNLOAD_MODE.ACCESSIBLE) return verifiedAccessibleMedia();
+        return [];
+    }
+
+    function partialSourceFingerprint(mode) {
+        if (mode === DOWNLOAD_MODE.ACCESSIBLE) {
+            return accessibleSourceProofFingerprint();
+        }
+        if (mode !== DOWNLOAD_MODE.SUBSCRIBER) return '';
+
+        return JSON.stringify({
+            plan: {
+                post: state.scanPlan?.post === true,
+                reel: state.scanPlan?.reel === true,
+            },
+            exclusive: {
+                known: state.exclusive.known === true,
+                active: state.exclusive.hasExclusiveFeedContent === true,
+            },
+            coverage: {
+                connectedHidden: state.coverage.connectedHidden === true,
+                ownedHydration: state.coverage.ownedHydration === true,
+            },
+            hidden: {
+                candidates: state.hidden.candidates,
+                recovered: state.hidden.recovered,
+                alreadyOwned: state.hidden.alreadyOwned,
+                previewOnly: state.hidden.previewOnly,
+                failed: state.hidden.failed,
+            },
+            verifiedRoots: [...state.verifiedSubscriberRootIds].map(String).sort(),
+        });
+    }
+
+    // scanAll.running remains true until finally, after all phases stop.
+    // This allows immutable grant capture, never a concurrent download.
+    function capturePartialDownloadGrants() {
+        clearPartialDownloadGrants();
         if (
             state.scanOutcome !== 'INCOMPLETE' ||
             state.scanComplete ||
@@ -10533,68 +10514,90 @@
             state.feedbackRequired ||
             state.rateLimited ||
             state.apiUnhealthy ||
-            !state.scanPlan ||
-            !state.userId ||
-            !state.username
+            !state.scanPlan || !state.userId || !state.username
         ) return;
 
-        const media = verifiedAccessibleMedia();
-        if (!media.length) return;
+        for (const mode of PARTIAL_DOWNLOAD_MODES) {
+            if (!partialSourceVerified(mode)) continue;
+            const media = verifiedPartialMedia(mode);
+            if (!media.length) continue;
 
-        state.verifiedAccessibleSnapshot = Object.freeze({
-            userId: String(state.userId),
-            username: String(state.username),
-            queueSize: state.queue.size,
-            queueFingerprint: scanDownloadFingerprint(),
-            sourceProof: accessibleSourceProofFingerprint(),
-            mediaIds: Object.freeze(media.map(m => String(m.id)).sort()),
-            mediaCount: media.length,
-        });
+            state.partialDownloadGrants[mode] = Object.freeze({
+                mode,
+                userId: String(state.userId),
+                username: String(state.username),
+                queueSize: state.queue.size,
+                queueFingerprint: scanDownloadFingerprint(),
+                sourceFingerprint: partialSourceFingerprint(mode),
+                mediaIds: Object.freeze(media.map(m => String(m.id)).sort()),
+                mediaCount: media.length,
+            });
 
-        log(
-            'ACCESSIBLE PARTIAL READY: ' + media.length +
-            ' media from independently verified surfaces. ' +
-            'PROFILE / REELS may still be INCOMPLETE; this is NOT a full archive.',
-            'warn'
-        );
+            log(
+                mode === DOWNLOAD_MODE.SUBSCRIBER
+                    ? 'SUBSCRIBER PARTIAL READY: ' +
+                      state.hidden.recovered + ' authenticated roots, ' +
+                      media.length + ' downloadable media. Overall PROFILE ' +
+                      'remains INCOMPLETE. Use only the separate verified-media action.'
+                    : 'ACCESSIBLE PARTIAL READY: ' + media.length +
+                      ' media from independently verified surfaces. ' +
+                      'PROFILE / REELS may still be INCOMPLETE; this is NOT a full archive.',
+                'warn'
+            );
+        }
     }
 
-    function verifiedAccessibleDownloadIntegrity() {
+    function verifiedPartialDownloadIntegrity(mode) {
         const fail = reason => ({ ok: false, reason });
-        const snap = state.verifiedAccessibleSnapshot;
-
-        if (!snap || state.scanOutcome !== 'INCOMPLETE' || state.scanComplete) {
-            return fail('no verified accessible snapshot from finished INCOMPLETE scan');
+        if (!PARTIAL_DOWNLOAD_MODES.includes(mode)) {
+            return fail('unknown verified partial download mode');
         }
+        const grant = state.partialDownloadGrants[mode];
         if (
-            state.running ||
-            state.cancelled ||
-            state.feedbackRequired ||
-            state.rateLimited ||
-            state.apiUnhealthy
+            !grant || grant.mode !== mode ||
+            state.scanOutcome !== 'INCOMPLETE' || state.scanComplete
+        ) return fail('no verified ' + mode + ' grant from finished INCOMPLETE scan');
+
+        if (
+            state.running || state.cancelled || state.feedbackRequired ||
+            state.rateLimited || state.apiUnhealthy
         ) return fail('scan/session stopped or Instagram safety circuit active');
 
+        if (!partialSourceVerified(mode)) {
+            return fail(mode + ' source authorization or hydration not verified');
+        }
         if (
-            String(state.userId) !== snap.userId ||
-            String(state.username) !== snap.username ||
-            cleanUser(ui.username?.value || currentProfile()) !== snap.username
+            String(state.userId) !== grant.userId ||
+            String(state.username) !== grant.username ||
+            cleanUser(ui.username?.value || currentProfile()) !== grant.username
         ) return fail('profile identity/input changed after scan');
 
         if (
-            state.queue.size !== snap.queueSize ||
-            scanDownloadFingerprint() !== snap.queueFingerprint ||
-            accessibleSourceProofFingerprint() !== snap.sourceProof
-        ) return fail('verified accessible inventory or provenance changed');
+            state.queue.size !== grant.queueSize ||
+            scanDownloadFingerprint() !== grant.queueFingerprint ||
+            partialSourceFingerprint(mode) !== grant.sourceFingerprint
+        ) return fail('scan media inventory or source proof changed');
 
-        const media = verifiedAccessibleMedia();
+        const media = verifiedPartialMedia(mode);
         if (
-            !media.length ||
-            media.length !== snap.mediaCount ||
+            !media.length || media.length !== grant.mediaCount ||
             media.map(m => String(m.id)).sort().join('|') !==
-                snap.mediaIds.join('|')
-        ) return fail('verified accessible media set changed');
+                grant.mediaIds.join('|')
+        ) return fail('verified partial media selection changed');
 
         return { ok: true, reason: '', media };
+    }
+
+    function authorizeDownloadScope(mode) {
+        const fail = reason => ({ ok: false, reason });
+        if (mode === DOWNLOAD_MODE.COMPLETE) {
+            const integrity = completedScanIntegrity();
+            if (!integrity.ok) return fail(integrity.reason);
+            const incomplete = incompleteCoverage();
+            if (incomplete.length) return fail('incomplete ' + incomplete.join(', '));
+            return { ok: true, reason: '', media: [...state.queue.values()] };
+        }
+        return verifiedPartialDownloadIntegrity(mode);
     }
 
     function completedScanIntegrity() {
@@ -11309,8 +11312,7 @@
 
                 // Only after every scan phase has stopped. This never
                 // changes PROFILE coverage or scanOutcome to COMPLETE.
-                captureVerifiedSubscriberSnapshot();
-                captureVerifiedAccessibleSnapshot();
+                capturePartialDownloadGrants();
                 updateStats();
             }
         }
