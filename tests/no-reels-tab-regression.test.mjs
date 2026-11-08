@@ -16,7 +16,7 @@ function extract(name) {
 
 function scenario({ hasLink = false, navOK = false } = {}) {
     const logs = [];
-    const counts = { navigation: 0, nativeCompletion: 0, updates: 0 };
+    const counts = { navigation: 0, nativeCompletion: 0, rest: 0, updates: 0 };
     const state = {
         username: 'jennnii97',
         userId: '45790055326',
@@ -27,6 +27,7 @@ function scenario({ hasLink = false, navOK = false } = {}) {
     const runner = new Function(
         'state', 'location', 'window', 'log', 'status',
         'pathNorm', 'findAnchor', 'go', 'scanReelsNativeCompletion', 'updateStats',
+        'scanReelsAuthenticatedWithoutTab',
         extract('scanReels') + '\nreturn scanReels;'
     )(
         state, location, { scrollY: 0 },
@@ -42,7 +43,8 @@ function scenario({ hasLink = false, navOK = false } = {}) {
             counts.nativeCompletion++;
             return false;
         },
-        () => counts.updates++
+        () => counts.updates++,
+        async () => { counts.rest++; logs.push({msg:'REELS clips unavailable'}); return false; }
     );
     return { runner, state, counts, logs };
 }
@@ -50,10 +52,11 @@ function scenario({ hasLink = false, navOK = false } = {}) {
 const noTab = scenario({ hasLink: false });
 assert.equal(await noTab.runner(), false);
 assert.equal(noTab.counts.navigation, 0, 'no navigation attempt without link');
-assert.equal(noTab.counts.nativeCompletion, 0, 'no unsupported completion request');
+assert.equal(noTab.counts.nativeCompletion, 0, 'no unsupported native completion request');
+assert.equal(noTab.counts.rest, 1, 'one independent authenticated clips probe');
 assert.equal(noTab.state.coverage.reels, false,
     'absence of a tab is not proof of zero reels');
-assert.ok(noTab.logs.some(x => x.msg.includes('REELS stays INCOMPLETE')));
+assert.ok(noTab.logs.some(x => x.msg.includes('REELS clips unavailable')));
 
 const failedClick = scenario({ hasLink: true, navOK: false });
 assert.equal(await failedClick.runner(), false);
@@ -96,4 +99,4 @@ assert.deepEqual(remaining, [['REELS tab', 'reels']],
 assert.ok(source.includes("'PolarisProfileReelsTabContentQuery'"));
 assert.ok(!source.includes('async function scanReelsFallback('));
 assert.ok(source.includes('=== SCAN STOPPED — INSTAGRAM API UNHEALTHY ==='));
-console.log('No-REELS-tab safe skip and completeness guard regression tests passed.');
+console.log('No-REELS-tab authenticated clips probe and completeness guard regression tests passed.');
