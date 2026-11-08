@@ -120,6 +120,12 @@ const first = [...state.queue.values()][0];
 const pathFirst = testApi.archiveDownloadPath(first);
 assert.equal(pathFirst.split('/').length, 4,
     'profile/category/reel folder/file');
+const alternate = testApi.archiveDownloadPath(first, username, {
+    safeHighlightFallback: true,
+});
+assert.notEqual(alternate, pathFirst);
+assert.ok(alternate.includes('HL_' + first.highlightId));
+assert.equal(testApi.matchesHighlightArchivePath(first, alternate), true);
 const receipt = await testApi.downloadAttempt(first);
 assert.equal(receipt.requestedPath, pathFirst);
 assert.equal(writeRequests[0].name, pathFirst,
