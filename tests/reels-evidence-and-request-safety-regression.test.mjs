@@ -73,7 +73,7 @@ function classifyScenario({hasTab=false,known=0,apiProof=false}={}) {
             ? {verified:true,source:'authenticated_user_info_total_clips_count'}
             : {verified:false,reason:'clips_absence_not_explicitly_reported'},
         () => ({verified:true}),
-        x=>String(x).replace(/\\/+$/,''),
+        x=>String(x).replace(new RegExp('/+$'), ''),
         {pathname:'/jennnii97/'},
         () => hasTab?{}:null,
         (message,severity) => logs.push({message,severity}),
