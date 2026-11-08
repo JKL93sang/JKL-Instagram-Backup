@@ -62,8 +62,9 @@ assert.equal(failedClick.counts.nativeCompletion, 0,
     'failed navigation without native pagination evidence cannot complete');
 assert.ok(failedClick.logs.some(x => x.msg.includes('obsolete static GraphQL fallback')));
 
-// The real global completeness proof still needs independently completed REELS
-// coverage. Missing navigation must never synthesize a valid empty page.
+// PROFILE grid can be complete from the independent public server end.
+// Global backup remains incomplete because REELS has its own guard.
+// Missing navigation must never synthesize a valid empty REELS page.
 const assess = new Function(
     extract('assessProfileGridCrossSurfaceProof') +
     '\nreturn assessProfileGridCrossSurfaceProof;'
@@ -81,8 +82,16 @@ const p = {
     ownedPostIds:new Set(['111']),ownedReelIds:new Set(),
 };
 const proof = assess(p);
-assert.equal(proof.verified, false);
-assert.equal(proof.reason, 'connected_surfaces_not_equivalent');
+assert.equal(proof.verified, true);
+assert.equal(proof.reason, 'public_connected_cross_surface_proof');
+assert.equal(p.reelsComplete, false,
+    'proof of the main grid does NOT prove that the reels feed is empty');
+const requiredCoverage = new Function('scanSelection',
+    extract('requiredCoverage') + '\nreturn requiredCoverage;'
+)(() => ({ post: true, reel: true }));
+const remaining = requiredCoverage().filter(([, key]) => key === 'reels');
+assert.deepEqual(remaining, [['REELS tab', 'reels']],
+    'REELS must remain separately required for full archive completion');
 
 assert.ok(source.includes("'PolarisProfileReelsTabContentQuery'"));
 assert.ok(!source.includes('async function scanReelsFallback('));
