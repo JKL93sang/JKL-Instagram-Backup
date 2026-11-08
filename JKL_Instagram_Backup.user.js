@@ -265,6 +265,7 @@
         diskCanonicalMeta: new Map(),
         diskLocations: new Map(),
         diskPaths: new Map(), // verified relative paths from SCAN LOCAL FOLDER
+        sessionPaths: new Map(), // paths requested by successful downloads
         diskIndexStats: {
             selectedFiles: 0,
             canonicalFiles: 0,
@@ -1445,7 +1446,7 @@
             ?.[String(id)];
     }
 
-    function recordDownloaded(m) {
+    function recordDownloaded(m, requestedPath = '') {
         const db = loadDb();
 
         const p =
@@ -1476,6 +1477,10 @@
             sources: [...m.sources],
             visibility: m.visibility || null,
             archiveCategory: mediaArchiveCategory(m),
+            highlightId: m.highlightId || null,
+            highlightIds: m.highlightIds instanceof Set
+                ? [...m.highlightIds].sort() : [],
+            requestedPath: String(requestedPath || ''),
             hiddenDiscovery:
                 hiddenDiscoverySources(m),
             downloadedAt:
@@ -1562,12 +1567,15 @@
     // Instagram highlight titles are display labels, never unique identities.
     // Using the full reel ID makes folders deterministic across scans, sort
     // changes, repeated titles and Windows case-insensitive filesystems.
-    function highlightFolderName(title, reelId) {
+    function highlightFolderName(title, reelId, maxLength = 76) {
         const id = hiId(reelId);
         if (!/^\d+$/.test(id)) return '';
 
-        const label = sanitizePathComponent(title, 'Highlight', 44);
-        return `${label} [${id}]`;
+        // Preserve the FULL reel ID even when the username is long.
+        const suffix = ` [${id}]`;
+        const available = Math.max(1, maxLength - suffix.length);
+        const label = sanitizePathComponent(title, 'Highlight', available);
+        return `${label}${suffix}`;
     }
 
     function buildHighlightCatalog(tray) {
@@ -1584,17 +1592,17 @@
         return catalog;
     }
 
-    function highlightFolderTitle(m) {
+    function highlightFolderTitle(m, maxLength = 76) {
         const id = String(m?.highlightId || '');
-        return state.highlightCatalog.get(id)?.folder ||
-            highlightFolderName('', id) ||
-            highlightFolderName('', m?.id) ||
+        const entry = state.highlightCatalog.get(id);
+        return highlightFolderName(entry?.title || '', id, maxLength) ||
+            highlightFolderName('', m?.id, maxLength) ||
             'Highlight';
     }
 
-    function highlightFallbackFolderTitle(m) {
+    function highlightFallbackFolderTitle(m, maxLength = 76) {
         const id = String(m?.highlightId || m?.id || '');
-        return highlightFolderName('', id) || 'Highlight';
+        return highlightFolderName('', id, maxLength) || 'Highlight';
     }
 
     // Compare real indexed paths, never merely a media ID/category.
@@ -1655,17 +1663,12 @@
         ];
 
         if (rawType === 'HIGHLIGHT') {
+            // Reserve enough space for the full reel identity suffix.
+            const maxTitleLength = 120 - user.length - 3;
             const title = options?.safeHighlightFallback
-                ? highlightFallbackFolderTitle(m)
-                : highlightFolderTitle(m);
-
-            // Keep the reel ID suffix even with a maximum-length username.
-            const maxTitleLength = Math.max(20, 120 - user.length - 3);
-            parts.push(
-                `${user} - ${sanitizePathComponent(
-                    title, 'Highlight', maxTitleLength
-                )}`
-            );
+                ? highlightFallbackFolderTitle(m, maxTitleLength)
+                : highlightFolderTitle(m, maxTitleLength);
+            parts.push(`${user} - ${title}`);
         }
 
         parts.push(
@@ -11480,6 +11483,8 @@
         state.diskCanonical.clear();
         state.diskCanonicalMeta.clear();
         state.diskLocations.clear();
+        state.diskPaths.clear();
+        state.sessionPaths.clear();
         state.diskHidden.clear();
         state.diskStoryHighlight.clear();
         state.legacy.clear();
@@ -11536,6 +11541,9 @@
 
                 const id = String(m[1]);
                 state.diskCanonical.add(id);
+                const paths = state.diskPaths.get(id) || new Set();
+                paths.add(relativePath);
+                state.diskPaths.set(id, paths);
                 if (folder) {
                     const locations = state.diskLocations.get(id) || new Set();
                     locations.add(folder);
@@ -11713,13 +11721,19 @@
 
         if (state.diskActive) {
             if (state.diskLocations.get(id)?.has(mediaArchiveCategory(m))) {
-                return 'DISK';
+                // Matching type and ID are insufficient for highlights:
+                // the actual indexed reel directory must also match.
+                if (
+                    m.type !== 'HIGHLIGHT' ||
+                    [...(state.diskPaths.get(id) || [])]
+                        .some(p => matchesHighlightArchivePath(m, p))
+                ) return 'DISK';
             }
 
             // Legacy matches have no reliable visibility information.
             // Never mistake an old POSTS/HIDDEN copy for a FAN CLUB file.
             if (
-                !['FAN CLUB', 'HIDDEN'].includes(mediaArchiveCategory(m)) &&
+                !['FAN CLUB', 'HIDDEN', 'HIGHLIGHTS'].includes(mediaArchiveCategory(m)) &&
                 legacyMatch(m)
             ) {
                 return 'LEGACY';
@@ -11739,6 +11753,12 @@
             state.diskCanonical.has(id) &&
             state.diskLocations.get(id)?.has(mediaArchiveCategory(m))
         ) {
+            if (m.type === 'HIGHLIGHT') {
+                const paths = state.sessionPaths.get(id) || new Set();
+                if (![...paths].some(p => matchesHighlightArchivePath(m, p))) {
+                    return null;
+                }
+            }
             return 'SESSION';
         }
 
