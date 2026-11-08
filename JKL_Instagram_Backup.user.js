@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.81
-// @description  TEST v1.5.81: Story timestamps are not Reels; verify absent-tab Reels with paginated authenticated clips.
+// @version      1.5.82
+// @description  TEST v1.5.82: remove unsafe private-mobile clips fallback; retain Story/Reels separation and verified accessible partial archive.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,10 +31,10 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.81', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.82', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
-        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, REEL_REST_MAX_PAGES: 200, REEL_REST_PAGE_SIZE: 50, TAGGED_MAX_PAGES: 5000,
+        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
         REEL_SCROLL_MIN: 350, REEL_SCROLL_MAX: 1600, REEL_SCROLL_POLL: 120,
         PAGE_MIN: 650, PAGE_MAX: 1250, SHADOW_PAGE_MIN: 250, SHADOW_PAGE_MAX: 450, SHADOW_MAX_PAGES: 200, DOWNLOAD_DELAY: 0, DOWNLOAD_WORKERS: 1, DOWNLOAD_RETRIES: 3, LEDGER_FLUSH_EVERY: 25, DL_DIAG_SAMPLES: 20, MAX_LOG: 300,
         HYDRATE_MIN: 180, HYDRATE_MAX: 320, HYDRATE_RETRIES: 3, HYDRATE_WORKERS: 4, HYDRATE_LARGE_THRESHOLD: 250, HYDRATE_LARGE_WORKERS: 2, HYDRATE_BULK_THRESHOLD: 100, HYDRATE_BULK_SIZE: 20, HYDRATE_SINGLE_FALLBACK_CAP: 100,
@@ -9076,193 +9076,11 @@
     }
 
 
-    // Different Instagram surfaces use the same word "reel": latest_reel_media
-    // is a Story timestamp, not evidence about the short-video clips feed.
-    // A successful, identity-scoped paginated clips/user/ response is needed.
-    function parseAuthenticatedClipsPage(data) {
-        const fail = reason => ({ verified:false, reason });
-        if (!data || typeof data !== 'object' || Array.isArray(data) ||
-            data.status !== 'ok' ||
-            (Array.isArray(data.errors) && data.errors.length)) {
-            return fail('invalid_status');
-        }
-        if (!Array.isArray(data.items)) return fail('items_missing');
-        const pi = data.paging_info;
-        if (!pi || typeof pi !== 'object' || Array.isArray(pi)) {
-            return fail('paging_info_missing');
-        }
-        // Instagram private clips API uses paging_info.max_id as its
-        // continuation contract (instagrapi). Some responses additionally
-        // expose more_available. Require at least one explicit marker.
-        const hasFlag = typeof pi.more_available === 'boolean';
-        const hasCursor = Object.prototype.hasOwnProperty.call(pi, 'max_id');
-        if (!hasFlag && !hasCursor) return fail('pagination_markers_missing');
-        if (pi.more_available !== undefined && !hasFlag) {
-            return fail('more_available_invalid_type');
-        }
-        if (pi.max_id != null && typeof pi.max_id !== 'string') {
-            return fail('cursor_invalid_type');
-        }
-        const cursor = String(pi.max_id || '');
-        const moreAvailable = hasFlag ? pi.more_available : !!cursor;
-        if (moreAvailable && !cursor) return fail('next_cursor_missing');
-        if (!moreAvailable && cursor) return fail('conflicting_end_cursor');
-
-        const medias = [];
-        for (const item of data.items) {
-            if (!item?.media || !normalizePk(item.media)) {
-                return fail('invalid_clips_media');
-            }
-            medias.push(item.media);
-        }
-        return {
-            verified:true,
-            medias,
-            moreAvailable,
-            cursor,
-        };
-    }
-
-    async function scanReelsAuthenticatedWithoutTab() {
-        const uid = String(state.userId || '');
-        const username = String(state.username || '');
-        const infoId = String(
-            state.profileInfo?.pk || state.profileInfo?.id || ''
-        ).split('_')[0];
-        if (!/^\d+$/.test(uid) || !username || infoId !== uid) {
-            log('REELS authenticated clips skipped: target identity unverified.', 'warn');
-            return false;
-        }
-
-        log('REELS navigation absent; checking authenticated clips/user/ server pagination.');
-        let cursor = '';
-        const seenCursors = new Set();
-        const discovered = new Set();
-
-        for (let page = 1; page <= APP.REEL_REST_MAX_PAGES; page++) {
-            if (state.cancelled) throw new Error('Cancelled');
-            if (String(state.userId || '') !== uid ||
-                String(state.username || '') !== username) {
-                log('REELS clips aborted: target profile changed.', 'warn');
-                return false;
-            }
-
-            let res;
-            try {
-                res = await gmRequest({
-                    method:'POST',
-                    url:'https://www.instagram.com/api/v1/clips/user/',
-                    data:new URLSearchParams({
-                        target_user_id:uid,
-                        max_id:cursor,
-                        page_size:String(APP.REEL_REST_PAGE_SIZE),
-                        include_feed_video:'true',
-                    }).toString(),
-                    headers:headers({
-                        'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8',
-                        'User-Agent':APP.MOBILE_UA,
-                    }),
-                    feedbackLabel:'REELS authenticated clips',
-                });
-            }
-            catch (e) {
-                throwIfInstagramStop(e, 'REELS authenticated clips');
-                log('REELS clips request failed (' +
-                    String(e?.code || 'transport') +
-                    '); no empty-feed proof.', 'warn');
-                return false;
-            }
-
-            if (Number(res?.status || 0) !== 200) {
-                log('REELS clips HTTP ' + Number(res?.status || 0) +
-                    '; no empty-feed proof.', 'warn');
-                return false;
-            }
-            const targetUrl = String(res.finalUrl || res.responseURL || '');
-            if (targetUrl) {
-                try {
-                    const u = new URL(targetUrl);
-                    if (u.origin !== 'https://www.instagram.com' ||
-                        u.pathname !== '/api/v1/clips/user/') {
-                        log('REELS clips redirected outside endpoint; INCOMPLETE.', 'warn');
-                        return false;
-                    }
-                }
-                catch {
-                    log('REELS clips invalid final request destination.', 'warn');
-                    return false;
-                }
-            }
-
-            let data;
-            try { data = JSON.parse(String(res.responseText || '')); }
-            catch {
-                log('REELS clips returned HTTP 200 non-JSON; not zero clips.', 'warn');
-                return false;
-            }
-            if (feedbackRequiredIn(data)) {
-                throw feedbackCircuitBreak(
-                    'REELS authenticated clips: Instagram returned feedback_required.'
-                );
-            }
-
-            const parsed = parseAuthenticatedClipsPage(data);
-            if (!parsed.verified) {
-                log('REELS clips page ' + page + ' invalid (' + parsed.reason +
-                    '); INCOMPLETE.', 'warn');
-                return false;
-            }
-
-            for (const media of parsed.medias) {
-                const id = String(normalizePk(media));
-                discovered.add(id);
-                addMedia(media, 'REEL', 'REEL_AUTHENTICATED_CLIPS_V1');
-            }
-            log('REELS clips page ' + page + ': items=' + parsed.medias.length +
-                ', unique=' + discovered.size +
-                ', more_available=' + parsed.moreAvailable + '.');
-            updateStats();
-
-            if (!parsed.moreAvailable) {
-                const missingKnown = [...state.roots.REEL].filter(
-                    id => !discovered.has(String(id))
-                );
-                const contradictoryZero = discovered.size === 0 && (
-                    Number(state.profileInfo?.total_clips_count) > 0 ||
-                    state.profileInfo?.has_clips === true ||
-                    state.profileInfo?.has_any_clips === true ||
-                    state.shadow.reelsEvidence?.hasAnyClips === true ||
-                    Number(state.shadow.reelsEvidence?.totalClipsCount) > 0
-                );
-                if (missingKnown.length || contradictoryZero) {
-                    log('REELS clips server-end contradicts ' +
-                        (contradictoryZero ? 'positive clip metadata' : 'known Reel roots') +
-                        '; INCOMPLETE.', 'warn');
-                    return false;
-                }
-                state.coverage.reels = true;
-                log('REELS authenticated clips complete: ' +
-                    page + ' page(s), ' + discovered.size +
-                    ' Reel root(s), verified terminal paging_info.');
-                updateStats();
-                return true;
-            }
-
-            if (!parsed.cursor || seenCursors.has(parsed.cursor)) {
-                log('REELS clips pagination cursor missing/repeated; INCOMPLETE.', 'warn');
-                return false;
-            }
-            seenCursors.add(parsed.cursor);
-            cursor = parsed.cursor;
-            if (page < APP.REEL_REST_MAX_PAGES) {
-                await sleep(rand(APP.PAGE_MIN, APP.PAGE_MAX));
-            }
-        }
-
-        log('REELS clips maximum pages reached without server-end; INCOMPLETE.', 'warn');
-        return false;
-    }
-
+    // Feedback_required observed in Firefox from the private-mobile
+    // clips/user/ endpoint. This desktop userscript must NEVER replay that
+    // endpoint: it requires a distinct mobile-app auth/signature context.
+    // Native Web REELS capture remains the only verified discovery route.
+    // An absent navigation tab is UNKNOWN, not evidence of an empty feed.
     async function scanReels() {
         log(
             'Scanning native REELS tab…'
@@ -9289,7 +9107,15 @@
             !findAnchor(target)
         ) {
             state.coverage.reels = false;
-            return await scanReelsAuthenticatedWithoutTab();
+            log(
+                'REELS tab absent: no verified native Web pagination exists. ' +
+                'Private mobile clips/user/ is disabled after Instagram ' +
+                'feedback_required; no request attempted. ' +
+                'REELS remains INCOMPLETE.',
+                'warn'
+            );
+            updateStats();
+            return false;
         }
 
         const nav =
