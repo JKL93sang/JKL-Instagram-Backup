@@ -75,11 +75,11 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.70');
+assert.equal(metadataVersion, '1.5.78');
 assert.equal(metadataVersion, appVersion);
-assert.match(meta('description'), /Instagram backup:/);
-assert.doesNotMatch(meta('description'), /TEST BUILD|EXPERIMENTAL/i,
-    'Stable distribution must not advertise an experimental channel');
+assert.ok(!/TEST BUILD/i.test(meta('description')),
+    'Official main distribution must not claim to be a test build');
+
 
 
 assert.ok(

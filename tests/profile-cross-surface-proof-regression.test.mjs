@@ -139,7 +139,10 @@ reject(mk,p=>{p.expected=0},'public_timeline_counter_or_partition_mismatch');
 reject(mk,p=>{p.expected=21},'public_timeline_counter_or_partition_mismatch');
 reject(mk,p=>{p.publicReelIds=new Set()},'public_timeline_counter_or_partition_mismatch');
 reject(mk,p=>{p.publicReelIds=new Set(['1000'])},'public_root_partition_invalid');
-reject(mk,p=>{p.reelsComplete=false},'connected_surfaces_not_equivalent');
+const independentReels = mk();
+independentReels.reelsComplete = false;
+assert.deepEqual(assess(independentReels), exact,
+    'main-grid completion must not depend on the independent REELS tab');
 reject(mk,p=>{p.connectedHiddenComplete=false},'connected_surfaces_not_equivalent');
 reject(mk,p=>{p.ownedHydrationComplete=false},'connected_surfaces_not_equivalent');
 reject(mk,p=>{p.hiddenCandidates=1},'connected_surfaces_not_equivalent');
@@ -158,9 +161,10 @@ reject(mkReclassified,p=>{
 reject(mkReclassified,p=>{
     p.ownedPostIds.delete('5000');
 },'public_roots_not_reconciled');
-reject(mkReclassified,p=>{
-    p.reelsComplete=false;
-},'connected_surfaces_not_equivalent');
+const mainGridWithIndependentReels = mkReclassified();
+mainGridWithIndependentReels.reelsComplete = false;
+assert.deepEqual(assess(mainGridWithIndependentReels), assess(reclassified),
+    'unknown REELS tab must not invalidate identity-proven main-grid roots');
 reject(mkReclassified,p=>{
     p.shadowPageInfoEnd=false;
 },'public_timeline_end_unproven');
@@ -192,6 +196,8 @@ const shadow=extract('scanPublicShadow');
 const reset=extract('resetCoverage');
 const scan=extract('scanAll');
 assert.ok(bridge.includes('assessProfileGridCrossSurfaceProof'));
+assert.ok(!src.includes('!proof.reelsComplete ||'),
+    'PROFILE must not falsely require REELS completeness to prove the grid');
 assert.ok(bridge.includes('state.coverage.profileGrid = true'));
 assert.ok(bridge.includes('net.gridByUser.get(state.username.toLowerCase())'));
 assert.ok(bridge.includes('net.gridPageInfo.get('));

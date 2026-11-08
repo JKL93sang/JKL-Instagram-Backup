@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.70
-// @description  Instagram backup: unique file per media, FAN CLUB / HIDDEN routing, verified subscriber partial backup.
+// @version      1.5.78
+// @description  Instagram backup: public PROFILE verification, independently checked REELS, stable highlight IDs, verified partial archive.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,10 +31,10 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.70', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.78', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
-        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
+        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
         REEL_SCROLL_MIN: 350, REEL_SCROLL_MAX: 1600, REEL_SCROLL_POLL: 120,
         PAGE_MIN: 650, PAGE_MAX: 1250, SHADOW_PAGE_MIN: 250, SHADOW_PAGE_MAX: 450, SHADOW_MAX_PAGES: 200, DOWNLOAD_DELAY: 0, DOWNLOAD_WORKERS: 1, DOWNLOAD_RETRIES: 3, LEDGER_FLUSH_EVERY: 25, DL_DIAG_SAMPLES: 20, MAX_LOG: 300,
         HYDRATE_MIN: 180, HYDRATE_MAX: 320, HYDRATE_RETRIES: 3, HYDRATE_WORKERS: 4, HYDRATE_LARGE_THRESHOLD: 250, HYDRATE_LARGE_WORKERS: 2, HYDRATE_BULK_THRESHOLD: 100, HYDRATE_BULK_SIZE: 20, HYDRATE_SINGLE_FALLBACK_CAP: 100,
@@ -48,6 +48,21 @@
         PANEL_MARGIN_X: 16,
         PANEL_MARGIN_Y: 12,
         MOBILE_UA: 'Mozilla/5.0 (Linux; Android 10; Pixel 7 XL) AppleWebKit/537.36 (KHTML, like Gecko) Version/5.0 Chrome/117.0.5938.60 Mobile Safari/537.36 Instagram 307.0.0.34.111',
+    });
+
+    const DOWNLOAD_MODE = Object.freeze({
+        COMPLETE: 'complete',
+        SUBSCRIBER: 'subscriber',
+        ACCESSIBLE: 'accessible',
+    });
+    const PARTIAL_DOWNLOAD_MODES = Object.freeze([
+        DOWNLOAD_MODE.SUBSCRIBER,
+        DOWNLOAD_MODE.ACCESSIBLE,
+    ]);
+    const DOWNLOAD_MODE_LABEL = Object.freeze({
+        [DOWNLOAD_MODE.COMPLETE]: 'Download batch',
+        [DOWNLOAD_MODE.SUBSCRIBER]: 'VERIFIED SUBSCRIBER PARTIAL',
+        [DOWNLOAD_MODE.ACCESSIBLE]: 'VERIFIED ACCESSIBLE PARTIAL',
     });
 
     const GRID_NAMES = new Set([
@@ -186,11 +201,13 @@
         },
 
         rootCatalog: new Map(),
+        highlightCatalog: new Map(), // Instagram reel ID -> stable archive folder
+        highlightRenameNotices: new Set(),
         queue: new Map(),
 
         // Authorized only after full authenticated media-info, never previews.
         verifiedSubscriberRootIds: new Set(),
-        verifiedSubscriberSnapshot: null,
+        partialDownloadGrants: { subscriber: null, accessible: null },
 
         roots: {
             POST: new Set(),
@@ -248,6 +265,14 @@
         diskCanonical: new Set(),
         diskCanonicalMeta: new Map(),
         diskLocations: new Map(),
+        diskPaths: new Map(), // verified relative paths from SCAN LOCAL FOLDER
+        sessionPaths: new Map(), // paths requested by successful downloads
+        diskIndexStats: {
+            selectedFiles: 0,
+            canonicalFiles: 0,
+            legacyFiles: 0,
+            unrecognizedFiles: 0,
+        },
         diskHidden: new Set(),
         diskStoryHighlight: new Set(),
         legacy: new Map(),
@@ -267,9 +292,14 @@
         gridNativeAuditByUser: new Map(),
         gridNativeContinuationByUser: new Map(),
         gridNativeInitialByUser: new Map(),
+        gridCaptureSeenAtByUser: new Map(),
+        gridBootstrapConsumedByUser: new Set(),
 
         reelsByUserId: new Map(),
         reelPageInfo: new Map(),
+        reelNativeAuditByUserId: new Map(),
+        reelNativeInitialByUserId: new Map(),
+        reelNativeContinuationByUserId: new Map(),
 
         taggedDocInitial: '',
         taggedDocConnection: '',
@@ -939,6 +969,12 @@
             `${kind} · ${m?.filename || m?.id || 'media'}`;
     }
 
+    function clearPartialDownloadGrants() {
+        for (const mode of PARTIAL_DOWNLOAD_MODES) {
+            state.partialDownloadGrants[mode] = null;
+        }
+    }
+
     function invalidateCompletedScan(reason = 'SCAN_INVALIDATED') {
         if (!state.scanPlan) {
             return;
@@ -949,7 +985,7 @@
         state.scanUserId = '';
         state.scanQueueSize = 0;
         state.scanQueueFingerprint = '';
-        state.verifiedSubscriberSnapshot = null;
+        clearPartialDownloadGrants();
     }
 
     function resetCoverage() {
@@ -977,7 +1013,9 @@
         state.hidden.failed = 0;
         state.hidden.recoveredCodes = [];
         state.verifiedSubscriberRootIds.clear();
-        state.verifiedSubscriberSnapshot = null;
+        state.highlightCatalog.clear();
+        state.highlightRenameNotices.clear();
+        clearPartialDownloadGrants();
 
         state.hydration.totalRoots = 0;
         state.hydration.hydratedRoots = 0;
@@ -1412,7 +1450,7 @@
             ?.[String(id)];
     }
 
-    function recordDownloaded(m) {
+    function recordDownloaded(m, requestedPath = '') {
         const db = loadDb();
 
         const p =
@@ -1443,6 +1481,10 @@
             sources: [...m.sources],
             visibility: m.visibility || null,
             archiveCategory: mediaArchiveCategory(m),
+            highlightId: m.highlightId || null,
+            highlightIds: m.highlightIds instanceof Set
+                ? [...m.highlightIds].sort() : [],
+            requestedPath: String(requestedPath || ''),
             hiddenDiscovery:
                 hiddenDiscoverySources(m),
             downloadedAt:
@@ -1525,55 +1567,190 @@
         );
     }
 
-    function highlightRawTitle(m) {
-        if (m?.type !== 'HIGHLIGHT') {
-            return '';
+
+    // Instagram highlight titles are display labels, never unique identities.
+    // Using the full reel ID makes folders deterministic across scans, sort
+    // changes, repeated titles and Windows case-insensitive filesystems.
+    function highlightFolderName(title, reelId, maxLength = 76) {
+        const id = hiId(reelId);
+        if (!/^\d+$/.test(id)) return '';
+
+        // Preserve the FULL reel ID even when the username is long.
+        const suffix = ` [${id}]`;
+        const available = Math.max(1, maxLength - suffix.length);
+        const label = sanitizePathComponent(title, 'Highlight', available);
+        return `${label}${suffix}`;
+    }
+
+    function buildHighlightCatalog(tray) {
+        const catalog = new Map();
+        for (const node of tray) {
+            const id = hiId(node?.id || node?.pk || node?.reel_id);
+            if (!/^\d+$/.test(id) || catalog.has(id)) continue;
+
+            const title = String(node?.title || '');
+            catalog.set(id, Object.freeze({
+                id, title, folder: highlightFolderName(title, id),
+            }));
+        }
+        return catalog;
+    }
+
+    function highlightFolderTitle(m, maxLength = 76) {
+        const id = String(m?.highlightId || '');
+        const entry = state.highlightCatalog.get(id);
+        return highlightFolderName(entry?.title || '', id, maxLength) ||
+            highlightFolderName('', m?.id, maxLength) ||
+            'Highlight';
+    }
+
+    function highlightFallbackFolderTitle(m, maxLength = 76) {
+        const id = hiId(m?.highlightId || m?.id || '');
+        // A genuinely different ASCII-only retry name, not the same
+        // normalized display title that already failed.
+        return /^\d+$/.test(id)
+            ? `HL_${id}`
+            : 'HL_UNKNOWN';
+    }
+
+    // Match a verified local file to its Instagram reel identity, not its
+    // mutable display title. Folder renames must never trigger downloads.
+    // Files in the pre-v1.5.75 shared "Highlight" folder lack an ID and
+    // intentionally remain unmatched: their exact reel is unproven.
+    function highlightArchivePathIdentity(m, relativePath) {
+        const noMatch = { matched: false, renamed: false };
+        if (m?.type !== 'HIGHLIGHT') return noMatch;
+
+        const reelId = hiId(m.highlightId);
+        if (!/^\d+$/.test(reelId)) return noMatch;
+
+        const user = sanitizePathComponent(state.username, 'instagram', 64);
+        const parts = String(relativePath || '')
+            .replace(/\\/g, '/')
+            .split('/')
+            .filter(Boolean);
+        if (parts.length < 3) return noMatch;
+
+        const filename = String(parts[parts.length - 1] || '');
+        const oldFolder = String(parts[parts.length - 2] || '');
+        const category = String(parts[parts.length - 3] || '');
+        const expectedCategory = sanitizePathComponent(
+            `${user} - HIGHLIGHTS`, 'HIGHLIGHTS', 96
+        );
+        const prefix = `${user} - `;
+        if (
+            filename.toLowerCase() !== String(m.filename || '').toLowerCase() ||
+            category.toLowerCase() !== expectedCategory.toLowerCase() ||
+            !oldFolder.toLowerCase().startsWith(prefix.toLowerCase())
+        ) return noMatch;
+
+        const label = oldFolder.slice(prefix.length);
+        const previousId = label.match(/\[(\d+)\]$/)?.[1] ||
+            label.match(/^HL_(\d+)$/i)?.[1] || '';
+        if (previousId !== reelId) return noMatch;
+
+        const expectedFolder = archiveDownloadPath(m)
+            .split('/').at(-2);
+        return {
+            matched: true,
+            renamed: oldFolder.toLowerCase() !== expectedFolder.toLowerCase(),
+            oldFolder,
+            expectedFolder,
+            reelId,
+        };
+    }
+
+    function matchesHighlightArchivePath(m, relativePath) {
+        return highlightArchivePathIdentity(m, relativePath).matched;
+    }
+
+    // A renamed highlight remains the SAME Instagram collection. This
+    // metadata is kept per profile so renames can be recognized across
+    // browser sessions, even when the user has not indexed a local folder.
+    function reconcileHighlightTitleHistory() {
+        if (!state.coverage.highlights || !state.userId) return 0;
+
+        const db = loadDb();
+        const profile = db.profiles[state.userId] ||= {
+            userId: state.userId,
+            username: state.username,
+            updatedAt: null,
+            media: {},
+        };
+        profile.highlights ||= {};
+
+        let changes = 0;
+        let renames = 0;
+        for (const [id, current] of state.highlightCatalog) {
+            const previous = profile.highlights[id];
+            if (previous?.title === current.title) continue;
+
+            if (previous && typeof previous.title === 'string') {
+                renames++;
+                log(
+                    `HIGHLIGHT RENAMED [${id}]: "${previous.title}" → ` +
+                    `"${current.title}". Same Instagram reel, NOT a new highlight. ` +
+                    'Existing files remain linked by reel ID.',
+                    'warn'
+                );
+            }
+
+            profile.highlights[id] = {
+                id, title: current.title, folder: current.folder,
+                lastSeenAt: new Date().toISOString(),
+            };
+            changes++;
         }
 
-        for (const source of m?.sources || []) {
-            const s =
-                String(
-                    source ||
-                    ''
-                );
+        if (changes) {
+            profile.updatedAt = new Date().toISOString();
+            state.ledgerDirty += changes;
+            try {
+                flushLedger(true);
+            }
+            catch (e) {
+                log('Could not persist HIGHLIGHT rename history: ' + e.message, 'warn');
+            }
+        }
+        return renames;
+    }
 
-            if (
-                s.startsWith(
-                    'HIGHLIGHT:'
-                )
-            ) {
-                return (
-                    s.slice(
-                        'HIGHLIGHT:'.length
-                    ) ||
-                    'Highlight'
-                );
+    // Firefox file inputs only index paths; they cannot rename local folders.
+    // Announce verified old-folder locations without treating them as new
+    // media or starting another download.
+    function reportHighlightFolderRenames() {
+        if (!state.diskActive || !state.highlightCatalog.size) return 0;
+        const seen = new Map();
+
+        for (const media of state.queue.values()) {
+            if (media.type !== 'HIGHLIGHT' || !media.highlightId) continue;
+            for (const path of state.diskPaths.get(String(media.id)) || []) {
+                const identity = highlightArchivePathIdentity(media, path);
+                if (!identity.matched || !identity.renamed) continue;
+
+                const key = [
+                    identity.reelId, identity.oldFolder, identity.expectedFolder,
+                ].join('|');
+                if (!seen.has(key)) {
+                    seen.set(key, { ...identity, mediaIds: new Set() });
+                }
+                seen.get(key).mediaIds.add(String(media.id));
             }
         }
 
-        return 'Highlight';
-    }
-
-    function highlightFolderTitle(m) {
-        return sanitizePathComponent(
-            highlightRawTitle(m),
-            'Highlight',
-            80
-        );
-    }
-
-    function highlightFallbackFolderTitle(m) {
-        const raw =
-            highlightRawTitle(m);
-
-        const suffix =
-            hash(raw)
-                .toString(16)
-                .padStart(8, '0');
-
-        return (
-            `Highlight_${suffix}`
-        );
+        for (const [key, entry] of seen) {
+            if (state.highlightRenameNotices.has(key)) continue;
+            state.highlightRenameNotices.add(key);
+            log(
+                `HIGHLIGHT FOLDER RENAME [${entry.reelId}]: ` +
+                `"${entry.oldFolder}" → "${entry.expectedFolder}" ` +
+                `(${entry.mediaIds.size} indexed files). ` +
+                'Same collection: downloads are SKIPPED. ' +
+                'Rename the folder manually on disk; Firefox cannot do it via SCAN LOCAL FOLDER.',
+                'warn'
+            );
+        }
+        return seen.size;
     }
 
     function archiveDownloadPath(
@@ -1613,18 +1790,12 @@
         ];
 
         if (rawType === 'HIGHLIGHT') {
-            const title =
-                options?.safeHighlightFallback
-                    ? highlightFallbackFolderTitle(m)
-                    : highlightFolderTitle(m);
-
-            parts.push(
-                sanitizePathComponent(
-                    `${user} - ${title}`,
-                    `${user} - Highlight`,
-                    120
-                )
-            );
+            // Reserve enough space for the full reel identity suffix.
+            const maxTitleLength = 120 - user.length - 3;
+            const title = options?.safeHighlightFallback
+                ? highlightFallbackFolderTitle(m, maxTitleLength)
+                : highlightFolderTitle(m, maxTitleLength);
+            parts.push(`${user} - ${title}`);
         }
 
         parts.push(
@@ -2074,7 +2245,8 @@
     function addMedia(
         raw,
         typeHint = '',
-        source = ''
+        source = '',
+        context = null
     ) {
         if (!raw) {
             return 0;
@@ -2260,6 +2432,15 @@
                             : []
                     ),
 
+                highlightId: type === 'HIGHLIGHT'
+                    ? String(context?.highlightId || '')
+                    : '',
+                highlightIds: new Set(
+                    type === 'HIGHLIGHT' && context?.highlightId
+                        ? [String(context.highlightId)]
+                        : []
+                ),
+
                 originalToken:
                     originalToken(url),
 
@@ -2305,6 +2486,16 @@
                     );
                 }
 
+                // Preserve every reel membership when one media is reused
+                // in multiple highlights, while retaining one file per ID.
+                if (type === 'HIGHLIGHT' && m.highlightId) {
+                    old.highlightIds ||= new Set(
+                        old.highlightId ? [old.highlightId] : []
+                    );
+                    old.highlightIds.add(m.highlightId);
+                    old.highlightId = [...old.highlightIds].sort()[0];
+                }
+
                 const freshApi =
                     source === 'OWNED_DEEP_HYDRATION';
 
@@ -2322,6 +2513,8 @@
 
                     m.rootIds =
                         old.rootIds;
+                    m.highlightIds = old.highlightIds || m.highlightIds;
+                    m.highlightId = old.highlightId || m.highlightId;
                     m.visibility = old.visibility || m.visibility;
 
                     state.queue.set(
@@ -3743,19 +3936,18 @@
         data,
         meta
     ) {
+        const knownFriendly = GRID_NAMES.has(String(meta?.friendly || ''));
+        // Instagram can rename persisted queries without changing the
+        // actual response contract. Trust a newly named query ONLY when
+        // its response contains the exact timeline connection key and
+        // the native request is explicitly scoped to this profile.
+        const exactTimelineConnection = !!keyedConnection(
+            data, GRID_CONNECTION_KEY
+        );
         if (
-            !GRID_NAMES.has(
-                String(
-                    meta?.friendly ||
-                    ''
-                )
-            ) ||
-            !requestTargetsCurrentProfile(
-                meta
-            )
-        ) {
-            return;
-        }
+            (!knownFriendly && !exactTimelineConnection) ||
+            !requestTargetsCurrentProfile(meta)
+        ) return;
 
         const user =
             gridUser(meta);
@@ -3833,6 +4025,7 @@
             user,
             c.page_info || null
         );
+        net.gridCaptureSeenAtByUser.set(user, Date.now());
 
         if (meta?.docId) {
             net.gridDocByUser.set(
@@ -3844,13 +4037,14 @@
             if (
                 meta.variables &&
                 typeof meta.variables === 'object' &&
-                GRID_NAMES.has(String(meta.friendly || ''))
+                (knownFriendly || exactTimelineConnection)
             ) {
                 try {
                     const verifiedContract = {
                         docId:String(meta.docId),
                         friendly:String(meta.friendly),
                         endpoint:meta.endpoint === 'api' ? 'api' : 'query',
+                        timelineKeyVerified: exactTimelineConnection,
                         variables:JSON.parse(JSON.stringify(meta.variables)),
                         template:{
                             body:JSON.parse(JSON.stringify(meta.bodyFields || {})),
@@ -3879,61 +4073,115 @@
         }
     }
 
-    function captureReels(
-        data,
-        meta
-    ) {
-        const uid =
-            reelUserId(meta) ||
-            state.userId;
+    function reelNativeCursorField(variables) {
+        if (!variables || typeof variables !== 'object') return null;
 
-        if (!uid) {
-            return;
-        }
+        const candidates = [];
+        for (const [parent, object] of [
+            ['', variables],
+            ['data.', variables.data],
+        ]) {
+            if (!object || typeof object !== 'object') continue;
 
-        const c =
-            reelConn(data);
-
-        if (!c) {
-            return;
-        }
-
-        const map =
-            net.reelsByUserId.get(uid) ||
-            new Map();
-
-        for (
-            const e
-            of c.edges || []
-        ) {
-            const n =
-                edgeNode(e);
-
-            const k =
-                normalizePk(n) ||
-                String(
-                    n?.code ||
-                    n?.shortcode ||
-                    ''
-                );
-
-            if (k) {
-                map.set(
-                    String(k),
-                    n
-                );
+            for (const key of ['after', 'max_id']) {
+                if (Object.prototype.hasOwnProperty.call(object, key)) {
+                    const value = object[key];
+                    if (typeof value !== 'string' && typeof value !== 'number') {
+                        return null;
+                    }
+                    candidates.push({
+                        path: parent + key,
+                        value: String(value),
+                    });
+                }
             }
         }
 
-        net.reelsByUserId.set(
-            uid,
-            map
-        );
+        // Two observed pagination fields are ambiguous. Never guess one.
+        return candidates.length === 1 ? candidates[0] : null;
+    }
 
-        net.reelPageInfo.set(
-            uid,
-            c.page_info || null
-        );
+    function captureReels(data, meta) {
+        // A REELS response without a request targeting the current profile
+        // must never contribute pagination proof for this profile.
+        if (
+            !REEL_NAMES.has(String(meta?.friendly || '')) ||
+            !requestTargetsCurrentProfile(meta) ||
+            (Array.isArray(data?.errors) && data.errors.length)
+        ) return;
+
+        const uid = reelUserId(meta) || String(state.userId || '');
+        if (!uid || uid !== String(state.userId || '')) return;
+
+        const c = reelConn(data);
+        if (!c || !Array.isArray(c.edges)) return;
+
+        const map = net.reelsByUserId.get(uid) || new Map();
+
+        for (const e of c.edges) {
+            const n = edgeNode(e);
+            const k = normalizePk(n) ||
+                String(n?.code || n?.shortcode || '');
+            if (k) map.set(String(k), n);
+        }
+
+        net.reelsByUserId.set(uid, map);
+        net.reelPageInfo.set(uid, c.page_info || null);
+
+        const variables = meta?.variables;
+        const cursor = reelNativeCursorField(variables);
+        const isContinuation = !!cursor?.value;
+
+        const audit = net.reelNativeAuditByUserId.get(uid) || {
+            initial:0, continuation:0, cursorPath:'',
+            lastHasNext:'unknown',
+        };
+        if (isContinuation) {
+            audit.continuation++;
+            audit.cursorPath = cursor.path;
+        }
+        else {
+            audit.initial++;
+        }
+        audit.lastHasNext = c.page_info?.has_next_page === false
+            ? 'false' : c.page_info?.has_next_page === true
+                ? 'true' : 'unknown';
+        net.reelNativeAuditByUserId.set(uid, audit);
+
+        // Save only the parameters of successfully observed, target-scoped
+        // native traffic. Static REEL_FALLBACK_DOC is not completion proof.
+        if (
+            !/^\d+$/.test(String(meta?.docId || '')) ||
+            !variables ||
+            typeof variables !== 'object' ||
+            !meta.bodyFields ||
+            typeof meta.bodyFields !== 'object'
+        ) return;
+
+        try {
+            const contract = {
+                docId:String(meta.docId),
+                friendly:String(meta.friendly),
+                endpoint:meta.endpoint === 'api' ? 'api' : 'query',
+                variables:JSON.parse(JSON.stringify(variables)),
+                template:{
+                    body:JSON.parse(JSON.stringify(meta.bodyFields)),
+                    headers:JSON.parse(JSON.stringify(meta.relayHeaders || {})),
+                },
+                cursorPath:isContinuation ? cursor.path : '',
+            };
+
+            if (isContinuation) {
+                net.reelNativeContinuationByUserId.set(uid, contract);
+            }
+            else {
+                net.reelNativeInitialByUserId.set(uid, contract);
+            }
+        }
+        catch {
+            if (isContinuation) net.reelNativeContinuationByUserId.delete(uid);
+            else net.reelNativeInitialByUserId.delete(uid);
+        }
     }
 
     function installHooks() {
@@ -5438,7 +5686,10 @@
                 `private=${u?.is_private === true ? 'YES' : 'NO'}, ` +
                 `exclusive=${state.exclusive.hasExclusiveFeedContent ? 'YES' : 'NO'}, ` +
                 `fan_club_id=${state.exclusive.fanClubId || '-'}, ` +
-                `subscribers=${state.exclusive.subscriberCount ?? '-'}.`
+                `subscribers=${state.exclusive.subscriberCount ?? '-'}, ` +
+                `total_clips_count=${u?.total_clips_count ?? '-'}, ` +
+                `has_clips=${typeof u?.has_clips === 'boolean' ? u.has_clips : '-'}, ` +
+                `has_any_clips=${typeof u?.has_any_clips === 'boolean' ? u.has_any_clips : '-'}.`
             );
 
             return true;
@@ -5731,9 +5982,22 @@
             }
         }
         else if (state.queue.size > 0) {
-            downloadValue = 'LOCKED';
-            downloadDetail =
-                'Waiting for a COMPLETE scan';
+            if (state.partialDownloadGrants.accessible) {
+                downloadValue = 'PARTIAL READY';
+                downloadDetail =
+                    state.partialDownloadGrants.accessible.mediaCount +
+                    ' verified accessible media · full backup locked';
+            }
+            else if (state.partialDownloadGrants.subscriber) {
+                downloadValue = 'SUBSCRIBER PARTIAL';
+                downloadDetail =
+                    state.partialDownloadGrants.subscriber.mediaCount +
+                    ' verified subscriber media · full backup locked';
+            }
+            else {
+                downloadValue = 'LOCKED';
+                downloadDetail = 'Waiting for a COMPLETE scan';
+            }
         }
 
         const missingCoverage =
@@ -5759,7 +6023,7 @@
 
         const diskText =
             state.diskActive
-                ? 'DISK VERIFIED'
+                ? 'DISK INDEXED'
                 : 'SESSION ONLY';
 
         const diskClass =
@@ -5967,6 +6231,16 @@
                     <b class="jkl-state ${diskClass}">${diskText}</b>
                 </div>
 
+                <div class="jkl-card-line">
+                    <span>Files <b>${state.diskActive ? state.diskIndexStats.selectedFiles : '—'}</b></span>
+                    <span>IDs <b>${state.diskActive ? state.diskCanonical.size : '—'}</b></span>
+                    <span>HIDDEN <b>${state.diskActive ? state.diskHidden.size : '—'}</b></span>
+                    <span>Legacy <b>${state.diskActive ? state.legacy.size : '—'}</b></span>
+                </div>
+                <div class="jkl-card-line">
+                    <span>Recognized files <b>${state.diskActive ? state.diskIndexStats.canonicalFiles + state.diskIndexStats.legacyFiles : '—'}</b></span>
+                    <span>Unrecognized <b>${state.diskActive ? state.diskIndexStats.unrecognizedFiles : '—'}</b></span>
+                </div>
                 <div class="jkl-card-line">
                     <span>Existing <b>${existing}</b></span>
                     <span>Missing <b>${pending}</b></span>
@@ -7785,6 +8059,49 @@
         return state.coverage.connectedHidden;
     }
 
+    // The document-start observer may have already captured a real,
+    // identity-scoped native PROFILE response while Instagram loaded.
+    // A scan must not erase that evidence before it can be evaluated.
+    // The bootstrap is single-use and time-limited; old scan results,
+    // different users and stale pagination are never re-authorized.
+    function prepareProfileNativeEvidenceForScan(userKey, now = Date.now()) {
+        const key = cleanUser(userKey).toLowerCase();
+        const observedAt = net.gridCaptureSeenAtByUser.get(key);
+        const info = net.gridPageInfo.get(key);
+        const audit = net.gridNativeAuditByUser.get(key);
+        const age = Number(now) - Number(observedAt);
+        const fresh = Number.isFinite(observedAt) &&
+            Number.isFinite(age) &&
+            age >= 0 &&
+            age <= APP.PROFILE_BOOTSTRAP_MAX_AGE_MS;
+        const eligible = fresh &&
+            !net.gridBootstrapConsumedByUser.has(key) &&
+            !!audit &&
+            audit.initial > 0 &&
+            !!info &&
+            typeof info.has_next_page === 'boolean' &&
+            net.gridByUser.has(key);
+
+        if (eligible) {
+            net.gridBootstrapConsumedByUser.add(key);
+            return {
+                retained: true, roots: net.gridByUser.get(key).size,
+                ageMs: age, pageInfo: info,
+            };
+        }
+
+        net.gridByUser.set(key, new Map());
+        net.gridPageInfo.delete(key);
+        net.gridDocByUser.delete(key);
+        net.gridQueryByUser.delete(key);
+        net.gridNativeAuditByUser.delete(key);
+        net.gridNativeContinuationByUser.delete(key);
+        net.gridNativeInitialByUser.delete(key);
+        net.gridCaptureSeenAtByUser.delete(key);
+
+        return { retained: false, roots: 0, ageMs: null, pageInfo: null };
+    }
+
     function profileCompletionRequirement({
         primeCaptured = false,
         nativeEnded = false,
@@ -7959,10 +8276,13 @@
             { path: `/${state.username}/reels/`, method: 'reels-reentry' },
         ];
 
+        let availableReentryRoutes = 0;
         for (const alternate of alternates) {
             if (!findAnchor(alternate.path)) {
+
                 continue;
             }
+            availableReentryRoutes++;
 
             const away = await go(alternate.path);
             if (!away.ok) {
@@ -7987,7 +8307,14 @@
             }
         }
 
-        return { attempted: true, captured: false, method: 'reentry-missed', roots: 0, pageInfo: null };
+        return {
+            attempted: availableReentryRoutes > 0,
+            captured: false,
+            method: availableReentryRoutes > 0
+                ? 'reentry-missed' : 'no-native-reentry-route',
+            roots: 0,
+            pageInfo: null,
+        };
     }
     function profileNativeCompletionRequest(userKey) {
         const initial = net.gridNativeInitialByUser.get(userKey);
@@ -8001,7 +8328,8 @@
         function validNative(request) {
             return !!(
                 request &&
-                GRID_NAMES.has(request.friendly) &&
+                (GRID_NAMES.has(request.friendly) ||
+                    request.timelineKeyVerified === true) &&
                 /^\d+$/.test(request.docId) &&
                 request.variables &&
                 typeof request.variables === 'object' &&
@@ -8670,6 +8998,24 @@
         const oldY =
             window.scrollY;
 
+        // A missing visible REELS tab is not a server-side
+        // empty-reels proof. Do not query fallback GraphQL without a
+        // native navigation entry to substantiate the media surface.
+        if (
+            pathNorm(location.pathname) !== pathNorm(target) &&
+            !findAnchor(target)
+        ) {
+            state.coverage.reels = false;
+            log(
+                'REELS tab absent in profile navigation. Cannot prove ' +
+                'empty REELS pagination; skipping unverified GraphQL fallback. ' +
+                'REELS stays INCOMPLETE.',
+                'warn'
+            );
+            updateStats();
+            return false;
+        }
+
         const nav =
             await go(target);
 
@@ -8680,15 +9026,15 @@
             ) !==
             pathNorm(target)
         ) {
+            state.coverage.reels = false;
             log(
-                'Could not open REELS tab. Running GraphQL completion pass.',
+                'Could not open REELS tab. No verified native REELS ' +
+                'pagination was captured; REELS stays INCOMPLETE. ' +
+                'Skipping obsolete static GraphQL fallback.',
                 'warn'
             );
-
-            return scanReelsFallback({
-                reason: 'native_navigation_failed',
-                nativeRoots: state.roots.REEL.size,
-            });
+            updateStats();
+            return false;
         }
 
         const processed =
@@ -8961,20 +9307,12 @@
                 `reason=${nativeEndReason}.`
             );
 
-            /*
-             * v1.4.3 FIX:
-             *
-             * v1.4.2 only ran the GraphQL fallback when BOTH the network
-             * capture and DOM were completely empty. A partial native scan
-             * (for example 23 roots while more existed) therefore prevented
-             * the fallback from ever running.
-             *
-             * The GraphQL pass is now ALWAYS used as a completion pass.
-             * addMedia() and the REEL root Set already deduplicate overlaps,
-             * so replaying the first pages is safe.
-             */
+            // Do not use the old fixed REELS GraphQL doc_id. A native
+            // server-end is sufficient only when its target-scoped request
+            // was observed; otherwise replay only a VERIFIED native cursor
+            // contract. Missing evidence leaves REELS INCOMPLETE.
             const completed =
-                await scanReelsFallback({
+                await scanReelsNativeCompletion({
                     reason: nativeEndReason,
                     nativeRoots,
                     nativeEnded,
@@ -8983,7 +9321,7 @@
             /*
              * Anti-loss cross-check: every REEL visibly present in the native
              * DOM must also be represented in the final exhaustive REEL root
-             * set. GraphQL reaching page_info_end is necessary, but it must
+             * set. A verified native server end is necessary, but it must
              * not override evidence of a visible root that still could not be
              * resolved.
              */
@@ -9007,7 +9345,7 @@
 
                 log(
                     `REELS incomplete: ${unresolvedVisible.length} visible DOM root(s) ` +
-                    `remain unresolved after GraphQL completion.`,
+                    `remain unresolved after verified native completion.`,
                     'warn'
                 );
             }
@@ -9045,228 +9383,217 @@
         }
     }
 
-    async function scanReelsFallback(context = {}) {
-        const startRoots =
-            state.roots.REEL.size;
+    function verifiedReelNativeContinuation(uid) {
+        const initial = net.reelNativeInitialByUserId.get(uid);
+        const continuation = net.reelNativeContinuationByUserId.get(uid);
+        const audit = net.reelNativeAuditByUserId.get(uid);
 
-        const nativeRoots =
-            Number(
-                context.nativeRoots ??
-                startRoots
-            );
+        const valid = contract => !!(
+            contract &&
+            REEL_NAMES.has(contract.friendly) &&
+            /^\d+$/.test(contract.docId) &&
+            contract.variables &&
+            typeof contract.variables === 'object' &&
+            contract.template?.body &&
+            typeof contract.template.body === 'object' &&
+            requestTargetsCurrentProfile({
+                variables: contract.variables,
+            })
+        );
 
-        const reason =
-            String(
-                context.reason ||
-                'completion'
+        if (
+            !audit ||
+            audit.initial < 1 ||
+            audit.continuation < 1 ||
+            !valid(initial) ||
+            !valid(continuation) ||
+            !['after','max_id','data.after','data.max_id'].includes(
+                continuation.cursorPath
+            )
+        ) return null;
+
+        const observed = reelNativeCursorField(continuation.variables);
+        if (
+            !observed ||
+            observed.path !== continuation.cursorPath ||
+            !observed.value
+        ) return null;
+
+        return continuation;
+    }
+
+    function reelNativeContinuationVariables(contract, cursor) {
+        if (!contract || !cursor) return null;
+
+        const vars = JSON.parse(JSON.stringify(contract.variables || {}));
+        const field = String(contract.cursorPath || '');
+        const rootField = field === 'after' || field === 'max_id';
+        const nestedField = field === 'data.after' || field === 'data.max_id';
+        if (rootField === nestedField) return null;
+
+        const target = rootField ? vars : vars.data;
+        const key = field.split('.').pop();
+        if (!target || !Object.prototype.hasOwnProperty.call(target, key)) {
+            return null;
+        }
+
+        const observed = reelNativeCursorField(vars);
+        if (!observed || observed.path !== field || !observed.value) return null;
+
+        target[key] = String(cursor);
+        return vars;
+    }
+
+    async function scanReelsNativeCompletion(context = {}) {
+        const uid = String(state.userId || '');
+        const audit = net.reelNativeAuditByUserId.get(uid);
+        const pageInfo = net.reelPageInfo.get(uid);
+        const startRoots = state.roots.REEL.size;
+
+        if (
+            pageInfo?.has_next_page === false &&
+            audit?.initial >= 1 &&
+            audit?.lastHasNext === 'false'
+        ) {
+            log(
+                'REELS native pagination ended on target-scoped ' +
+                'Instagram page_info.has_next_page=false; no GraphQL ' +
+                'fallback required.'
             );
+            return true;
+        }
+
+        const firstCursor = String(pageInfo?.end_cursor || '');
+        const contract = verifiedReelNativeContinuation(uid);
 
         log(
-            `REEL GraphQL completion starting: ` +
-            `native=${nativeRoots}, ` +
-            `current=${startRoots}, ` +
-            `reason=${reason}.`,
+            'REELS native completion: reason=' +
+            String(context.reason || 'unknown') +
+            ', roots=' + startRoots +
+            ', initial=' + (audit?.initial || 0) +
+            ', continuation=' + (audit?.continuation || 0) +
+            ', cursor_schema=' + (audit?.cursorPath || '-') +
+            ', has_next=' + (pageInfo?.has_next_page ?? 'unknown') +
+            ', verified_contract=' + !!contract + '.',
             'warn'
         );
 
-        state.coverage.reels = false;
-
-        let after = null;
-        let gotResponse = false;
-        let ended = false;
-        let endReason = 'max_pages';
-        let pages = 0;
-        let totalEdges = 0;
-
-        const seenCursors =
-            new Set();
-
-        for (
-            let page = 1;
-            page <= APP.REEL_MAX_SCROLLS;
-            page++
+        if (
+            pageInfo?.has_next_page !== true ||
+            !firstCursor ||
+            !contract
         ) {
-            if (
-                state.cancelled
-            ) {
-                throw new Error(
-                    'Cancelled'
-                );
+            log(
+                'REELS completion: missing server-side end or verified ' +
+                'native continuation contract. Preserving discovered ' +
+                'media but leaving REELS INCOMPLETE. Obsolete static ' +
+                'GraphQL fallback was NOT requested.',
+                'warn'
+            );
+            return false;
+        }
+
+        let cursor = firstCursor;
+        let completed = false;
+        let pages = 0;
+        let edges = 0;
+        let endReason = 'limit';
+        const seen = new Set();
+
+        for (let page = 1; page <= APP.REEL_MAX_SCROLLS; page++) {
+            if (state.cancelled) throw new Error('Cancelled');
+
+            if (seen.has(cursor)) {
+                endReason = 'cursor_repeated';
+                break;
+            }
+            seen.add(cursor);
+
+            const vars = reelNativeContinuationVariables(contract, cursor);
+            if (!vars) {
+                endReason = 'invalid_native_cursor_contract';
+                break;
             }
 
-            const vars = {
-                data: {
-                    include_feed_video: true,
-                    page_size: 12,
-                    target_user_id: state.userId,
-                },
-            };
-
-            if (after) {
-                vars.data.max_id = after;
-            }
-
-            let d;
-
+            let response;
             try {
-                d = await gql(
-                    APP.REEL_FALLBACK_DOC,
+                response = await webRelayGql(
+                    contract.docId,
                     vars,
-                    'PolarisProfileReelsTabContentQuery'
+                    contract.friendly,
+                    {
+                        endpoint:contract.endpoint,
+                        nativeTemplate:contract.template,
+                        rootField:
+                            contract.template.headers?.['x-root-field-name'] ||
+                            REEL_CONNECTION_KEY,
+                    }
                 );
-
-                gotResponse = true;
             }
             catch (e) {
-                throwIfInstagramStop(e, 'REEL GraphQL completion: Instagram returned feedback_required.');
-
-                endReason =
-                    `graphql_error:${e.message}`;
-
+                // A real, identity-scoped authenticated native request that
+                // returns 429/feedback_required/HTML must still trigger the
+                // existing safety circuit; never pretend it was an empty page.
+                throwIfInstagramStop(e, 'REELS verified native pagination');
+                endReason = 'native_relay_request_failed';
                 log(
-                    `REEL GraphQL completion failed on page ${page}: ` +
-                    `${e.message}`,
+                    'REELS verified native pagination request failed; ' +
+                    'leaving REELS INCOMPLETE.',
                     'warn'
                 );
-
                 break;
             }
 
-            const c = reelConn(d);
-
-            if (!c) {
-                endReason =
-                    'connection_missing';
-
-                log(
-                    `REEL GraphQL completion page ${page}: ` +
-                    `connection missing.`,
-                    'warn'
-                );
-
+            const c = reelConn(response);
+            if (!c || !Array.isArray(c.edges)) {
+                endReason = 'connection_missing';
                 break;
             }
-
-            const edges =
-                c?.edges || [];
 
             pages++;
-            totalEdges += edges.length;
-
-            const beforePage =
-                state.roots.REEL.size;
-
-            for (
-                const e
-                of edges
-            ) {
-                addMedia(
-                    edgeNode(e),
-                    'REEL',
-                    'REEL_FALLBACK'
-                );
+            edges += c.edges.length;
+            const before = state.roots.REEL.size;
+            for (const edge of c.edges) {
+                addMedia(edgeNode(edge), 'REEL', 'REEL_NATIVE_RELAY');
             }
-
-            const afterPage =
-                state.roots.REEL.size;
-
-            const added =
-                afterPage -
-                beforePage;
-
+            const recovered = state.roots.REEL.size - before;
             updateStats();
-
             log(
-                `REEL GraphQL page ${page}: ` +
-                `edges=${edges.length}, ` +
-                `new=${added}, ` +
-                `total=${afterPage}, ` +
-                `has_next=${c?.page_info?.has_next_page ?? 'unknown'}.`
+                'REELS verified native page ' + page +
+                ': edges=' + c.edges.length +
+                ', new=' + recovered +
+                ', total=' + state.roots.REEL.size +
+                ', has_next=' +
+                (c?.page_info?.has_next_page ?? 'unknown') + '.'
             );
 
-            if (
-                c?.page_info?.has_next_page ===
-                    false
-            ) {
-                ended = true;
-                endReason =
-                    'page_info_end';
+            if (c?.page_info?.has_next_page === false) {
+                completed = true;
+                endReason = 'server_page_info_end';
                 break;
             }
 
-            const next =
-                String(
-                    c?.page_info?.end_cursor ||
-                    ''
-                );
-
-            if (!edges.length) {
-                endReason =
-                    'empty_page_without_end';
+            const next = String(c?.page_info?.end_cursor || '');
+            if (!c.edges.length || !next) {
+                endReason = !c.edges.length
+                    ? 'empty_page_without_end'
+                    : 'missing_cursor';
                 break;
             }
 
-            if (!next) {
-                endReason =
-                    'missing_cursor';
-                break;
-            }
-
-            if (
-                seenCursors.has(next)
-            ) {
-                endReason =
-                    'repeated_cursor';
-
-                log(
-                    `REEL GraphQL completion cursor repeated on page ${page}; stopping.`,
-                    'warn'
-                );
-
-                break;
-            }
-
-            seenCursors.add(next);
-            after = next;
-
-            await sleep(
-                rand(
-                    APP.PAGE_MIN,
-                    APP.PAGE_MAX
-                )
-            );
+            cursor = next;
+            await sleep(rand(APP.PAGE_MIN, APP.PAGE_MAX));
         }
-
-        if (!gotResponse) {
-            ended = false;
-        }
-
-        state.coverage.reels =
-            gotResponse && ended;
-
-        const finalRoots =
-            state.roots.REEL.size;
-
-        const recovered =
-            Math.max(
-                0,
-                finalRoots -
-                startRoots
-            );
-
-        updateStats();
 
         log(
-            `REEL GraphQL completion complete: ` +
-            `pages=${pages}, ` +
-            `edges=${totalEdges}, ` +
-            `recovered=${recovered}, ` +
-            `REEL=${finalRoots}, ` +
-            `end=${endReason}, ` +
-            `ended=${state.coverage.reels}.`
+            'REELS verified native completion: pages=' + pages +
+            ', edges=' + edges +
+            ', recovered=' + (state.roots.REEL.size-startRoots) +
+            ', end=' + endReason +
+            ', ended=' + completed + '.',
+            completed ? 'info' : 'warn'
         );
-
-        return state.coverage.reels;
+        return completed;
     }
 
     async function scanTaggedGraphQL() {
@@ -9641,16 +9968,14 @@
         const target =
             reels.find(
                 reel =>
-                    hiId(
-                        reel?.id
-                    ) ===
-                    String(state.userId)
-            ) ||
-            (
-                reels.length === 1
-                    ? reels[0]
-                    : null
-            );
+                    hiId(reel?.id) === String(state.userId)
+            ) || null;
+
+        if (reels.length && !target) {
+            log('STORY: no reel matched the verified profile ID.', 'warn');
+            updateStats();
+            return false;
+        }
 
         const items =
             target == null
@@ -9861,6 +10186,8 @@
                 )
                 .filter(Boolean);
 
+        state.highlightCatalog = buildHighlightCatalog(tray);
+
         log(
             `HIGHLIGHT tray: ${tray.length} reels, ` +
             `source=${trayResult.source}, ` +
@@ -9877,7 +10204,12 @@
         );
 
         let allOk =
-            trayEnded;
+            trayEnded && state.highlightCatalog.size === tray.length;
+
+        if (state.highlightCatalog.size !== tray.length) {
+            log('HIGHLIGHT tray contains duplicate or invalid reel IDs; ' +
+                'coverage remains INCOMPLETE.', 'warn');
+        }
 
         for (
             let index = 0;
@@ -9955,16 +10287,8 @@
 
             const reel =
                 reels.find(
-                    candidate =>
-                        hiId(
-                            candidate?.id
-                        ) === id
-                ) ||
-                (
-                    reels.length === 1
-                        ? reels[0]
-                        : null
-                );
+                    candidate => hiId(candidate?.id) === id
+                ) || null;
 
             const items =
                 reel?.items;
@@ -9987,7 +10311,8 @@
                 addMedia(
                     x,
                     'HIGHLIGHT',
-                    `HIGHLIGHT:${title}`
+                    `HIGHLIGHT_REEL:${id}`,
+                    { highlightId: id }
                 );
             }
 
@@ -10005,7 +10330,8 @@
             );
 
             log(
-                `HIGHLIGHT “${title}”: ${items.length} items via Web GraphQL.`
+                `HIGHLIGHT “${title}” [${id}]: ${items.length} items via Web GraphQL; ` +
+                `folder="${state.highlightCatalog.get(id)?.folder || 'UNVERIFIED'}".`
             );
 
             if (
@@ -10023,6 +10349,11 @@
 
         state.coverage.highlights =
             allOk;
+
+        if (allOk) {
+            reconcileHighlightTitleHistory();
+            reportHighlightFolderRenames();
+        }
 
         updateStats();
 
@@ -10225,6 +10556,19 @@
                 hiddenDiscoverySources(m)
                     .sort()
                     .join(','),
+                m.sources instanceof Set
+                    ? [...m.sources].map(String).sort().join(',')
+                    : '',
+                m.rootIds instanceof Set
+                    ? [...m.rootIds].map(String).sort().join(',')
+                    : '',
+                String(m.highlightId || ''),
+                m.highlightIds instanceof Set
+                    ? [...m.highlightIds].map(String).sort().join(',')
+                    : '',
+                m.type === 'HIGHLIGHT'
+                    ? archiveDownloadPath(m)
+                    : '',
             ].join('|'))
             .sort()
             .join('\n');
@@ -10245,103 +10589,263 @@
         );
     }
 
-    function captureVerifiedSubscriberSnapshot() {
-        state.verifiedSubscriberSnapshot = null;
+    // Only independently proven, accessible surfaces are included.
+    // REELS, TAGGED, subscriber media and unverified PROFILE-only items
+    // never enter this bounded partial download.
+    function verifiedAccessibleMedia() {
+        const shadowVerified =
+            state.scanPlan?.post === true &&
+            state.coverage.publicShadow === true &&
+            state.coverage.ownedHydration === true &&
+            state.shadow.applicable === true &&
+            state.shadow.pageInfoEnded === true &&
+            String(state.shadow.profileId || '') === String(state.userId || '') &&
+            state.shadow.postIds instanceof Set;
 
-        // INCOMPLETE is preserved: this grants only a bounded, explicit
-        // per-media backup path, not an alternative PROFILE completeness proof.
+        return [...state.queue.values()].filter(m => {
+            if (
+                !m?.url || !m?.id || !m?.filename ||
+                !(m.sources instanceof Set) ||
+                ['FAN CLUB', 'HIDDEN'].includes(mediaArchiveCategory(m))
+            ) return false;
+
+            const id = String(m.id);
+
+            if (m.type === 'POST') {
+                return shadowVerified &&
+                    m.rootIds instanceof Set &&
+                    [...m.rootIds].some(rootId =>
+                        state.shadow.postIds.has(String(rootId))
+                    ) &&
+                    (
+                        m.sources.has('PROFILE_PUBLIC_SHADOW') ||
+                        m.sources.has('OWNED_DEEP_HYDRATION')
+                    );
+            }
+
+            if (m.type === 'HIGHLIGHT') {
+                return state.scanPlan?.highlight === true &&
+                    state.coverage.highlights === true &&
+                    // Every unit must refer to one recorded Instagram reel,
+                    // not merely share a possibly duplicated display title.
+                    !!m.highlightId &&
+                    state.highlightCatalog.has(String(m.highlightId)) &&
+                    m.sources.has('HIGHLIGHT_REEL:' + String(m.highlightId));
+            }
+
+            if (m.type === 'STORY') {
+                return state.scanPlan?.story === true &&
+                    state.coverage.story === true &&
+                    // STORY is tracked by its authenticated Web GraphQL source.
+                    m.sources.has('STORY_WEB_GRAPHQL');
+            }
+
+            if (m.type === 'AVATAR') {
+                return state.scanPlan?.avatar === true &&
+                    state.coverage.avatar === true &&
+                    state.roots.AVATAR.has(id) &&
+                    m.sources.has('AVATAR');
+            }
+
+            return false;
+        });
+    }
+
+    // Bind surface completion proof and individual root identities to the
+    // immutable snapshot, not merely the number of discovered files.
+    function accessibleSourceProofFingerprint() {
+        return JSON.stringify({
+            userId: String(state.userId || ''),
+            plan: {
+                post: state.scanPlan?.post === true,
+                reel: state.scanPlan?.reel === true,
+                highlight: state.scanPlan?.highlight === true,
+                story: state.scanPlan?.story === true,
+                avatar: state.scanPlan?.avatar === true,
+            },
+            coverage: {
+                publicShadow: state.coverage.publicShadow === true,
+                ownedHydration: state.coverage.ownedHydration === true,
+                highlights: state.coverage.highlights === true,
+                story: state.coverage.story === true,
+                avatar: state.coverage.avatar === true,
+            },
+            shadow: {
+                applicable: state.shadow.applicable === true,
+                ended: state.shadow.pageInfoEnded === true,
+                profileId: String(state.shadow.profileId || ''),
+                postIds: [...state.shadow.postIds].map(String).sort(),
+            },
+            highlights: [...state.highlightCatalog.entries()]
+                .map(([id, info]) => [id, info.title, info.folder])
+                .sort((a, b) => a[0].localeCompare(b[0])),
+            roots: {
+                highlight: [...state.roots.HIGHLIGHT].map(String).sort(),
+                story: [...state.roots.STORY].map(String).sort(),
+                avatar: [...state.roots.AVATAR].map(String).sort(),
+            },
+        });
+    }
+
+
+    // Source-level rules. Authorization, fingerprints and expiry are shared.
+    function subscriberSourceProofVerified() {
+        return state.scanPlan?.post === true &&
+            state.scanPlan?.reel === true &&
+            state.exclusive.known === true &&
+            state.exclusive.hasExclusiveFeedContent === true &&
+            state.coverage.connectedHidden === true &&
+            state.coverage.ownedHydration === true &&
+            state.hidden.candidates > 0 &&
+            state.hidden.recovered > 0 &&
+            state.hidden.failed === 0 &&
+            state.hidden.previewOnly === 0 &&
+            state.hidden.candidates ===
+                state.hidden.recovered + state.hidden.alreadyOwned &&
+            state.verifiedSubscriberRootIds.size === state.hidden.recovered;
+    }
+
+    function partialSourceVerified(mode) {
+        if (mode === DOWNLOAD_MODE.SUBSCRIBER) {
+            return subscriberSourceProofVerified();
+        }
+        if (mode === DOWNLOAD_MODE.ACCESSIBLE) {
+            return !!state.scanPlan && !!state.userId && !!state.username;
+        }
+        return false;
+    }
+
+    function verifiedPartialMedia(mode) {
+        if (mode === DOWNLOAD_MODE.SUBSCRIBER) return verifiedSubscriberMedia();
+        if (mode === DOWNLOAD_MODE.ACCESSIBLE) return verifiedAccessibleMedia();
+        return [];
+    }
+
+    function partialSourceFingerprint(mode) {
+        if (mode === DOWNLOAD_MODE.ACCESSIBLE) {
+            return accessibleSourceProofFingerprint();
+        }
+        if (mode !== DOWNLOAD_MODE.SUBSCRIBER) return '';
+
+        return JSON.stringify({
+            plan: {
+                post: state.scanPlan?.post === true,
+                reel: state.scanPlan?.reel === true,
+            },
+            exclusive: {
+                known: state.exclusive.known === true,
+                active: state.exclusive.hasExclusiveFeedContent === true,
+            },
+            coverage: {
+                connectedHidden: state.coverage.connectedHidden === true,
+                ownedHydration: state.coverage.ownedHydration === true,
+            },
+            hidden: {
+                candidates: state.hidden.candidates,
+                recovered: state.hidden.recovered,
+                alreadyOwned: state.hidden.alreadyOwned,
+                previewOnly: state.hidden.previewOnly,
+                failed: state.hidden.failed,
+            },
+            verifiedRoots: [...state.verifiedSubscriberRootIds].map(String).sort(),
+        });
+    }
+
+    // scanAll.running remains true until finally, after all phases stop.
+    // This allows immutable grant capture, never a concurrent download.
+    function capturePartialDownloadGrants() {
+        clearPartialDownloadGrants();
         if (
             state.scanOutcome !== 'INCOMPLETE' ||
+            state.scanComplete ||
             state.cancelled ||
             state.feedbackRequired ||
             state.rateLimited ||
             state.apiUnhealthy ||
-            !state.scanPlan?.post ||
-            !state.scanPlan?.reel ||
-            !state.exclusive.known ||
-            !state.exclusive.hasExclusiveFeedContent ||
-            !state.coverage.connectedHidden ||
-            !state.coverage.ownedHydration ||
-            state.hidden.candidates < 1 ||
-            state.hidden.failed !== 0 ||
-            state.hidden.previewOnly !== 0 ||
-            state.hidden.recovered < 1 ||
-            state.hidden.candidates !==
-                state.hidden.recovered + state.hidden.alreadyOwned ||
-            state.verifiedSubscriberRootIds.size !== state.hidden.recovered ||
-            !state.userId
+            !state.scanPlan || !state.userId || !state.username
         ) return;
 
-        const media = verifiedSubscriberMedia();
-        if (!media.length) return;
+        for (const mode of PARTIAL_DOWNLOAD_MODES) {
+            if (!partialSourceVerified(mode)) continue;
+            const media = verifiedPartialMedia(mode);
+            if (!media.length) continue;
 
-        state.verifiedSubscriberSnapshot = Object.freeze({
-            userId: String(state.userId),
-            username: String(state.username),
-            queueSize: state.queue.size,
-            queueFingerprint: scanDownloadFingerprint(),
-            verifiedRoots: [...state.verifiedSubscriberRootIds].sort().join('|'),
-            mediaIds: media.map(m => String(m.id)).sort().join('|'),
-            mediaCount: media.length,
-        });
+            state.partialDownloadGrants[mode] = Object.freeze({
+                mode,
+                userId: String(state.userId),
+                username: String(state.username),
+                queueSize: state.queue.size,
+                queueFingerprint: scanDownloadFingerprint(),
+                sourceFingerprint: partialSourceFingerprint(mode),
+                mediaIds: Object.freeze(media.map(m => String(m.id)).sort()),
+                mediaCount: media.length,
+            });
 
-        log(
-            'SUBSCRIBER PARTIAL READY: ' +
-            state.hidden.recovered + ' authenticated roots, ' +
-            media.length + ' downloadable media. Overall PROFILE ' +
-            'remains INCOMPLETE. Use only the separate verified-media action.',
-            'warn'
-        );
+            log(
+                mode === DOWNLOAD_MODE.SUBSCRIBER
+                    ? 'SUBSCRIBER PARTIAL READY: ' +
+                      state.hidden.recovered + ' authenticated roots, ' +
+                      media.length + ' downloadable media. Overall PROFILE ' +
+                      'remains INCOMPLETE. Use only the separate verified-media action.'
+                    : 'ACCESSIBLE PARTIAL READY: ' + media.length +
+                      ' media from independently verified surfaces. ' +
+                      'PROFILE / REELS may still be INCOMPLETE; this is NOT a full archive.',
+                'warn'
+            );
+        }
     }
 
-    function verifiedSubscriberDownloadIntegrity() {
+    function verifiedPartialDownloadIntegrity(mode) {
         const fail = reason => ({ ok: false, reason });
-        const snap = state.verifiedSubscriberSnapshot;
-
-        if (!snap || state.scanOutcome !== 'INCOMPLETE') {
-            return fail('no verified subscriber snapshot from finished INCOMPLETE scan');
+        if (!PARTIAL_DOWNLOAD_MODES.includes(mode)) {
+            return fail('unknown verified partial download mode');
         }
+        const grant = state.partialDownloadGrants[mode];
         if (
-            state.running ||
-            state.cancelled ||
-            state.feedbackRequired ||
-            state.rateLimited ||
-            state.apiUnhealthy
+            !grant || grant.mode !== mode ||
+            state.scanOutcome !== 'INCOMPLETE' || state.scanComplete
+        ) return fail('no verified ' + mode + ' grant from finished INCOMPLETE scan');
+
+        if (
+            state.running || state.cancelled || state.feedbackRequired ||
+            state.rateLimited || state.apiUnhealthy
         ) return fail('scan/session stopped or Instagram safety circuit active');
 
+        if (!partialSourceVerified(mode)) {
+            return fail(mode + ' source authorization or hydration not verified');
+        }
         if (
-            !state.exclusive.known ||
-            !state.exclusive.hasExclusiveFeedContent ||
-            !state.coverage.connectedHidden ||
-            !state.coverage.ownedHydration ||
-            state.hidden.failed !== 0 ||
-            state.hidden.previewOnly !== 0 ||
-            state.hidden.candidates !==
-                state.hidden.recovered + state.hidden.alreadyOwned ||
-            state.verifiedSubscriberRootIds.size !== state.hidden.recovered ||
-            [...state.verifiedSubscriberRootIds].sort().join('|') !==
-                snap.verifiedRoots
-        ) return fail('subscriber source authorization or hydration not verified');
-
-        if (
-            String(state.userId) !== snap.userId ||
-            String(state.username) !== snap.username ||
-            cleanUser(ui.username?.value || currentProfile()) !== snap.username
+            String(state.userId) !== grant.userId ||
+            String(state.username) !== grant.username ||
+            cleanUser(ui.username?.value || currentProfile()) !== grant.username
         ) return fail('profile identity/input changed after scan');
 
         if (
-            state.queue.size !== snap.queueSize ||
-            scanDownloadFingerprint() !== snap.queueFingerprint
-        ) return fail('scan media inventory changed after verification');
+            state.queue.size !== grant.queueSize ||
+            scanDownloadFingerprint() !== grant.queueFingerprint ||
+            partialSourceFingerprint(mode) !== grant.sourceFingerprint
+        ) return fail('scan media inventory or source proof changed');
 
-        const media = verifiedSubscriberMedia();
+        const media = verifiedPartialMedia(mode);
         if (
-            !media.length ||
-            media.length !== snap.mediaCount ||
-            media.map(m => String(m.id)).sort().join('|') !== snap.mediaIds
-        ) return fail('verified subscriber media set changed');
+            !media.length || media.length !== grant.mediaCount ||
+            media.map(m => String(m.id)).sort().join('|') !==
+                grant.mediaIds.join('|')
+        ) return fail('verified partial media selection changed');
 
         return { ok: true, reason: '', media };
+    }
+
+    function authorizeDownloadScope(mode) {
+        const fail = reason => ({ ok: false, reason });
+        if (mode === DOWNLOAD_MODE.COMPLETE) {
+            const integrity = completedScanIntegrity();
+            if (!integrity.ok) return fail(integrity.reason);
+            const incomplete = incompleteCoverage();
+            if (incomplete.length) return fail('incomplete ' + incomplete.join(', '));
+            return { ok: true, reason: '', media: [...state.queue.values()] };
+        }
+        return verifiedPartialDownloadIntegrity(mode);
     }
 
     function completedScanIntegrity() {
@@ -10574,8 +11078,11 @@
             }
         }
 
+        // PROFILE is the MAIN GRID. The independent REELS tab may be
+        // unavailable, but that must not invalidate an exhaustively
+        // paginated and identity-scoped PUBLIC main grid. REELS completeness
+        // remains an independent mandatory guard for a full archive.
         if (
-            !proof.reelsComplete ||
             !proof.connectedHiddenComplete ||
             !proof.ownedHydrationComplete ||
             proof.hiddenCandidates !== 0 ||
@@ -10673,6 +11180,131 @@
         };
     }
 
+    // Public profiles have an authenticated user counter AND an
+    // identity-verified anonymous main-grid connection. Use those real
+    // independent surfaces first. No native client traffic is required
+    // if the grid's own server end and every expected POST are proven.
+    // A separate REELS tab is never inferred from this proof.
+    function verifiedPublicGridPrimaryProof() {
+        const fail = reason => ({ verified: false, reason });
+        if (
+            !scanSelected('post') ||
+            !scanSelected('reel') ||
+            state.profileInfo?.is_private !== false ||
+            state.exclusive.known !== true ||
+            state.exclusive.hasExclusiveFeedContent === true ||
+            !state.shadow.applicable ||
+            !state.coverage.publicShadow ||
+            !state.shadow.pageInfoEnded ||
+            String(state.shadow.profileId || '') !== String(state.userId || '')
+        ) return fail('public_source_not_applicable');
+
+        const count = Number(state.profileInfo?.media_count);
+        if (
+            !Number.isSafeInteger(count) ||
+            count < 1 ||
+            count !== Number(state.expected) ||
+            !(state.shadow.rootIds instanceof Set) ||
+            !(state.shadow.postIds instanceof Set) ||
+            !(state.shadow.reelIds instanceof Set) ||
+            state.shadow.rootIds.size !== count ||
+            state.shadow.postIds.size !== count ||
+            state.shadow.reelIds.size !== 0
+        ) return fail('counter_or_public_pagination_not_exhaustive');
+
+        for (const id of state.shadow.postIds) {
+            if (
+                !state.shadow.rootIds.has(id) ||
+                (!state.roots.POST.has(id) && !state.roots.REEL.has(id))
+            ) return fail('public_post_not_hydrated');
+        }
+        return { verified: true, reason: 'public_server_end_exact_counter', count };
+    }
+
+    // A missing REELS navigation link is *not* proof of zero Reels.
+    // A target-scoped Instagram profile API can also return an explicit
+    // clips count. Accept absence only when that raw count is exactly
+    // zero AND the independent public timeline is exhausted, the account
+    // matches, no Reel root is observed, and the tab is genuinely absent.
+    // Unknown, nonzero and conflicting metadata always fail closed.
+    function explicitEmptyReelsProof() {
+        const fail = reason => ({ verified: false, reason });
+        const info = state.profileInfo;
+        const raw = info?.total_clips_count;
+        const validCount = typeof raw === 'number'
+            ? Number.isSafeInteger(raw) && raw >= 0
+            : typeof raw === 'string' && /^\d+$/.test(raw);
+        if (!validCount || Number(raw) !== 0) {
+            return fail('clips_count_not_explicit_zero');
+        }
+        if (
+            info?.has_clips === true ||
+            info?.has_any_clips === true ||
+            (info?.latest_reel_media !== undefined &&
+                info?.latest_reel_media !== null)
+        ) return fail('profile_reports_clips');
+
+        const id = String(info?.pk || info?.id || '').split('_')[0];
+        if (!id || id !== String(state.userId || '')) {
+            return fail('profile_clip_count_identity_unverified');
+        }
+        if (!verifiedPublicGridPrimaryProof().verified) {
+            return fail('public_main_grid_not_verified');
+        }
+        if (
+            state.coverage.profileGrid !== true ||
+            state.coverage.connectedHidden !== true ||
+            state.coverage.ownedHydration !== true ||
+            state.hidden.candidates !== 0 ||
+            state.hidden.recovered !== 0 ||
+            state.hidden.previewOnly !== 0 ||
+            state.hidden.failed !== 0 ||
+            state.roots.REEL.size !== 0 ||
+            state.shadow.reelIds.size !== 0 ||
+            (net.reelsByUserId.get(state.userId)?.size || 0) !== 0
+        ) return fail('other_reel_or_hidden_source_unreconciled');
+
+        const target = `/${state.username}/reels/`;
+        if (
+            pathNorm(location.pathname) === pathNorm(target) ||
+            findAnchor(target)
+        ) return fail('reels_tab_present');
+
+        return {
+            verified: true,
+            reason: 'target_profile_explicit_zero_clips_and_public_grid_end',
+        };
+    }
+
+    function reconcileEmptyReelsCoverage() {
+        if (
+            !scanSelected('reel') ||
+            state.coverage.reels === true
+        ) return;
+
+        const proof = explicitEmptyReelsProof();
+        if (proof.verified) {
+            state.coverage.reels = true;
+            log(
+                'REELS independently proven EMPTY: authenticated target ' +
+                'profile reports total_clips_count=0; PUBLIC grid ended ' +
+                'and fully reconciles the official media counter; ' +
+                'no Reel/hidden candidate or REELS tab exists. ' +
+                'No unverified GraphQL query was attempted.'
+            );
+        }
+        else {
+            const count = state.profileInfo?.total_clips_count;
+            log(
+                'REELS absent-tab zero proof unavailable: ' +
+                proof.reason + ', raw_total_clips_count=' +
+                (count === undefined || count === null ? '-' : String(count)) +
+                '. Keeping REELS INCOMPLETE.',
+                'warn'
+            );
+        }
+    }
+
     function reconcileProfileGridCoverage() {
         if (
             state.coverage.profileGrid ||
@@ -10734,7 +11366,8 @@
                 ', overlap=' + result.overlap +
                 ', union=' + result.unionCount +
                 ', expected=' + state.expected +
-                '. PUBLIC SHADOW ended, REELS/HIDDEN/HYDRATION verified. ' +
+                '. PUBLIC SHADOW ended; HIDDEN/HYDRATION verified. ' +
+                'REELS has its own independent coverage guard. ' +
                 'Native PROFILE initial capture may remain unverified.',
                 'warn'
             );
@@ -10850,28 +11483,16 @@
                 scanProfilerTimings
             );
 
-            net.gridByUser.set(
-                state.username.toLowerCase(),
-                new Map()
-            );
-            net.gridPageInfo.delete(
+            const nativeBootstrap = prepareProfileNativeEvidenceForScan(
                 state.username.toLowerCase()
             );
-            net.gridDocByUser.delete(
-                state.username.toLowerCase()
-            );
-            net.gridQueryByUser.delete(
-                state.username.toLowerCase()
-            );
-            net.gridNativeAuditByUser.delete(
-                state.username.toLowerCase()
-            );
-            net.gridNativeContinuationByUser.delete(
-                state.username.toLowerCase()
-            );
-            net.gridNativeInitialByUser.delete(
-                state.username.toLowerCase()
-            );
+            log(nativeBootstrap.retained
+                ? 'PROFILE native bootstrap preserved: ' +
+                  nativeBootstrap.roots + ' roots, ' +
+                  'age=' + nativeBootstrap.ageMs + ' ms, ' +
+                  'has_next=' + nativeBootstrap.pageInfo.has_next_page + '.'
+                : 'PROFILE native bootstrap unavailable or stale; ' +
+                  'a fresh verified server response is required.');
             net.reelsByUserId.set(
                 state.userId,
                 new Map()
@@ -10879,6 +11500,9 @@
             net.reelPageInfo.delete(
                 state.userId
             );
+            net.reelNativeAuditByUserId.delete(state.userId);
+            net.reelNativeInitialByUserId.delete(state.userId);
+            net.reelNativeContinuationByUserId.delete(state.userId);
 
             net.taggedDocInitial = '';
             net.taggedDocConnection = '';
@@ -10895,23 +11519,43 @@
 
             updateStats();
 
-            if (
-                scanSelected('post') ||
-                scanSelected('reel')
-            ) {
-                await scanProfilerPhase(
-                    'PROFILE GRID',
-                    scanMainGrid,
-                    scanProfilerTimings
-                );
-            }
-
+            // Server-backed, identity-verified PUBLIC timeline is the
+            // primary source for PUBLIC grids. A native browser hook is an
+            // optional fallback, not a prerequisite that consumes 14 s
+            // waiting for a cached SPA request that never occurs.
             if (scanSelected('post')) {
                 await scanProfilerPhase(
                     'PUBLIC SHADOW',
                     scanPublicShadow,
                     scanProfilerTimings
                 );
+            }
+
+            if (scanSelected('post') || scanSelected('reel')) {
+                const publicProof = verifiedPublicGridPrimaryProof();
+                if (publicProof.verified) {
+                    log(
+                        'PROFILE native phase not needed: the independent PUBLIC ' +
+                        'timeline ended on the server and exactly reconciles ' +
+                        publicProof.count + ' hydrated main-grid roots. ' +
+                        'REELS coverage remains independent.'
+                    );
+                    await scanProfilerPhase(
+                        'PROFILE GRID',
+                        async () => true,
+                        scanProfilerTimings
+                    );
+                }
+                else {
+                    log('PROFILE public proof insufficient (' +
+                        publicProof.reason +
+                        '); using authenticated native PROFILE pass.');
+                    await scanProfilerPhase(
+                        'PROFILE GRID',
+                        scanMainGrid,
+                        scanProfilerTimings
+                    );
+                }
             }
 
             if (scanSelected('post') || scanSelected('reel')) {
@@ -10975,6 +11619,7 @@
             // incomplete. Reconcile once all selected passes have
             // completed, using strict cross-surface evidence.
             reconcileProfileGridCoverage();
+            reconcileEmptyReelsCoverage();
             updateStats();
 
             logScanProfilerSummary(
@@ -11040,7 +11685,7 @@
                 state.scanOutcome = 'INCOMPLETE';
 
                 status(
-                    `Scan INCOMPLETE: ${incomplete.join(', ') || 'scan state invalid'}. Do not download yet.`,
+                    `Scan INCOMPLETE: ${incomplete.join(', ') || 'scan state invalid'}. Full download locked; verified partial modes may be available.`,
                     'warn'
                 );
 
@@ -11053,7 +11698,8 @@
 
                 // Only after every scan phase has stopped. This never
                 // changes PROFILE coverage or scanOutcome to COMPLETE.
-                captureVerifiedSubscriberSnapshot();
+                capturePartialDownloadGrants();
+                updateStats();
             }
         }
         catch (e) {
@@ -11165,9 +11811,19 @@
         state.diskCanonical.clear();
         state.diskCanonicalMeta.clear();
         state.diskLocations.clear();
+        state.diskPaths.clear();
+        state.sessionPaths.clear();
+        state.highlightRenameNotices.clear();
         state.diskHidden.clear();
         state.diskStoryHighlight.clear();
         state.legacy.clear();
+        const counts = {
+            selectedFiles: files.length,
+            canonicalFiles: 0,
+            legacyFiles: 0,
+            unrecognizedFiles: 0,
+        };
+
 
         const canonical =
             /\s-\s(?:POST|REEL|STORY|HIGHLIGHT|TAGGED|AVATAR)\s-\s\d{4}_\d{2}_\d{2}\s-\s([A-Za-z0-9_]+)\.(jpg|jpeg|png|webp|mp4|m4v|mov)$/i;
@@ -11185,6 +11841,7 @@
                 );
 
             if (m) {
+                counts.canonicalFiles++;
                 const relativePath =
                     String(
                         f.webkitRelativePath ||
@@ -11213,6 +11870,9 @@
 
                 const id = String(m[1]);
                 state.diskCanonical.add(id);
+                const paths = state.diskPaths.get(id) || new Set();
+                paths.add(relativePath);
+                state.diskPaths.set(id, paths);
                 if (folder) {
                     const locations = state.diskLocations.get(id) || new Set();
                     locations.add(folder);
@@ -11243,8 +11903,11 @@
                 );
 
             if (!m) {
+                counts.unrecognizedFiles++;
                 continue;
             }
+
+            counts.legacyFiles++;
 
             const rec = {
                 name: f.name,
@@ -11298,14 +11961,19 @@
             }
         }
 
+        state.diskIndexStats = counts;
         state.diskActive = true;
+        reportHighlightFolderRenames();
 
         updateStats();
 
         status(
-            `Local folder indexed ` +
-            `(${files.length} files). ` +
-            `Disk is authoritative.`,
+            `Local folder indexed: ${counts.selectedFiles} files, ` +
+            `${state.diskCanonical.size} canonical IDs, ` +
+            `${state.diskHidden.size} HIDDEN files, ` +
+            `${state.legacy.size} legacy groups, ` +
+            `${counts.unrecognizedFiles} unrecognized. ` +
+            `Names indexed; file content not checked.`,
             'ok'
         );
 
@@ -11383,13 +12051,27 @@
 
         if (state.diskActive) {
             if (state.diskLocations.get(id)?.has(mediaArchiveCategory(m))) {
-                return 'DISK';
+                // Matching type and ID are insufficient for highlights:
+                // the actual indexed reel directory must also match.
+                if (m.type !== 'HIGHLIGHT') return 'DISK';
+                if (
+                    [...(state.diskPaths.get(id) || [])]
+                        .some(p => matchesHighlightArchivePath(m, p))
+                ) return 'DISK';
+
+                // Newly repaired files are not part of the *old* directory
+                // scan. Honor this session's accepted requested path to
+                // avoid downloading them twice before the next re-index.
+                if (
+                    [...(state.sessionPaths.get(id) || [])]
+                        .some(p => matchesHighlightArchivePath(m, p))
+                ) return 'SESSION';
             }
 
             // Legacy matches have no reliable visibility information.
             // Never mistake an old POSTS/HIDDEN copy for a FAN CLUB file.
             if (
-                !['FAN CLUB', 'HIDDEN'].includes(mediaArchiveCategory(m)) &&
+                !['FAN CLUB', 'HIDDEN', 'HIGHLIGHTS'].includes(mediaArchiveCategory(m)) &&
                 legacyMatch(m)
             ) {
                 return 'LEGACY';
@@ -11409,6 +12091,12 @@
             state.diskCanonical.has(id) &&
             state.diskLocations.get(id)?.has(mediaArchiveCategory(m))
         ) {
+            if (m.type === 'HIGHLIGHT') {
+                const paths = state.sessionPaths.get(id) || new Set();
+                if (![...paths].some(p => matchesHighlightArchivePath(m, p))) {
+                    return null;
+                }
+            }
             return 'SESSION';
         }
 
@@ -11502,7 +12190,7 @@
                         },
 
                         onload:
-                            () => resolve(),
+                            () => resolve({ requestedPath: path }),
 
                         onerror:
                             e => fail(
@@ -11549,16 +12237,12 @@
             }
 
             try {
-                await downloadAttempt(
+                const receipt = await downloadAttempt(
                     m,
-                    {
-                        safeHighlightFallback,
-                    }
+                    { safeHighlightFallback }
                 );
 
-                recordDownloaded(
-                    m
-                );
+                recordDownloaded(m, receipt.requestedPath);
 
                 state
                     .diskCanonical
@@ -11568,6 +12252,9 @@
                 const locations = state.diskLocations.get(String(m.id)) || new Set();
                 locations.add(mediaArchiveCategory(m));
                 state.diskLocations.set(String(m.id), locations);
+                const sessionPaths = state.sessionPaths.get(String(m.id)) || new Set();
+                sessionPaths.add(receipt.requestedPath);
+                state.sessionPaths.set(String(m.id), sessionPaths);
 
                 if (state.diskActive) {
                     state.diskCanonicalMeta
@@ -11592,6 +12279,7 @@
                                         ''
                                     ),
                                 folder: mediaArchiveCategory(m),
+                                requestedPath: receipt.requestedPath,
                             }
                         );
                 }
@@ -12261,7 +12949,7 @@
         }
     }
 
-    async function downloadMissing(authorizedOnly = false) {
+    async function downloadMissing(mode = DOWNLOAD_MODE.COMPLETE) {
         if (
             state.running ||
             state.downloading
@@ -12280,11 +12968,9 @@
             return;
         }
 
-        // Standard archive path still requires an immutable COMPLETE scan.
-        // Only a separate explicit action may select the verified subset.
-        const scanIntegrity = authorizedOnly
-            ? verifiedSubscriberDownloadIntegrity()
-            : completedScanIntegrity();
+        // Every download must resolve one explicit, evidence-bounded scope.
+        // Invalid or unknown modes fail closed.
+        const scanIntegrity = authorizeDownloadScope(mode);
 
         if (!scanIntegrity.ok) {
             status(
@@ -12292,27 +12978,31 @@
                 'warn'
             );
             log(
-                `Archive guard blocked ${authorizedOnly ? 'verified subscriber' : 'full'} download: ` +
+                `Archive guard blocked ${DOWNLOAD_MODE_LABEL[mode] || mode} download: ` +
                 `${scanIntegrity.reason}.`,
                 'warn'
             );
             return;
         }
 
-        if (!authorizedOnly) {
-            const incomplete = incompleteCoverage();
-            if (incomplete.length) {
-                status(
-                    `Download blocked: incomplete ${incomplete.join(', ')}.`,
+        const mediaScope = scanIntegrity.media;
+        const isPartial = mode !== DOWNLOAD_MODE.COMPLETE;
+
+        // GM_download reports successful transfers, not whether Firefox
+        // actually created the requested nested directories.
+        if (mediaScope.some(m => m.type === 'HIGHLIGHT')) {
+            const downloadMode = typeof GM_info !== 'undefined'
+                ? String(GM_info?.downloadMode || '')
+                : '';
+            if (downloadMode && downloadMode !== 'browser') {
+                log(
+                    'Tampermonkey Download Mode=' + downloadMode +
+                    ': nested HIGHLIGHT directories are not guaranteed. ' +
+                    'Use Browser API mode and verify with SCAN LOCAL FOLDER.',
                     'warn'
                 );
-                return;
             }
         }
-
-        const mediaScope = authorizedOnly
-            ? scanIntegrity.media
-            : [...state.queue.values()];
 
         const unverified =
             unverifiedArchiveHistory(mediaScope);
@@ -12356,9 +13046,10 @@
                     ? state.diskCanonical.size
                     : state.queue.size;
 
-                const message = authorizedOnly
-                    ? `Verified subscriber subset already saved: ${mediaScope.length} ` +
-                      `media inspected (PARTIAL PROFILE; scan still INCOMPLETE).`
+                const message = isPartial
+                    ? `${DOWNLOAD_MODE_LABEL[mode]} subset already saved: ` +
+                      `${mediaScope.length} media inspected ` +
+                      `(PARTIAL; scan still INCOMPLETE).`
                     : `Archive already complete for this scan — ` +
                       `${state.queue.size}/${state.queue.size} scan media verified` +
                       `${state.diskActive ? ` on disk (${verified} indexed).` : '.'}`;
@@ -12379,7 +13070,7 @@
             const batchStartedAt = performance.now();
 
             log(
-                `${authorizedOnly ? 'Starting VERIFIED SUBSCRIBER PARTIAL download' : 'Starting download'}: ` +
+                `${mode === DOWNLOAD_MODE.COMPLETE ? 'Starting download' : 'Starting ' + DOWNLOAD_MODE_LABEL[mode] + ' download'}: ` +
                 `${pending.length} media jobs, ` +
                 `${downloadPlan.total} physical writes (one per media), ` +
                 `${workerCount} worker, ` +
@@ -12464,15 +13155,15 @@
 
             const p = state.downloadProgress;
             const summary =
-                `${authorizedOnly ? 'VERIFIED SUBSCRIBER PARTIAL' : 'Download batch'} finished: ` +
+                `${DOWNLOAD_MODE_LABEL[mode]} finished: ` +
                 `${completed} media jobs processed, ` +
                 `${p.succeeded}/${downloadPlan.total} physical writes succeeded, ` +
                 `${p.failed} failed, ${p.blocked} blocked; ` +
                 `${batchElapsed.toFixed(2)} s, ${average.toFixed(2)} s/job.` +
-                (authorizedOnly ? ' Overall PROFILE scan remains INCOMPLETE.' : '');
+                (isPartial ? ' Overall PROFILE scan remains INCOMPLETE.' : '');
 
-            log(summary, p.failed || p.blocked || authorizedOnly ? 'warn' : 'info');
-            status(summary, p.failed || p.blocked || authorizedOnly ? 'warn' : 'ok');
+            log(summary, p.failed || p.blocked || isPartial ? 'warn' : 'info');
+            status(summary, p.failed || p.blocked || isPartial ? 'warn' : 'ok');
         }
 
         finally {
@@ -12492,10 +13183,6 @@
 
             updateStats();
         }
-    }
-
-    async function downloadVerifiedSubscriberPartial() {
-        return downloadMissing(true);
     }
 
     async function syncAll() {
@@ -12558,6 +13245,10 @@
                     [...m.sources],
                 visibility: m.visibility || null,
                 archiveCategory: mediaArchiveCategory(m),
+                highlightId: m.highlightId || null,
+                highlightIds: m.highlightIds instanceof Set
+                    ? [...m.highlightIds].sort() : [],
+                requestedPath: archiveDownloadPath(m),
                 hidden:
                     isHiddenMedia(m),
                 hiddenDiscovery:
@@ -12710,6 +13401,7 @@
                 'scan',
                 'download',
                 'downloadAuthorized',
+                'downloadAccessible',
                 'sync',
                 'username',
                 'cbPost',
@@ -15769,6 +16461,14 @@
 
                     <button
                         class="action"
+                        id="jkl-download-accessible"
+                        title="Save only identity- and source-verified public POST, HIGHLIGHT, STORY and AVATAR files. REELS, TAGGED and subscriber media are excluded. The scan remains INCOMPLETE."
+                    >
+                        DOWNLOAD VERIFIED ACCESSIBLE (PARTIAL)
+                    </button>
+
+                    <button
+                        class="action"
                         id="jkl-download-authorized"
                         title="Save only authenticated subscriber media already verified by media-info. This is NOT a COMPLETE profile backup."
                     >
@@ -16034,6 +16734,11 @@
                     '#jkl-download'
                 ),
 
+            downloadAccessible:
+                b.querySelector(
+                    '#jkl-download-accessible'
+                ),
+
             downloadAuthorized:
                 b.querySelector(
                     '#jkl-download-authorized'
@@ -16244,10 +16949,13 @@
             scanAll;
 
         ui.download.onclick =
-            () => downloadMissing(false);
+            () => downloadMissing(DOWNLOAD_MODE.COMPLETE);
 
         ui.downloadAuthorized.onclick =
-            downloadVerifiedSubscriberPartial;
+            () => downloadMissing(DOWNLOAD_MODE.SUBSCRIBER);
+
+        ui.downloadAccessible.onclick =
+            () => downloadMissing(DOWNLOAD_MODE.ACCESSIBLE);
 
         ui.sync.onclick =
             syncAll;

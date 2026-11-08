@@ -81,6 +81,9 @@ const state = {
     diskCanonical: new Set(),
     diskCanonicalMeta: new Map(),
     diskLocations: new Map(),
+    diskPaths: new Map(),
+    sessionPaths: new Map(),
+    highlightRenameNotices: new Set(),
     diskHidden: new Set(),
     diskStoryHighlight: new Set(),
     legacy: new Map(),
@@ -90,7 +93,7 @@ const state = {
 };
 const actions = new Function(
     'state', 'mediaArchiveCategory', 'updateStats', 'status', 'log',
-    'legacyMatch', 'canonicalShortcode',
+    'legacyMatch', 'canonicalShortcode', 'reportHighlightFolderRenames',
     [extract('indexFolder'), extract('existingReason'),
      extract('diskSatisfiesOwnedRoot'), extract('downloadOperationPlan'),
      extract('downloadOne')].join('\n') +
@@ -98,7 +101,7 @@ const actions = new Function(
     'downloadOperationPlan, downloadOne };'
 )(
     state, category, () => {}, () => {}, () => {},
-    () => false, x => x
+    () => false, x => x, () => {}
 );
 const file = (folder, id = '123456') => ({
     name: name.replace('123456', id),

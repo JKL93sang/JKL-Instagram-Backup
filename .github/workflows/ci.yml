@@ -63,17 +63,44 @@ jobs:
       - name: Safe GraphQL response diagnostic regression tests
         run: node tests/json-endpoint-diagnostic-regression.test.mjs
 
+      - name: Explicit zero REELS metadata and independent public-grid proof tests
+        run: node tests/reels-explicit-zero-proof-regression.test.mjs
+
+      - name: REELS absent-tab safe skip regression tests
+        run: node tests/no-reels-tab-regression.test.mjs
+
+      - name: REELS verified-native cursor pagination tests
+        run: node tests/reels-native-pagination-regression.test.mjs
+
+      - name: Local archive indexed counts presentation tests
+        run: node tests/local-archive-index-display-regression.test.mjs
+
+      - name: Native PROFILE bootstrap capture lifecycle and no-reentry tests
+        run: node tests/profile-native-bootstrap-regression.test.mjs
+
       - name: Native Relay profile pagination regression tests
         run: node tests/native-profile-relay-regression.test.mjs
 
       - name: Native capture provenance, privacy and transport isolation tests
         run: node tests/native-capture-provenance-regression.test.mjs
 
+      - name: Full-scan public PROFILE and zero REELS integration tests
+        run: node tests/profile-public-first-scan-integration.test.mjs
+
+      - name: Public-first PROFILE completion with independent REELS guard
+        run: node tests/profile-public-first-regression.test.mjs
+
       - name: PROFILE cross-surface pagination proof regression tests
         run: node tests/profile-cross-surface-proof-regression.test.mjs
 
       - name: Subscriber-authorized partial backup safety regression tests
         run: node tests/subscriber-verified-partial-regression.test.mjs
+
+      - name: Verified accessible partial backup and immutable provenance tests
+        run: node tests/accessible-verified-partial-regression.test.mjs
+
+      - name: Distinct highlight reel identity, path grouping and archive repair tests
+        run: node tests/highlight-identity-folders-regression.test.mjs
 
       - name: Unique FAN CLUB / flat HIDDEN category routing tests
         run: node tests/single-copy-archive-routing-regression.test.mjs

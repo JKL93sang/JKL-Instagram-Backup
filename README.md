@@ -1,6 +1,22 @@
 # JKL Instagram Backup
 
-## Stable v1.5.70 — one file per media, FAN CLUB / HIDDEN routing
+## Stable v1.5.78 — PROFILE/REELS proofs and highlight archive layout
+
+**Official stable installation and automatic updates:** [Install JKL Instagram Backup v1.5.78](https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js).
+
+The userscript retains its existing Tampermonkey `@name` and `@namespace`. Both `@updateURL` and `@downloadURL` now point to the **official `main` branch**, not an experimental branch. Existing installations following `main` should be offered v1.5.78 at the next update check. If an older test installation still follows a branch, open the official URL once, verify the `main` URLs in Tampermonkey and leave only one enabled script.
+
+### Changes from v1.5.70
+
+- **Public PROFILE first:** An identity-matched, completed public timeline may establish the main PROFILE grid when its exact media count and hydrated roots reconcile. Native authenticated capture remains the fallback for ambiguous, private or incomplete timelines.
+- **Independent REELS proof:** Completion of PROFILE does not imply completion of REELS. When the REELS navigation is absent, an empty feed is accepted *only* if the authenticated profile API explicitly reports zero clips, the verified public timeline and all owned/hidden/reel evidence agree, and no contradictory signal exists. Missing/ambiguous data still leaves the archive `INCOMPLETE`.
+- **HIGHLIGHTS:** Each reel collection is identified by its Instagram ID; folders use `title [reel ID]`. Repeated titles get separate destinations; renaming the Instagram highlight does not create a second collection in the archive index. Firefox cannot automatically rename an existing local folder selected via a read-only directory scan.
+- **Download integrity:** Common authorization policies for complete and evidence-bounded partial downloads, per-file provenance, and directory-aware local archive indexing. A `GM_download` callback alone cannot guarantee that Firefox actually created the requested nested folders.
+- **Safety:** No guessed static GraphQL fallback, no automatic bypass of private content, and no assumption that an absent REELS tab means zero clips.
+
+**Validation status:** Automated GitHub Actions regression and orchestration tests passed before publication. Real-browser compatibility of the v1.5.78 PROFILE/REELS completion path is **not yet verified**. Review actual server metadata and the final scan outcome before trusting `COMPLETE`.
+
+## Previous stable v1.5.70 — one file per media, FAN CLUB / HIDDEN routing
 
 This release combines the v1.5.68 verified subscriber-partial backup (successfully tested on a real authenticated session) with the new single-file archive layout. **The new routing is covered by CI tests; it has not yet been verified on a new live browser download.**
 
@@ -20,7 +36,7 @@ Stable installs retain the same `@name` and `@namespace`, with both `@updateURL`
 
 A Tampermonkey userscript for backing up Instagram media that is **already accessible to the signed-in browser session**.
 
-Current public version: **1.5.70** (stable, `main`).
+Current public version: **1.5.78** (stable, `main`).
 
 ## Install or update
 
@@ -30,7 +46,7 @@ https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instag
 
 Existing stable users can also use **Tampermonkey → Check for userscript updates**. Both `@updateURL` and `@downloadURL` point to this `main` version.
 
-**If you installed the PR #8 experimental build (v1.5.62–1.5.64):** the stable script has a higher version number, and the test branch also exposes this release metadata. Open the official `main` Raw link once if Tampermonkey does not automatically switch channels. Confirm that exactly one enabled copy remains and that its version is 1.5.70.
+**If you installed the PR #8 experimental build (v1.5.62–1.5.64):** the stable script has a higher version number, and the test branch also exposes this release metadata. Open the official `main` Raw link once if Tampermonkey does not automatically switch channels. Confirm that exactly one enabled copy remains and that its version is 1.5.78.
 
 ## Public PROFILE completeness
 

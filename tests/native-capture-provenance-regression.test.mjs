@@ -26,6 +26,8 @@ const net = {
     gridNativeAuditByUser:new Map(),
     gridNativeContinuationByUser:new Map(),
     gridNativeInitialByUser:new Map(),
+    gridCaptureSeenAtByUser:new Map(),
+    gridBootstrapConsumedByUser:new Set(),
 };
 const friendly = 'PolarisProfilePostsTabContentQuery_connection';
 const makeConnection = (hasNext, mediaId='123') => ({
@@ -35,14 +37,17 @@ const makeConnection = (hasNext, mediaId='123') => ({
 const capture = new Function(
     'net','GRID_NAMES','requestTargetsCurrentProfile',
     'gridUser','gridConn','edgeNode','normalizePk',
+    'keyedConnection','GRID_CONNECTION_KEY',
     extract('captureGrid')+'\nreturn captureGrid;'
 )(
     net,new Set([friendly]),
     m=>m.variables?.username==='sample.account',
     m=>m.variables.username.toLowerCase(),
-    d=>d?.data?.profile_connection,
+    d=>d?.data?.profile_connection || d?.data?.xdt_api__v1__feed__user_timeline_graphql_connection,
     e=>e.node,
-    n=>n.id
+    n=>n.id,
+    (d,key)=>d?.data?.[key] || null,
+    'xdt_api__v1__feed__user_timeline_graphql_connection'
 );
 
 const nativeMeta = {
@@ -144,3 +149,30 @@ assert.ok(fallback.includes('APP.PROFILE_MAX_SCROLLS'));
 assert.ok(source.includes('net.gridNativeContinuationByUser.delete('));
 
 console.log('Native capture provenance, privacy and transport isolation tests passed.');
+
+// New Instagram friendly names are allowed only if the response has
+// the EXACT target-scoped server timeline connection.
+const renamedMeta = {
+    ...nativeMeta, friendly: 'PolarisRenamedPosts2026',
+    variables: { username:'sample.account', after: 'opaque-rename' },
+};
+capture({
+    data: { xdt_api__v1__feed__user_timeline_graphql_connection:
+        makeConnection(false, '999') },
+}, renamedMeta);
+assert.ok(net.gridByUser.get('sample.account').has('999'));
+assert.equal(net.gridNativeContinuationByUser
+    .get('sample.account').timelineKeyVerified, true);
+const beforeUnverified = net.gridByUser.get('sample.account').size;
+capture({ data: { profile_connection: makeConnection(false, 'blocked') } },
+    { ...renamedMeta, variables: { username:'sample.account' } });
+assert.equal(net.gridByUser.get('sample.account').size, beforeUnverified,
+    'unknown friendly names WITHOUT exact server key never qualify');
+capture({
+    data: { xdt_api__v1__feed__user_timeline_graphql_connection:
+        makeConnection(false, 'other-user') },
+}, { ...renamedMeta, variables: { username:'not-the-profile' } });
+assert.equal(net.gridByUser.get('sample.account').size, beforeUnverified,
+    'exact server key cannot bypass profile identity isolation');
+
+
