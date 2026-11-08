@@ -16,7 +16,7 @@ function extract(name) {
 
 function scenario({ hasLink = false, navOK = false } = {}) {
     const logs = [];
-    const counts = { navigation: 0, nativeCompletion: 0, rest: 0, updates: 0 };
+    const counts = { navigation: 0, nativeCompletion: 0, updates: 0 };
     const state = {
         username: 'jennnii97',
         userId: '45790055326',
@@ -27,7 +27,6 @@ function scenario({ hasLink = false, navOK = false } = {}) {
     const runner = new Function(
         'state', 'location', 'window', 'log', 'status',
         'pathNorm', 'findAnchor', 'go', 'scanReelsNativeCompletion', 'updateStats',
-        'scanReelsAuthenticatedWithoutTab',
         extract('scanReels') + '\nreturn scanReels;'
     )(
         state, location, { scrollY: 0 },
@@ -43,8 +42,7 @@ function scenario({ hasLink = false, navOK = false } = {}) {
             counts.nativeCompletion++;
             return false;
         },
-        () => counts.updates++,
-        async () => { counts.rest++; logs.push({msg:'REELS clips unavailable'}); return false; }
+        () => counts.updates++
     );
     return { runner, state, counts, logs };
 }
@@ -53,10 +51,10 @@ const noTab = scenario({ hasLink: false });
 assert.equal(await noTab.runner(), false);
 assert.equal(noTab.counts.navigation, 0, 'no navigation attempt without link');
 assert.equal(noTab.counts.nativeCompletion, 0, 'no unsupported native completion request');
-assert.equal(noTab.counts.rest, 1, 'one independent authenticated clips probe');
 assert.equal(noTab.state.coverage.reels, false,
     'absence of a tab is not proof of zero reels');
-assert.ok(noTab.logs.some(x => x.msg.includes('REELS clips unavailable')));
+assert.ok(noTab.logs.some(x => x.msg.includes('no request attempted')),
+    'feedback_required endpoint must not be called when native tab is absent');
 
 const failedClick = scenario({ hasLink: true, navOK: false });
 assert.equal(await failedClick.runner(), false);
@@ -99,4 +97,8 @@ assert.deepEqual(remaining, [['REELS tab', 'reels']],
 assert.ok(source.includes("'PolarisProfileReelsTabContentQuery'"));
 assert.ok(!source.includes('async function scanReelsFallback('));
 assert.ok(source.includes('=== SCAN STOPPED — INSTAGRAM API UNHEALTHY ==='));
-console.log('No-REELS-tab authenticated clips probe and completeness guard regression tests passed.');
+assert.ok(!source.includes('https://www.instagram.com/api/v1/clips/user/'),
+    'desktop userscript must not issue private-mobile clips requests');
+assert.ok(!source.includes('scanReelsAuthenticatedWithoutTab'),
+    'blocked fallback helper must not accidentally be reachable');
+console.log('No-tab fail-closed guard, no mobile POST, and independent PROFILE coverage tests passed.');
