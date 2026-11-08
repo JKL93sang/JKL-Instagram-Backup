@@ -33,7 +33,7 @@ function scenario({ hasLink = false, navOK = false } = {}) {
         state, location, { scrollY: 0 },
         (msg, level) => logs.push({ msg, level }),
         () => {},
-        x => String(x).replace(/\\/$/, ''),
+        x => String(x).endsWith('/') ? String(x).slice(0, -1) : String(x),
         path => hasLink ? { href: path } : null,
         async () => {
             counts.navigation++;
