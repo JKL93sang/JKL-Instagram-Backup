@@ -132,6 +132,15 @@ reject('SSR flag and zero count disagree', {
     has_any_clips:true, total_clips_count:0,
 });
 reject('invalid clips count cannot prove zero', { total_clips_count:'0.0' });
+reject('invalid count cannot be combined with a false flag', {
+    has_any_clips:false, total_clips_count:'invalid',
+});
+reject('invalid boolean value cannot be combined with zero count', {
+    has_any_clips:'false', total_clips_count:0,
+});
+reject('unrepresentable integer count is not zero', {
+    total_clips_count:'999999999999999999999',
+});
 reject('nonzero reel roots contradict flag', { has_any_clips:false }, () => {
     state.roots.REEL.add('999');
 });
