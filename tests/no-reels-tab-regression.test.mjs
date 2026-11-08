@@ -16,19 +16,18 @@ function extract(name) {
 
 function scenario({ hasLink = false, navOK = false } = {}) {
     const logs = [];
-    const counts = { navigation: 0, graphqlFallback: 0, updates: 0 };
+    const counts = { navigation: 0, nativeCompletion: 0, updates: 0 };
     const state = {
         username: 'jennnii97',
         userId: '45790055326',
         coverage: { reels: true },
         roots: { REEL: new Set() },
     };
-    const pathname = '/jennnii97/';
-    const location = { pathname };
+    const location = { pathname:'/jennnii97/' };
     const runner = new Function(
         'state', 'location', 'window', 'log', 'status',
-        'pathNorm', 'findAnchor', 'go', 'scanReelsFallback', 'updateStats',
-        extract('scanReels') + '\nreturn scanReels;'
+        'pathNorm', 'findAnchor', 'go', 'scanReelsNativeCompletion', 'updateStats',
+        extract('scanReels') + '\\nreturn scanReels;'
     )(
         state, location, { scrollY: 0 },
         (msg, level) => logs.push({ msg, level }),
@@ -40,7 +39,7 @@ function scenario({ hasLink = false, navOK = false } = {}) {
             return { ok: navOK, navigated: navOK };
         },
         async () => {
-            counts.graphqlFallback++;
+            counts.nativeCompletion++;
             return false;
         },
         () => counts.updates++
@@ -51,17 +50,17 @@ function scenario({ hasLink = false, navOK = false } = {}) {
 const noTab = scenario({ hasLink: false });
 assert.equal(await noTab.runner(), false);
 assert.equal(noTab.counts.navigation, 0, 'no navigation attempt without link');
-assert.equal(noTab.counts.graphqlFallback, 0, 'no unsupported GraphQL fallback');
+assert.equal(noTab.counts.nativeCompletion, 0, 'no unsupported completion request');
 assert.equal(noTab.state.coverage.reels, false,
-    'the absence of an HTML link is not proof of zero reels');
+    'absence of a tab is not proof of zero reels');
 assert.ok(noTab.logs.some(x => x.msg.includes('REELS stays INCOMPLETE')));
 
 const failedClick = scenario({ hasLink: true, navOK: false });
 assert.equal(await failedClick.runner(), false);
 assert.equal(failedClick.counts.navigation, 1);
-assert.equal(failedClick.counts.graphqlFallback, 1,
-    'failed navigation with a real tab can use existing GraphQL fallback');
-assert.ok(failedClick.logs.some(x => x.msg.includes('Could not open REELS tab')));
+assert.equal(failedClick.counts.nativeCompletion, 0,
+    'failed navigation without native pagination evidence cannot complete');
+assert.ok(failedClick.logs.some(x => x.msg.includes('obsolete static GraphQL fallback')));
 
 // The real global completeness proof still needs independently completed REELS
 // coverage. Missing navigation must never synthesize a valid empty page.
@@ -85,6 +84,6 @@ const proof = assess(p);
 assert.equal(proof.verified, false);
 assert.equal(proof.reason, 'connected_surfaces_not_equivalent');
 
-assert.ok(source.includes("'PolarisProfileReelsTabContentQuery'"));
+assert.ok(source.includes("'PolarisProfileReelsTabContentQuery'"));\nassert.ok(!source.includes('async function scanReelsFallback('));
 assert.ok(source.includes('=== SCAN STOPPED — INSTAGRAM API UNHEALTHY ==='));
 console.log('No-REELS-tab safe skip and completeness guard regression tests passed.');
