@@ -1,14 +1,19 @@
 # JKL Instagram Backup
 
-## Experimental v1.5.71 — missing REELS navigation safety
+## Experimental v1.5.72 — verified-native REELS pagination and visible archive index
 
-This **TEST-only** patch fixes a reproducible control-flow problem from [issue #15](https://github.com/JKL93sang/JKL-Instagram-Backup/issues/15): a public profile with one POST and **no visible REELS tab** triggers a legacy GraphQL reels fallback whose HTTP 200 response is redirected HTML instead of JSON.
+This **TEST-only** candidate addresses two real reports from [issue #15](https://github.com/JKL93sang/JKL-Instagram-Backup/issues/15):
 
-If no actual REELS navigation link is available and the browser is not already on the REELS path, the script **does not send this speculative GraphQL fallback**. It records that REELS was **not verified** and proceeds to remaining scan phases. On profiles with a real REELS tab, the existing navigation and fallback behavior remains untouched.
+- Public `@jennnii97`, one POST, **no visible REELS tab**: avoid speculative GraphQL when navigation is absent. An absent tab is **not** proof of zero reels; scan remains **INCOMPLETE** unless real server pagination is verified.
+- `@muat0ri`: **38 native REELS** found, but Instagram still reports `has_next_page=true` while the page stops scrolling (`bottom_stagnant_has_next`). Previously the fixed `APP.REEL_FALLBACK_DOC` request redirected to HTML with HTTP 200 and aborted the whole scan. The old fixed-document fallback is removed.
 
-**This is a safety fix, not proof of an empty reels feed.** A profile with no REELS tab and only a public POST may still finish `INCOMPLETE` and refuse **DOWNLOAD MISSING**. Never turn the mere absence of a UI tab into proof of completed server pagination. Authenticated subscriber-only partial downloads retain their independent verified-media guard.
+Instead, the script records successful Instagram-native REELS requests **only if they are scoped to the scanned profile**. On a verified `page_info.has_next_page=false`, it accepts the actual native end. If continuation is required, it replays only a native cursor schema, doc ID, and request template **already observed from real successful initial and continuation requests for that same account**. It does not invent a new document ID or assume `0` reels. Without such evidence, REELS remains INCOMPLETE; the scan can continue to STORY/HIGHLIGHTS/AVATAR and deep hydration, subject to independent account safety circuits. Verified subscriber-only PARTIAL download retains its separate safeguards and can be prepared after a finished INCOMPLETE scan.
 
-[Install experimental v1.5.71](https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/reels-absent-tab-safe-skip-v1.5.71/JKL_Instagram_Backup.user.js). Do **not** merge or change the stable `main` until a real browser scan verifies the safe skip and no regressions.
+**Local archive display:** Selecting a folder now shows directly in the ARCHIVE panel the number of selected files, unique recognized canonical IDs, HIDDEN-folder IDs, legacy groups, recognized file entries and unrecognized entries. `DISK VERIFIED` was renamed **`DISK INDEXED`**: the script only inventories filenames, it does not open or hash every file. The previous `Existing` counter still means **matches from the current scan**, which is 0 before any scan.
+
+[Install experimental v1.5.72](https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/reels-absent-tab-safe-skip-v1.5.71/JKL_Instagram_Backup.user.js). The script identifies itself as `1.5.72 TEST`, even though its isolated branch retains the original `v1.5.71` identifier. Only one Tampermonkey copy should be enabled.
+
+**Release status:** automated CI covers identity-scoped native REELS captures and cursors, safe non-guess behavior, missing tab handling and archive counters. A new live browser scan and download layout verification are **still pending**. Stable `main` remains `1.5.70`.
 
 ## Stable v1.5.70 — one file per media, FAN CLUB / HIDDEN routing
 
