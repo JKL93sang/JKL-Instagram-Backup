@@ -24,12 +24,13 @@ const statuses = [];
 const logs = [];
 const indexFolder = new Function(
     'state','updateStats','status','log','canonicalShortcode',
+    'reportHighlightFolderRenames',
     indexFolderSrc + '\nreturn indexFolder;'
 )(
     state, () => {},
     (...args) => statuses.push(args),
     (...args) => logs.push(args),
-    x => x
+    x => x, () => {}
 );
 
 const name = 'muat0ri - POST - 2025_11_01 - 123456.jpg';
