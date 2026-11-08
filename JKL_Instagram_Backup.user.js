@@ -1609,25 +1609,55 @@
             : 'HL_UNKNOWN';
     }
 
-    // Compare real indexed paths, never merely a media ID/category.
-    // The selected directory may be the profile root or an ancestor.
-    function matchesHighlightArchivePath(m, relativePath) {
-        if (m?.type !== 'HIGHLIGHT') return false;
-        const normalized = String(relativePath || '')
+    // Match a verified local file to its Instagram reel identity, not its
+    // mutable display title. Folder renames must never trigger downloads.
+    // Files in the pre-v1.5.75 shared "Highlight" folder lack an ID and
+    // intentionally remain unmatched: their exact reel is unproven.
+    function highlightArchivePathIdentity(m, relativePath) {
+        const noMatch = { matched: false, renamed: false };
+        if (m?.type !== 'HIGHLIGHT') return noMatch;
+
+        const reelId = hiId(m.highlightId);
+        if (!/^\d+$/.test(reelId)) return noMatch;
+
+        const user = sanitizePathComponent(state.username, 'instagram', 64);
+        const parts = String(relativePath || '')
             .replace(/\\/g, '/')
-            .replace(/\/+/g, '/')
-            .toLowerCase();
-        const paths = [
-            archiveDownloadPath(m, state.username),
-            archiveDownloadPath(m, state.username, {
-                safeHighlightFallback: true,
-            }),
-        ];
-        return paths.some(expected => {
-            const suffix = expected.split('/').slice(1).join('/').toLowerCase();
-            return normalized === suffix ||
-                normalized.endsWith('/' + suffix);
-        });
+            .split('/')
+            .filter(Boolean);
+        if (parts.length < 3) return noMatch;
+
+        const filename = String(parts[parts.length - 1] || '');
+        const oldFolder = String(parts[parts.length - 2] || '');
+        const category = String(parts[parts.length - 3] || '');
+        const expectedCategory = sanitizePathComponent(
+            `${user} - HIGHLIGHTS`, 'HIGHLIGHTS', 96
+        );
+        const prefix = `${user} - `;
+        if (
+            filename.toLowerCase() !== String(m.filename || '').toLowerCase() ||
+            category.toLowerCase() !== expectedCategory.toLowerCase() ||
+            !oldFolder.toLowerCase().startsWith(prefix.toLowerCase())
+        ) return noMatch;
+
+        const label = oldFolder.slice(prefix.length);
+        const previousId = label.match(/\[(\d+)\]$/)?.[1] ||
+            label.match(/^HL_(\d+)$/i)?.[1] || '';
+        if (previousId !== reelId) return noMatch;
+
+        const expectedFolder = archiveDownloadPath(m)
+            .split('/').at(-2);
+        return {
+            matched: true,
+            renamed: oldFolder.toLowerCase() !== expectedFolder.toLowerCase(),
+            oldFolder,
+            expectedFolder,
+            reelId,
+        };
+    }
+
+    function matchesHighlightArchivePath(m, relativePath) {
+        return highlightArchivePathIdentity(m, relativePath).matched;
     }
 
     function archiveDownloadPath(
