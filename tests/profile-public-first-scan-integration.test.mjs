@@ -216,8 +216,8 @@ function scenario({
 {
     const x = scenario({clips:null,latestReelMedia:{pk:'123'},ssrHasAnyClips:false});
     await x.run();
-    assert.equal(x.state.scanOutcome, 'INCOMPLETE',
-        'positive REST latest reel contradicts SSR absence');
+    assert.equal(x.state.scanOutcome, 'COMPLETE',
+        'latest_reel_media describes Stories and does not contradict SSR zero clips');
 }
 {
     const x = scenario({clips:null,ssrHasAnyClips:false});
