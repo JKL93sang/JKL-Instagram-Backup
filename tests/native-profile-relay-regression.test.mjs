@@ -105,6 +105,28 @@ const contracts = helpers.profileNativeCompletionRequest('sample.account');
 assert.equal(contracts.initial,entry);
 assert.equal(contracts.continuation,continuation);
 
+// A new persisted-query friendly name is accepted only when a native
+// response exposed the exact target-scoped server timeline key.
+const dynamicEntry = {
+    ...entry, friendly: 'PolarisRenamedProfileTimeline2026',
+    timelineKeyVerified: true,
+};
+const dynamicContinuation = {
+    ...continuation, friendly: 'PolarisRenamedProfileTimeline2026_connection',
+    timelineKeyVerified: true,
+};
+net.gridNativeInitialByUser.set('sample.account',dynamicEntry);
+store.set('sample.account',dynamicContinuation);
+assert.equal(helpers.profileNativeCompletionRequest('sample.account')?.initial,
+    dynamicEntry, 'verified response contract survives Instagram query rename');
+net.gridNativeInitialByUser.set('sample.account',{
+    ...dynamicEntry, timelineKeyVerified: false,
+});
+assert.equal(helpers.profileNativeCompletionRequest('sample.account'), null,
+    'unknown query with no verified server key must fail closed');
+net.gridNativeInitialByUser.set('sample.account',entry);
+store.set('sample.account',continuation);
+
 const firstPage = helpers.profileCompletionVariables(entry.variables);
 assert.deepEqual(firstPage,entry.variables);
 assert.notEqual(firstPage,entry.variables,'variables must be cloned');
