@@ -53,3 +53,22 @@ The actual objective is a reliable **archive of all content legitimately exposed
 There is no independently verified REELS source for the current absent-tab profile; neither the script nor this design can truthfully promise a 100% complete Reels archive from that evidence. Recovering a trustworthy source would require an official supported API for the relevant account permissions, or a genuine browser-originated native Reels response for this account. Do **not** create yet another guessed endpoint or ask the user for repeated live scans.
 
 **Release policy:** the branch stays experimental; stable `main` is untouched until a genuinely new, non-speculative source and browser validation are available. The safe immediate capability is a truthful verified-accessible partial archive, not unverified full completeness.
+
+## v1.5.84 — authenticated transport hardening (offline)
+
+This pass intentionally **does not** change the Reels discovery contract. It removes avoidable risk from the rest of the script, rather than replacing one unsupported Reels endpoint with another.
+
+- **Global GM dispatcher:** at most two outstanding `GM_xmlhttpRequest` calls from this script at once; additional requests wait in a FIFO queue. A fatal circuit is checked before every dispatch. Once `feedback_required`, HTTP 429, HTTP 401 or an explicit checkpoint is observed, pending requests are rejected locally. Requests already transmitted cannot be unsent; at most two GM requests can be in flight when a circuit opens.
+- **Error callbacks:** the same circuit logic runs for response `onload` and `onerror`, including HTTP 429 received via `onerror`. An `onabort` settles the original promise and releases its dispatcher slot; duplicate callbacks settle only once.
+- **Endpoint method restriction:** script-generated `POST`, `HEAD` or other non-`GET` requests to `https://www.instagram.com/api/v1/*` and `https://i.instagram.com/api/v1/*` are blocked **before network dispatch**. The current, separately vetted `POST https://www.instagram.com/api/graphql` used by anonymous PUBLIC pagination is unaffected. The rejected `clips/user/` POST cannot silently reappear under a new helper function.
+- **Protocol-level detection:** `feedback_required` is recognized only from server control fields / explicit error tokens, not arbitrary media captions, which previously could trigger false-positive global shutdowns when string-matching the entire response. Checkpoint/login signals retain strict top-level/error-object parsing.
+- **No hidden request retries:** established media-info 4xx no-retry rules remain. The scheduler doesn't add new retries, probes, or additional endpoints.
+- **Regression tests:** `tests/reels-evidence-and-request-safety-regression.test.mjs` now exercises five concurrent GM requests with delayed callbacks (2 active / 3 queued), a server `feedback_required`, HTTP 429 via `onerror`, 401/checkpoint via `onerror`, ordinary captions containing the feedback token, blocked private REST POST to both hosts, and allowed Web GraphQL POST.
+
+### What remains outside this safety guarantee
+
+- Browser-native fetch/XHR and the script's own `fetchJson` transport are distinct from the GM dispatcher. This cap does **not** globally limit all browser-originated requests.
+- Some existing authenticated media-info, user-info and FAN CLUB requests still impersonate mobile User-Agent strings. Their safety cannot be established with synthetic tests. They should be reviewed individually against observed, legitimate browser behavior before any further feature changes.
+- Neither the new request scheduler nor a green GitHub Actions run demonstrates that Instagram will not impose restrictions.
+- The absent-tab profile still has **unknown** REELS completeness. This pass makes no claim of exhaustive recovery and requires no new Instagram test from the user.
+
