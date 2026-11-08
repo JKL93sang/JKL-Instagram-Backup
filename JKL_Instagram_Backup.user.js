@@ -3882,61 +3882,115 @@
         }
     }
 
-    function captureReels(
-        data,
-        meta
-    ) {
-        const uid =
-            reelUserId(meta) ||
-            state.userId;
+    function reelNativeCursorField(variables) {
+        if (!variables || typeof variables !== 'object') return null;
 
-        if (!uid) {
-            return;
-        }
+        const candidates = [];
+        for (const [parent, object] of [
+            ['', variables],
+            ['data.', variables.data],
+        ]) {
+            if (!object || typeof object !== 'object') continue;
 
-        const c =
-            reelConn(data);
-
-        if (!c) {
-            return;
-        }
-
-        const map =
-            net.reelsByUserId.get(uid) ||
-            new Map();
-
-        for (
-            const e
-            of c.edges || []
-        ) {
-            const n =
-                edgeNode(e);
-
-            const k =
-                normalizePk(n) ||
-                String(
-                    n?.code ||
-                    n?.shortcode ||
-                    ''
-                );
-
-            if (k) {
-                map.set(
-                    String(k),
-                    n
-                );
+            for (const key of ['after', 'max_id']) {
+                if (Object.prototype.hasOwnProperty.call(object, key)) {
+                    const value = object[key];
+                    if (typeof value !== 'string' && typeof value !== 'number') {
+                        return null;
+                    }
+                    candidates.push({
+                        path: parent + key,
+                        value: String(value),
+                    });
+                }
             }
         }
 
-        net.reelsByUserId.set(
-            uid,
-            map
-        );
+        // Two observed pagination fields are ambiguous. Never guess one.
+        return candidates.length === 1 ? candidates[0] : null;
+    }
 
-        net.reelPageInfo.set(
-            uid,
-            c.page_info || null
-        );
+    function captureReels(data, meta) {
+        // A REELS response without a request targeting the current profile
+        // must never contribute pagination proof for this profile.
+        if (
+            !REEL_NAMES.has(String(meta?.friendly || '')) ||
+            !requestTargetsCurrentProfile(meta) ||
+            (Array.isArray(data?.errors) && data.errors.length)
+        ) return;
+
+        const uid = reelUserId(meta) || String(state.userId || '');
+        if (!uid || uid !== String(state.userId || '')) return;
+
+        const c = reelConn(data);
+        if (!c || !Array.isArray(c.edges)) return;
+
+        const map = net.reelsByUserId.get(uid) || new Map();
+
+        for (const e of c.edges) {
+            const n = edgeNode(e);
+            const k = normalizePk(n) ||
+                String(n?.code || n?.shortcode || '');
+            if (k) map.set(String(k), n);
+        }
+
+        net.reelsByUserId.set(uid, map);
+        net.reelPageInfo.set(uid, c.page_info || null);
+
+        const variables = meta?.variables;
+        const cursor = reelNativeCursorField(variables);
+        const isContinuation = !!cursor?.value;
+
+        const audit = net.reelNativeAuditByUserId.get(uid) || {
+            initial:0, continuation:0, cursorPath:'',
+            lastHasNext:'unknown',
+        };
+        if (isContinuation) {
+            audit.continuation++;
+            audit.cursorPath = cursor.path;
+        }
+        else {
+            audit.initial++;
+        }
+        audit.lastHasNext = c.page_info?.has_next_page === false
+            ? 'false' : c.page_info?.has_next_page === true
+                ? 'true' : 'unknown';
+        net.reelNativeAuditByUserId.set(uid, audit);
+
+        // Save only the parameters of successfully observed, target-scoped
+        // native traffic. Static REEL_FALLBACK_DOC is not completion proof.
+        if (
+            !/^\\d+$/.test(String(meta?.docId || '')) ||
+            !variables ||
+            typeof variables !== 'object' ||
+            !meta.bodyFields ||
+            typeof meta.bodyFields !== 'object'
+        ) return;
+
+        try {
+            const contract = {
+                docId:String(meta.docId),
+                friendly:String(meta.friendly),
+                endpoint:meta.endpoint === 'api' ? 'api' : 'query',
+                variables:JSON.parse(JSON.stringify(variables)),
+                template:{
+                    body:JSON.parse(JSON.stringify(meta.bodyFields)),
+                    headers:JSON.parse(JSON.stringify(meta.relayHeaders || {})),
+                },
+                cursorPath:isContinuation ? cursor.path : '',
+            };
+
+            if (isContinuation) {
+                net.reelNativeContinuationByUserId.set(uid, contract);
+            }
+            else {
+                net.reelNativeInitialByUserId.set(uid, contract);
+            }
+        }
+        catch {
+            if (isContinuation) net.reelNativeContinuationByUserId.delete(uid);
+            else net.reelNativeInitialByUserId.delete(uid);
+        }
     }
 
     function installHooks() {
