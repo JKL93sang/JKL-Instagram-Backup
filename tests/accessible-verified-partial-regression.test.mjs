@@ -73,7 +73,7 @@ function fixture({ highlights = 2 } = {}) {
             REEL: new Set(['unverified-reel']),
             TAGGED: new Set(),
             HIGHLIGHT: new Set(),
-            STORY: new Set(['story-1']),
+            STORY: new Set(), // current collector does not populate these roots
             AVATAR: new Set(['avatar-1']),
         },
         verifiedAccessibleSnapshot: null,
@@ -82,7 +82,6 @@ function fixture({ highlights = 2 } = {}) {
         'PROFILE_PUBLIC_SHADOW', 'public-root'));
     for (let i = 0; i < highlights; i++) {
         const id = 'highlight-' + i;
-        state.roots.HIGHLIGHT.add(id);
         state.queue.set(id, item(id, 'HIGHLIGHT', 'HIGHLIGHT:Winter'));
     }
     state.queue.set('story-1', item('story-1', 'STORY', 'STORY_WEB_GRAPHQL'));
