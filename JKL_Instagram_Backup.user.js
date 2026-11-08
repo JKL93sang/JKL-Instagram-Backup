@@ -7090,7 +7090,7 @@
 
         const counts = [];
         const flags = [];
-        let latestReelPresent = false;
+        let latestStoryTimestampPresent = false;
         let invalidMetadata = false;
 
         for (const user of raws) {
@@ -7122,7 +7122,7 @@
                 user.latest_reel_media !== '0' &&
                 user.latest_reel_media !== false &&
                 user.latest_reel_media !== ''
-            ) latestReelPresent = true;
+            ) latestStoryTimestampPresent = true;
         }
 
         const hasAnyClips = flags.length ? flags[0] : null;
@@ -7137,7 +7137,7 @@
         return Object.freeze({
             profileId, username,
             hasAnyClips, totalClipsCount,
-            latestReelPresent, consistent,
+            latestStoryTimestampPresent, consistent,
             source: 'xig_user_by_username/public-profile-SSR',
         });
     }
@@ -7754,7 +7754,7 @@
                 'PUBLIC shadow REELS metadata: ' +
                 'has_any_clips=' + (ssr?.hasAnyClips ?? '-') +
                 ', total_clips_count=' + (ssr?.totalClipsCount ?? '-') +
-                ', story_timestamp_present=' + (ssr?.latestReelPresent ?? '-') +
+                ', story_timestamp_present=' + (ssr?.latestStoryTimestampPresent ?? '-') +
                 ', consistent=' + (ssr?.consistent ?? '-') +
                 ', source=' + (ssr?.source || '-')
             );
