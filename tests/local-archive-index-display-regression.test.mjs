@@ -12,6 +12,8 @@ const state = {
     diskCanonical:new Set(),
     diskCanonicalMeta:new Map(),
     diskLocations:new Map(),
+    diskPaths:new Map(),
+    sessionPaths:new Map(),
     diskHidden:new Set(),
     diskStoryHighlight:new Set(),
     legacy:new Map(),
