@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.71
-// @description  TEST BUILD v1.5.71: safely handles missing REELS tab; unique media filing and subscriber partial backup.
+// @version      1.5.72
+// @description  TEST BUILD v1.5.72: native-verified REELS pagination, safe fallback guards, local archive counters.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.71', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.72', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
@@ -270,6 +270,9 @@
 
         reelsByUserId: new Map(),
         reelPageInfo: new Map(),
+        reelNativeAuditByUserId: new Map(),
+        reelNativeInitialByUserId: new Map(),
+        reelNativeContinuationByUserId: new Map(),
 
         taggedDocInitial: '',
         taggedDocConnection: '',
@@ -10897,6 +10900,9 @@
             net.reelPageInfo.delete(
                 state.userId
             );
+            net.reelNativeAuditByUserId.delete(state.userId);
+            net.reelNativeInitialByUserId.delete(state.userId);
+            net.reelNativeContinuationByUserId.delete(state.userId);
 
             net.taggedDocInitial = '';
             net.taggedDocConnection = '';
