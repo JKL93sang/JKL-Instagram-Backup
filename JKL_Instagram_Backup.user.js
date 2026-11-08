@@ -34,7 +34,7 @@
         NAME: 'JKL Instagram Backup', VERSION: '1.5.76', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
-        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
+        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
         REEL_SCROLL_MIN: 350, REEL_SCROLL_MAX: 1600, REEL_SCROLL_POLL: 120,
         PAGE_MIN: 650, PAGE_MAX: 1250, SHADOW_PAGE_MIN: 250, SHADOW_PAGE_MAX: 450, SHADOW_MAX_PAGES: 200, DOWNLOAD_DELAY: 0, DOWNLOAD_WORKERS: 1, DOWNLOAD_RETRIES: 3, LEDGER_FLUSH_EVERY: 25, DL_DIAG_SAMPLES: 20, MAX_LOG: 300,
         HYDRATE_MIN: 180, HYDRATE_MAX: 320, HYDRATE_RETRIES: 3, HYDRATE_WORKERS: 4, HYDRATE_LARGE_THRESHOLD: 250, HYDRATE_LARGE_WORKERS: 2, HYDRATE_BULK_THRESHOLD: 100, HYDRATE_BULK_SIZE: 20, HYDRATE_SINGLE_FALLBACK_CAP: 100,
@@ -292,6 +292,8 @@
         gridNativeAuditByUser: new Map(),
         gridNativeContinuationByUser: new Map(),
         gridNativeInitialByUser: new Map(),
+        gridCaptureSeenAtByUser: new Map(),
+        gridBootstrapConsumedByUser: new Set(),
 
         reelsByUserId: new Map(),
         reelPageInfo: new Map(),
@@ -4024,6 +4026,7 @@
             user,
             c.page_info || null
         );
+        net.gridCaptureSeenAtByUser.set(user, Date.now());
 
         if (meta?.docId) {
             net.gridDocByUser.set(
@@ -8053,6 +8056,49 @@
         return state.coverage.connectedHidden;
     }
 
+    // The document-start observer may have already captured a real,
+    // identity-scoped native PROFILE response while Instagram loaded.
+    // A scan must not erase that evidence before it can be evaluated.
+    // The bootstrap is single-use and time-limited; old scan results,
+    // different users and stale pagination are never re-authorized.
+    function prepareProfileNativeEvidenceForScan(userKey, now = Date.now()) {
+        const key = cleanUser(userKey).toLowerCase();
+        const observedAt = net.gridCaptureSeenAtByUser.get(key);
+        const info = net.gridPageInfo.get(key);
+        const audit = net.gridNativeAuditByUser.get(key);
+        const age = Number(now) - Number(observedAt);
+        const fresh = Number.isFinite(observedAt) &&
+            Number.isFinite(age) &&
+            age >= 0 &&
+            age <= APP.PROFILE_BOOTSTRAP_MAX_AGE_MS;
+        const eligible = fresh &&
+            !net.gridBootstrapConsumedByUser.has(key) &&
+            !!audit &&
+            audit.initial > 0 &&
+            !!info &&
+            typeof info.has_next_page === 'boolean' &&
+            net.gridByUser.has(key);
+
+        if (eligible) {
+            net.gridBootstrapConsumedByUser.add(key);
+            return {
+                retained: true, roots: net.gridByUser.get(key).size,
+                ageMs: age, pageInfo: info,
+            };
+        }
+
+        net.gridByUser.set(key, new Map());
+        net.gridPageInfo.delete(key);
+        net.gridDocByUser.delete(key);
+        net.gridQueryByUser.delete(key);
+        net.gridNativeAuditByUser.delete(key);
+        net.gridNativeContinuationByUser.delete(key);
+        net.gridNativeInitialByUser.delete(key);
+        net.gridCaptureSeenAtByUser.delete(key);
+
+        return { retained: false, roots: 0, ageMs: null, pageInfo: null };
+    }
+
     function profileCompletionRequirement({
         primeCaptured = false,
         nativeEnded = false,
@@ -8227,10 +8273,13 @@
             { path: `/${state.username}/reels/`, method: 'reels-reentry' },
         ];
 
+        let availableReentryRoutes = 0;
         for (const alternate of alternates) {
             if (!findAnchor(alternate.path)) {
+
                 continue;
             }
+            availableReentryRoutes++;
 
             const away = await go(alternate.path);
             if (!away.ok) {
@@ -8255,7 +8304,14 @@
             }
         }
 
-        return { attempted: true, captured: false, method: 'reentry-missed', roots: 0, pageInfo: null };
+        return {
+            attempted: availableReentryRoutes > 0,
+            captured: false,
+            method: availableReentryRoutes > 0
+                ? 'reentry-missed' : 'no-native-reentry-route',
+            roots: 0,
+            pageInfo: null,
+        };
     }
     function profileNativeCompletionRequest(userKey) {
         const initial = net.gridNativeInitialByUser.get(userKey);
@@ -11294,28 +11350,16 @@
                 scanProfilerTimings
             );
 
-            net.gridByUser.set(
-                state.username.toLowerCase(),
-                new Map()
-            );
-            net.gridPageInfo.delete(
+            const nativeBootstrap = prepareProfileNativeEvidenceForScan(
                 state.username.toLowerCase()
             );
-            net.gridDocByUser.delete(
-                state.username.toLowerCase()
-            );
-            net.gridQueryByUser.delete(
-                state.username.toLowerCase()
-            );
-            net.gridNativeAuditByUser.delete(
-                state.username.toLowerCase()
-            );
-            net.gridNativeContinuationByUser.delete(
-                state.username.toLowerCase()
-            );
-            net.gridNativeInitialByUser.delete(
-                state.username.toLowerCase()
-            );
+            log(nativeBootstrap.retained
+                ? 'PROFILE native bootstrap preserved: ' +
+                  nativeBootstrap.roots + ' roots, ' +
+                  'age=' + nativeBootstrap.ageMs + ' ms, ' +
+                  'has_next=' + nativeBootstrap.pageInfo.has_next_page + '.'
+                : 'PROFILE native bootstrap unavailable or stale; ' +
+                  'a fresh verified server response is required.');
             net.reelsByUserId.set(
                 state.userId,
                 new Map()
