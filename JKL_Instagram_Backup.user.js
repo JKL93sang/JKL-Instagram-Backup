@@ -11852,7 +11852,7 @@
                         },
 
                         onload:
-                            () => resolve(),
+                            () => resolve({ requestedPath: path }),
 
                         onerror:
                             e => fail(
@@ -11899,16 +11899,12 @@
             }
 
             try {
-                await downloadAttempt(
+                const receipt = await downloadAttempt(
                     m,
-                    {
-                        safeHighlightFallback,
-                    }
+                    { safeHighlightFallback }
                 );
 
-                recordDownloaded(
-                    m
-                );
+                recordDownloaded(m, receipt.requestedPath);
 
                 state
                     .diskCanonical
@@ -11918,6 +11914,9 @@
                 const locations = state.diskLocations.get(String(m.id)) || new Set();
                 locations.add(mediaArchiveCategory(m));
                 state.diskLocations.set(String(m.id), locations);
+                const sessionPaths = state.sessionPaths.get(String(m.id)) || new Set();
+                sessionPaths.add(receipt.requestedPath);
+                state.sessionPaths.set(String(m.id), sessionPaths);
 
                 if (state.diskActive) {
                     state.diskCanonicalMeta
@@ -11942,6 +11941,7 @@
                                         ''
                                     ),
                                 folder: mediaArchiveCategory(m),
+                                requestedPath: receipt.requestedPath,
                             }
                         );
                 }
@@ -12891,6 +12891,10 @@
                     [...m.sources],
                 visibility: m.visibility || null,
                 archiveCategory: mediaArchiveCategory(m),
+                highlightId: m.highlightId || null,
+                highlightIds: m.highlightIds instanceof Set
+                    ? [...m.highlightIds].sort() : [],
+                requestedPath: archiveDownloadPath(m),
                 hidden:
                     isHiddenMedia(m),
                 hiddenDiscovery:
