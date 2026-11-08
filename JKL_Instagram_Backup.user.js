@@ -201,6 +201,7 @@
         },
 
         rootCatalog: new Map(),
+        highlightCatalog: new Map(), // Instagram reel ID -> stable archive folder
         queue: new Map(),
 
         // Authorized only after full authenticated media-info, never previews.
@@ -263,6 +264,7 @@
         diskCanonical: new Set(),
         diskCanonicalMeta: new Map(),
         diskLocations: new Map(),
+        diskPaths: new Map(), // verified relative paths from SCAN LOCAL FOLDER
         diskIndexStats: {
             selectedFiles: 0,
             canonicalFiles: 0,
@@ -1007,6 +1009,7 @@
         state.hidden.failed = 0;
         state.hidden.recoveredCodes = [];
         state.verifiedSubscriberRootIds.clear();
+        state.highlightCatalog.clear();
         clearPartialDownloadGrants();
 
         state.hydration.totalRoots = 0;
@@ -1555,55 +1558,64 @@
         );
     }
 
-    function highlightRawTitle(m) {
-        if (m?.type !== 'HIGHLIGHT') {
-            return '';
+
+    // Instagram highlight titles are display labels, never unique identities.
+    // Using the full reel ID makes folders deterministic across scans, sort
+    // changes, repeated titles and Windows case-insensitive filesystems.
+    function highlightFolderName(title, reelId) {
+        const id = hiId(reelId);
+        if (!/^\d+$/.test(id)) return '';
+
+        const label = sanitizePathComponent(title, 'Highlight', 44);
+        return `${label} [${id}]`;
+    }
+
+    function buildHighlightCatalog(tray) {
+        const catalog = new Map();
+        for (const node of tray) {
+            const id = hiId(node?.id || node?.pk || node?.reel_id);
+            if (!/^\d+$/.test(id) || catalog.has(id)) continue;
+
+            const title = String(node?.title || '');
+            catalog.set(id, Object.freeze({
+                id, title, folder: highlightFolderName(title, id),
+            }));
         }
-
-        for (const source of m?.sources || []) {
-            const s =
-                String(
-                    source ||
-                    ''
-                );
-
-            if (
-                s.startsWith(
-                    'HIGHLIGHT:'
-                )
-            ) {
-                return (
-                    s.slice(
-                        'HIGHLIGHT:'.length
-                    ) ||
-                    'Highlight'
-                );
-            }
-        }
-
-        return 'Highlight';
+        return catalog;
     }
 
     function highlightFolderTitle(m) {
-        return sanitizePathComponent(
-            highlightRawTitle(m),
-            'Highlight',
-            80
-        );
+        const id = String(m?.highlightId || '');
+        return state.highlightCatalog.get(id)?.folder ||
+            highlightFolderName('', id) ||
+            highlightFolderName('', m?.id) ||
+            'Highlight';
     }
 
     function highlightFallbackFolderTitle(m) {
-        const raw =
-            highlightRawTitle(m);
+        const id = String(m?.highlightId || m?.id || '');
+        return highlightFolderName('', id) || 'Highlight';
+    }
 
-        const suffix =
-            hash(raw)
-                .toString(16)
-                .padStart(8, '0');
-
-        return (
-            `Highlight_${suffix}`
-        );
+    // Compare real indexed paths, never merely a media ID/category.
+    // The selected directory may be the profile root or an ancestor.
+    function matchesHighlightArchivePath(m, relativePath) {
+        if (m?.type !== 'HIGHLIGHT') return false;
+        const normalized = String(relativePath || '')
+            .replace(/\\/g, '/')
+            .replace(/\/+/g, '/')
+            .toLowerCase();
+        const paths = [
+            archiveDownloadPath(m, state.username),
+            archiveDownloadPath(m, state.username, {
+                safeHighlightFallback: true,
+            }),
+        ];
+        return paths.some(expected => {
+            const suffix = expected.split('/').slice(1).join('/').toLowerCase();
+            return normalized === suffix ||
+                normalized.endsWith('/' + suffix);
+        });
     }
 
     function archiveDownloadPath(
@@ -1643,17 +1655,16 @@
         ];
 
         if (rawType === 'HIGHLIGHT') {
-            const title =
-                options?.safeHighlightFallback
-                    ? highlightFallbackFolderTitle(m)
-                    : highlightFolderTitle(m);
+            const title = options?.safeHighlightFallback
+                ? highlightFallbackFolderTitle(m)
+                : highlightFolderTitle(m);
 
+            // Keep the reel ID suffix even with a maximum-length username.
+            const maxTitleLength = Math.max(20, 120 - user.length - 3);
             parts.push(
-                sanitizePathComponent(
-                    `${user} - ${title}`,
-                    `${user} - Highlight`,
-                    120
-                )
+                `${user} - ${sanitizePathComponent(
+                    title, 'Highlight', maxTitleLength
+                )}`
             );
         }
 
@@ -2104,7 +2115,8 @@
     function addMedia(
         raw,
         typeHint = '',
-        source = ''
+        source = '',
+        context = null
     ) {
         if (!raw) {
             return 0;
@@ -2290,6 +2302,15 @@
                             : []
                     ),
 
+                highlightId: type === 'HIGHLIGHT'
+                    ? String(context?.highlightId || '')
+                    : '',
+                highlightIds: new Set(
+                    type === 'HIGHLIGHT' && context?.highlightId
+                        ? [String(context.highlightId)]
+                        : []
+                ),
+
                 originalToken:
                     originalToken(url),
 
@@ -2335,6 +2356,16 @@
                     );
                 }
 
+                // Preserve every reel membership when one media is reused
+                // in multiple highlights, while retaining one file per ID.
+                if (type === 'HIGHLIGHT' && m.highlightId) {
+                    old.highlightIds ||= new Set(
+                        old.highlightId ? [old.highlightId] : []
+                    );
+                    old.highlightIds.add(m.highlightId);
+                    old.highlightId = [...old.highlightIds].sort()[0];
+                }
+
                 const freshApi =
                     source === 'OWNED_DEEP_HYDRATION';
 
@@ -2352,6 +2383,8 @@
 
                     m.rootIds =
                         old.rootIds;
+                    m.highlightIds = old.highlightIds || m.highlightIds;
+                    m.highlightId = old.highlightId || m.highlightId;
                     m.visibility = old.visibility || m.visibility;
 
                     state.queue.set(
@@ -9965,6 +9998,8 @@
                 )
                 .filter(Boolean);
 
+        state.highlightCatalog = buildHighlightCatalog(tray);
+
         log(
             `HIGHLIGHT tray: ${tray.length} reels, ` +
             `source=${trayResult.source}, ` +
@@ -9981,7 +10016,12 @@
         );
 
         let allOk =
-            trayEnded;
+            trayEnded && state.highlightCatalog.size === tray.length;
+
+        if (state.highlightCatalog.size !== tray.length) {
+            log('HIGHLIGHT tray contains duplicate or invalid reel IDs; ' +
+                'coverage remains INCOMPLETE.', 'warn');
+        }
 
         for (
             let index = 0;
@@ -10083,7 +10123,8 @@
                 addMedia(
                     x,
                     'HIGHLIGHT',
-                    `HIGHLIGHT:${title}`
+                    `HIGHLIGHT_REEL:${id}`,
+                    { highlightId: id }
                 );
             }
 
@@ -10101,7 +10142,8 @@
             );
 
             log(
-                `HIGHLIGHT “${title}”: ${items.length} items via Web GraphQL.`
+                `HIGHLIGHT “${title}” [${id}]: ${items.length} items via Web GraphQL; ` +
+                `folder="${state.highlightCatalog.get(id)?.folder || 'UNVERIFIED'}".`
             );
 
             if (
@@ -10327,6 +10369,13 @@
                 m.rootIds instanceof Set
                     ? [...m.rootIds].map(String).sort().join(',')
                     : '',
+                String(m.highlightId || ''),
+                m.highlightIds instanceof Set
+                    ? [...m.highlightIds].map(String).sort().join(',')
+                    : '',
+                m.type === 'HIGHLIGHT'
+                    ? archiveDownloadPath(m)
+                    : '',
             ].join('|'))
             .sort()
             .join('\n');
@@ -10384,8 +10433,11 @@
             if (m.type === 'HIGHLIGHT') {
                 return state.scanPlan?.highlight === true &&
                     state.coverage.highlights === true &&
-                    // HIGHLIGHT files have source tags, not roots.HIGHLIGHT entries.
-                    [...m.sources].some(s => String(s).startsWith('HIGHLIGHT:'));
+                    // Every unit must refer to one recorded Instagram reel,
+                    // not merely share a possibly duplicated display title.
+                    !!m.highlightId &&
+                    state.highlightCatalog.has(String(m.highlightId)) &&
+                    m.sources.has('HIGHLIGHT_REEL:' + String(m.highlightId));
             }
 
             if (m.type === 'STORY') {
@@ -10431,6 +10483,9 @@
                 profileId: String(state.shadow.profileId || ''),
                 postIds: [...state.shadow.postIds].map(String).sort(),
             },
+            highlights: [...state.highlightCatalog.entries()]
+                .map(([id, info]) => [id, info.title, info.folder])
+                .sort((a, b) => a[0].localeCompare(b[0])),
             roots: {
                 highlight: [...state.roots.HIGHLIGHT].map(String).sort(),
                 story: [...state.roots.STORY].map(String).sort(),
