@@ -2,13 +2,13 @@
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
 // @version      1.5.78
-// @description  TEST BUILD v1.5.78: public-grid first, independent PROFILE/REELS proofs, explicit zero-clips verification, highlight folder IDs.
+// @description  Instagram backup: public PROFILE verification, independently checked REELS, stable highlight IDs, verified partial archive.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/reels-absent-tab-safe-skip-v1.5.71/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/reels-absent-tab-safe-skip-v1.5.71/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/reels-absent-tab-safe-skip-v1.5.71/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/main/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
