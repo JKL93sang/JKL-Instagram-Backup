@@ -120,6 +120,15 @@ function reject(label, changes, mutate = () => {}) {
     assert.equal(state.coverage.reels, false, label + ': no false completion');
 }
 reject('field omitted entirely', {});
+{
+    const storyOnly = parse(withOne({ latest_reel_media:1792002021 }));
+    state.shadow.reelsEvidence = storyOnly.reelsEvidence;
+    assert.equal(storyOnly.reelsEvidence.latestStoryTimestampPresent, true);
+    assert.deepEqual(api.explicitEmptyReelsProof(), {
+        verified:false, reason:'clips_absence_not_explicitly_reported',
+    }, 'a Story timestamp alone proves neither Reels presence nor absence');
+}
+
 reject('true explicitly indicates reels', { has_any_clips:true });
 reject('positive server clips count', { total_clips_count:3 });
 {
@@ -202,7 +211,7 @@ for (const sentinel of [0, '0', false, '']) {
     const ssr = parse(withOne({
         has_any_clips:false, latest_reel_media:sentinel,
     })).reelsEvidence;
-    assert.equal(ssr.latestReelPresent, false,
+    assert.equal(ssr.latestStoryTimestampPresent, false,
         'empty Story timestamp sentinel remains independently classified');
     assert.equal(ssr.consistent, true);
 }
