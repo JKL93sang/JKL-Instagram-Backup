@@ -52,6 +52,11 @@ function proofFn(state) {
     assert.equal(resolve(photo,sourceName).ok,true,'archived root');
     assert.equal(resolve(photo,'STORY_WEB_GRAPHQL').ok,false,
         'same ID cannot imply another source was archived');
+    state.queue.get('10').rootIds.clear();
+    assert.equal(resolve(photo,sourceName).ok,false,
+        'same-source unit missing the current parent root cannot prove archival');
+    state.queue.get('10').rootIds.add('10');
+    assert.equal(resolve(photo,sourceName).ok,true);
     state.queue.get('10').url='';
     assert.equal(resolve(photo,sourceName).ok,false,'URL disappeared');
     state.queue.get('10').diskBacked=true;
