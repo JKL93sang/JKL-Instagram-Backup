@@ -112,3 +112,19 @@ This capability depends **strictly on genuine browser-native Reels data that Ins
 
 These synthetic tests prove the scripted state transitions, not the behavior of Instagram in a real logged-in session. No user/account testing has been performed for v1.5.86, and no account safety guarantee is possible. `main` remains stable v1.5.78; PR #18 remains DRAFT.
 
+
+## v1.5.86 — TAGGED structural audit (same experimental version, no rollout)
+
+The real November 9 Firefox log reported `TAGGED edges=2`, `resolved=0`, `unresolved=2`. That establishes two discovered roots and zero file reconciliation; without the two raw root payloads it **does not** prove the exact missing field, whether either root is a video, or that Instagram withheld the media.
+
+A source review found three independently verifiable implementation defects:
+
+1. **Media schema gap:** `bestImage()` handled legacy `display_url` and `image_versions2.candidates` but omitted the standard XDT `display_uri` field present in TAGGED GraphQL responses. The reader now prefers maximum-size valid image candidates, then `display_uri` / `display_url`; invalid candidate arrays no longer suppress a valid display URI. For TAGGED, preview-only `thumbnail_url` and profile-avatar URLs are **not** accepted as full photo evidence. The video path still needs `bestVideo()` and will never download a video cover as an MP4.
+2. **Native first-page loss:** a previous browser-native TAGGED response was held in global `net.taggedInitialData`, but `scanAll()` always cleared that state immediately after profile resolution. Worse, pre-scan capture was conditional on `state.userId`, which was unset until resolution. Native captures now use the verified numeric **request target ID** as a map key, retain only a successful exact TAGGED connection with explicit page_info and a first-page cursor, and are consumed once within a 20-second TTL *after* resolving the scan target. Wrong-user, stale, replayed, continuation-only and GraphQL-error payloads cannot serve as an initial page. No extra network requests are created.
+3. **Wrong connection acceptance:** `taggedConn()` previously fell back to a recursive search for *any* connection with edges, which could accept an unrelated connection. TAGGED completeness now requires the exact `xdt_api__v1__usertags__user_id__feed_connection` response key; GraphQL `errors[]` fail closed. The final log adds aggregated `reasons=...` categories without dumping URLs, cookies, account tokens or per-item private payloads.
+
+The existing source-to-archive `discoveredMediaResolution()` gate remains mandatory. A returned tagged item without a usable full image, video URL or verified indexed local file remains **INCOMPLETE** rather than being mislabeled complete.
+
+**Offline acceptance:** `tests/selected-surface-archive-integrity.test.mjs` executes the real production `bestImage`, `bestVideo`, `isVideo`, `addMedia`, `discoveredMediaResolution`, `captureTagged`, `prepareTaggedNativeEvidenceForScan` and targeted GraphQL connection parsing. It checks XDT display URI images, invalid image candidates, video cover rejection, thumbnail-only rejection, wrong user ID, one-shot TTL, stale data, pagination continuation, unrelated connection and partial GraphQL errors. The full scanAll integration harness was aligned with the new required tagged bootstrap dependency.
+
+**CI:** [Userscript CI success #42559458072](https://github.com/JKL93sang/JKL-Instagram-Backup/actions/runs/42559458072) on `d5d33d07fc37585f33053b843de38f37250083ee`. All steps passed. This is offline code validation, **not** proof that the two real tagged items now download or that hidden REELS are discoverable. No Instagram browser scan or account request was performed, `@version` remains `1.5.86`, `main` remains `1.5.78`, and PR #18 stays DRAFT.
