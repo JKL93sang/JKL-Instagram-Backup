@@ -7158,67 +7158,6 @@
         };
     }
 
-    function normalizedRestrictionPayload(raw) {
-        return String(raw || '')
-            .replace(/\\u0027/gi, "'")
-            .replace(/\\u2019/gi, "’")
-            .replace(/\\u0026/gi, '&')
-            .replace(/&apos;|&#39;|&#x27;/gi, "'")
-            .replace(/&quot;|&#34;|&#x22;/gi, '"')
-            .replace(/\\[nrt]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-    }
-
-    function rawRestrictionEvidence(html) {
-        const text = normalizedRestrictionPayload(html);
-
-        if (!text) {
-            return false;
-        }
-
-        const restrictedHeading =
-            /\brestricted profile\b/i.test(text) ||
-            /\bprofil restreint\b/i.test(text);
-
-        const audienceGate =
-            /unavailable for certain audiences/i.test(text) ||
-            /indisponible pour certains publics/i.test(text);
-
-        const loginGate =
-            /log in to continue/i.test(text) ||
-            /connectez-vous pour continuer/i.test(text);
-
-        const ageGate =
-            /you must be \d{1,2} years? old or over to see this profile/i.test(text) ||
-            /you must be \d{1,2} or older to see this profile/i.test(text) ||
-            /vous devez avoir \d{1,2} ans(?: ou plus)? pour (?:voir|consulter) ce profil/i.test(text);
-
-        return !!(
-            restrictedHeading &&
-            audienceGate &&
-            (loginGate || ageGate)
-        );
-    }
-
-    function anonymousTimelineSSRPresent(html) {
-        const doc = new DOMParser().parseFromString(
-            String(html || ''),
-            'text/html'
-        );
-
-        for (const script of doc.querySelectorAll('script[type="application/json"]')) {
-            if (
-                String(script.textContent || '')
-                    .includes('polaris_ordered_timeline_connection')
-            ) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     async function fetchAnonymousProfileProbe(
         username,
         label,
@@ -7241,56 +7180,6 @@
             feedbackLabel: label,
             headers,
         });
-    }
-
-    async function probeAnonymousPublicControl() {
-        const controls = ['instagram', 'natgeo']
-            .filter(
-                username =>
-                    username.toLowerCase() !==
-                    String(state.username || '').toLowerCase()
-            );
-
-        for (const username of controls) {
-            let r;
-
-            try {
-                r = await fetchAnonymousProfileProbe(
-                    username,
-                    `PUBLIC shadow control @${username}`,
-                    true
-                );
-            }
-            catch (e) {
-                throwIfInstagramStop(
-                    e,
-                    `PUBLIC shadow control @${username}`
-                );
-
-                continue;
-            }
-
-            if (Number(r.status || 0) !== 200) {
-                continue;
-            }
-
-            const html = String(r.responseText || '');
-
-            if (
-                anonymousTimelineSSRPresent(html) &&
-                !anonymousProfileRestriction(html)
-            ) {
-                return {
-                    ok: true,
-                    username,
-                };
-            }
-        }
-
-        return {
-            ok: false,
-            username: '',
-        };
     }
 
     function shadowCoverageLabel() {
@@ -7686,9 +7575,9 @@
                     'warn'
                 );
 
-                const firstRawRestriction =
-                    rawRestrictionEvidence(targetHtml);
-
+                // Re-check only the requested account. Probing unrelated
+                // public accounts cannot prove this profile is inaccessible,
+                // and adds unsolicited network requests to every failure.
                 const retry = await fetchAnonymousProfileProbe(
                     state.username,
                     'PUBLIC shadow profile verification',
@@ -7702,7 +7591,6 @@
                 }
 
                 targetHtml = String(retry.responseText || '');
-
                 const retryRestriction =
                     anonymousProfileRestriction(targetHtml);
 
@@ -7710,86 +7598,37 @@
                     state.shadow.applicable = false;
                     state.shadow.reason = 'LOGIN_RESTRICTED_PROFILE';
                     state.coverage.publicShadow = true;
-
                     log(
-                        `PUBLIC shadow N/A: @${state.username} returned an ` +
-                        `explicit Instagram restricted-profile gate on verification. ` +
-                        `Connected PROFILE/REELS/HIDDEN/HYDRATION coverage remains mandatory.`
+                        'PUBLIC shadow N/A: explicit target-scoped Instagram ' +
+                        'restricted-profile gate on verification.'
                     );
-
-                    status(
-                        'PUBLIC shadow N/A for login-restricted profile.',
-                        'ok'
-                    );
-
                     updateStats();
                     return true;
                 }
 
                 try {
                     initial = parseAnonymousProfileHTML(targetHtml);
-
                     log(
                         'PUBLIC shadow verification recovered the anonymous SSR timeline.'
                     );
                 }
                 catch (retryError) {
                     if (
-                        retryError?.message !==
-                        'SSR public timeline not found'
+                        retryError?.message !== 'SSR public timeline not found'
                     ) {
                         throw retryError;
                     }
 
-                    const rawExplicitGate =
-                        firstRawRestriction ||
-                        rawRestrictionEvidence(targetHtml);
-
-                    const control =
-                        await probeAnonymousPublicControl();
-
+                    // NO third-party control profiles. Missing SSR remains
+                    // unknown; it must never become a false N/A success.
                     log(
-                        `PUBLIC shadow verification: ` +
-                        `retry_ssr=false, ` +
-                        `explicit_gate=${rawExplicitGate}, ` +
-                        `public_control=${control.ok
-                            ? `@${control.username}:SSR=true`
-                            : 'SSR=false'}.`
+                        'PUBLIC shadow SSR unavailable after two target-only ' +
+                        'requests; no control-profile probing performed. ' +
+                        'PUBLIC shadow remains INCOMPLETE.',
+                        'warn'
                     );
-
-                    if (
-                        control.ok &&
-                        state.profileInfo?.is_private === false &&
-                        state.coverage.profileGrid === true
-                    ) {
-                        state.shadow.applicable = false;
-                        state.shadow.reason = rawExplicitGate
-                            ? 'LOGIN_RESTRICTED_PROFILE'
-                            : 'ANONYMOUS_TARGET_UNAVAILABLE';
-                        state.coverage.publicShadow = true;
-
-                        log(
-                            `PUBLIC shadow N/A: @${state.username} is available ` +
-                            `to the connected session, but its anonymous timeline ` +
-                            `remained unavailable on two target probes while ` +
-                            `public control @${control.username} returned a valid SSR timeline. ` +
-                            `This is treated as target-specific anonymous unavailability; ` +
-                            `Connected PROFILE/REELS/HIDDEN/HYDRATION coverage remains mandatory.`
-                        );
-
-                        status(
-                            rawExplicitGate
-                                ? 'PUBLIC shadow N/A for login-restricted profile.'
-                                : 'PUBLIC shadow N/A: anonymous target unavailable.',
-                            'ok'
-                        );
-
-                        updateStats();
-                        return true;
-                    }
-
                     throw new Error(
-                        'SSR public timeline not found after target/control verification'
+                        'SSR public timeline unavailable after two target-only requests'
                     );
                 }
             }
