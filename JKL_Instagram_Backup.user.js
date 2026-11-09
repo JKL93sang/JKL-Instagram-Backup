@@ -355,6 +355,30 @@
         return a + Math.floor(Math.random() * (b - a + 1));
     }
 
+    // Unified preflight for all requests CREATED by this userscript,
+    // regardless of whether they use GM transport or nativeFetch.
+    // Never replay a private-mobile REST POST from a desktop Web session.
+    function unsafePrivateRestMethod(url, method = 'GET') {
+        let endpoint;
+        try {
+            endpoint = new URL(String(url || ''), 'https://www.instagram.com');
+        }
+        catch { return null; }
+
+        if (
+            /^(?:www|i)\.instagram\.com$/i.test(endpoint.hostname) &&
+            endpoint.pathname.startsWith('/api/v1/') &&
+            String(method || 'GET').toUpperCase() !== 'GET'
+        ) {
+            const error = new Error(
+                'Unsafe private-mobile API method blocked before dispatch.'
+            );
+            error.code = 'IG_UNSUPPORTED_TRANSPORT';
+            return error;
+        }
+        return null;
+    }
+
     function gmRequest(options) {
         // Bound GM transports to two concurrent in-flight requests.
         // Any pending work is rejected after an Instagram safety circuit.
@@ -433,29 +457,10 @@
             delete request.feedbackLabel;
             delete request.feedbackCheck;
 
-            // Desktop Web transport is not a private-mobile API client.
-            // The verified PUBLIC shadow uses POST /api/graphql; no
-            // existing authenticated /api/v1/ feature requires POST.
-            // Refuse such calls locally to prevent another clips/user/
-            // experiment from reaching Instagram by accident.
-            try {
-                const endpoint = new URL(String(request.url || ''));
-                if (
-                    /^(?:www|i)\.instagram\.com$/i.test(endpoint.hostname) &&
-                    endpoint.pathname.startsWith('/api/v1/') &&
-                    String(request.method || 'GET').toUpperCase() !== 'GET'
-                ) {
-                    const e = new Error(
-                        'Unsafe private-mobile API method blocked before dispatch.'
-                    );
-                    e.code = 'IG_UNSUPPORTED_TRANSPORT';
-                    reject(e);
-                    return;
-                }
-            } catch (e) {
-                if (e?.code === 'IG_UNSUPPORTED_TRANSPORT') return reject(e);
-                // For non-Instagram media URLs, preserve the existing GM
-                // transport behavior (the URL is validated downstream).
+            const denied = unsafePrivateRestMethod(request.url, request.method);
+            if (denied) {
+                reject(denied);
+                return;
             }
 
             gate.pending.push({
@@ -5121,6 +5126,11 @@
         label = 'request',
         tries = 1
     ) {
+        // This transport bypasses GM, so it must share the SAME private
+        // REST preflight. A rejected method must not enter the retry loop.
+        const denied = unsafePrivateRestMethod(url, opt?.method || 'GET');
+        if (denied) throw denied;
+
         let last;
 
         for (
