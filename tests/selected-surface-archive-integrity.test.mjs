@@ -284,6 +284,13 @@ assert.ok(!source.includes("const controls = ['instagram', 'natgeo']"));
     assert.equal(addMedia(videoPosterOnly,'TAGGED','TAGGED'),0,
         'video cover must NEVER be archived as the video file');
     assert.equal(proofFn(state)(videoPosterOnly,'TAGGED').ok,false);
+    const thumbnailOnly={
+        pk:'3104',media_type:1,
+        thumbnail_url:'https://cdn.example.test/small-preview.jpg',
+    };
+    assert.equal(addMedia(thumbnailOnly,'TAGGED','TAGGED'),0,
+        'TAGGED must not mark thumbnail-only content as archived');
+    assert.equal(proofFn(state)(thumbnailOnly,'TAGGED').ok,false);
 }
 
 // Regression: browser TAGGED responses are captured by the REQUEST's verified
