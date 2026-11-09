@@ -8320,6 +8320,36 @@
         return { retained: false, roots: 0, ageMs: null, pageInfo: null };
     }
 
+    // Isolate a genuine current-profile native capture from the previous
+    // browser interaction. A stale/consumed snapshot must not survive into
+    // another scan, even if its media IDs still happen to match.
+    function prepareReelsNativeEvidenceForScan(uid, now = Date.now()) {
+        const id = String(uid || '');
+        const capturedAt = net.reelCaptureSeenAtByUserId?.get(id);
+        const age = Number(now) - Number(capturedAt);
+        const audit = net.reelNativeAuditByUserId.get(id);
+        const roots = net.reelsByUserId.get(id);
+        const eligible =
+            Number.isFinite(capturedAt) && Number.isFinite(age) &&
+            age >= 0 && age <= APP.PROFILE_BOOTSTRAP_MAX_AGE_MS &&
+            audit?.initial >= 1 && roots instanceof Map &&
+            roots.size > 0 &&
+            net.reelBootstrapConsumedByUserId?.has(id) !== true;
+
+        if (eligible) {
+            net.reelBootstrapConsumedByUserId.add(id);
+            return {retained:true, roots:roots.size, ageMs:age};
+        }
+
+        net.reelsByUserId.set(id, new Map());
+        net.reelPageInfo.delete(id);
+        net.reelNativeAuditByUserId.delete(id);
+        net.reelNativeInitialByUserId.delete(id);
+        net.reelNativeContinuationByUserId.delete(id);
+        net.reelCaptureSeenAtByUserId?.delete(id);
+        return {retained:false, roots:0, ageMs:null};
+    }
+
     function profileCompletionRequirement({
         primeCaptured = false,
         nativeEnded = false,
@@ -11986,38 +12016,15 @@
                   'has_next=' + nativeBootstrap.pageInfo.has_next_page + '.'
                 : 'PROFILE native bootstrap unavailable or stale; ' +
                   'a fresh verified server response is required.');
-            // The old reset discarded real, freshly observed Reels before
-            // REELS scanning even started. Preserve only a target-bound,
-            // first-use native Web capture within the bootstrap TTL.
-            const reelObservedAt =
-                net.reelCaptureSeenAtByUserId?.get(state.userId);
-            const reelAge = Date.now() - Number(reelObservedAt);
-            const reelAudit = net.reelNativeAuditByUserId.get(state.userId);
-            const reelCache = net.reelsByUserId.get(state.userId);
-            const reelBootstrapFresh =
-                Number.isFinite(reelObservedAt) &&
-                Number.isFinite(reelAge) && reelAge >= 0 &&
-                reelAge <= APP.PROFILE_BOOTSTRAP_MAX_AGE_MS &&
-                reelAudit?.initial >= 1 &&
-                reelCache instanceof Map &&
-                reelCache.size > 0 &&
-                net.reelBootstrapConsumedByUserId?.has(state.userId) !== true;
-
-            if (reelBootstrapFresh) {
-                net.reelBootstrapConsumedByUserId.add(state.userId);
+            const reelBootstrap = prepareReelsNativeEvidenceForScan(
+                state.userId
+            );
+            if (reelBootstrap.retained) {
                 log(
                     'REELS native Web bootstrap preserved: ' +
-                    reelCache.size + ' already-observed roots, age=' +
-                    reelAge + ' ms; no additional request.'
+                    reelBootstrap.roots + ' already-observed roots, age=' +
+                    reelBootstrap.ageMs + ' ms; no additional request.'
                 );
-            }
-            else {
-                net.reelsByUserId.set(state.userId, new Map());
-                net.reelPageInfo.delete(state.userId);
-                net.reelNativeAuditByUserId.delete(state.userId);
-                net.reelNativeInitialByUserId.delete(state.userId);
-                net.reelNativeContinuationByUserId.delete(state.userId);
-                net.reelCaptureSeenAtByUserId?.delete(state.userId);
             }
 
             net.taggedDocInitial = '';
