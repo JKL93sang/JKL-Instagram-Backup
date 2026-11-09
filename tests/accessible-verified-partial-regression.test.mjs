@@ -160,6 +160,38 @@ assert.equal(f.authorizeDownloadScope(MODE.SUBSCRIBER).ok, false);
 assert.equal(f.authorizeDownloadScope('unknown').ok, false);
 assert.ok(f.logs.some(x => x[0].includes('ACCESSIBLE PARTIAL READY')));
 
+// Tagged media is eligible only when the selected Web TAGGED collection
+// is server-ended AND all returned units were archived with source provenance.
+{
+    const x = fixture();
+    x.state.scanPlan = { ...x.state.scanPlan, tagged:true };
+    x.state.coverage.tagged = true;
+    x.state.roots.TAGGED.add('verified-tag-root');
+    x.state.queue.set('tagged-verified', item('tagged-verified',
+        'TAGGED','TAGGED','verified-tag-root'));
+    assert.ok(x.verifiedAccessibleMedia().some(m => m.id === 'tagged-verified'));
+    assert.ok(!x.verifiedAccessibleMedia().some(m => m.id === 'tagged-unverified'));
+    x.capturePartialDownloadGrants();
+    const count = x.state.partialDownloadGrants.accessible.mediaCount;
+    assert.equal(count, 7,
+        '4 fixture baseline archived units plus 2 highlights and one tagged');
+    x.state.running = false;
+    assert.equal(x.verifiedPartialDownloadIntegrity(MODE.ACCESSIBLE).ok, true);
+    x.state.roots.TAGGED.clear();
+    assert.equal(x.verifiedPartialDownloadIntegrity(MODE.ACCESSIBLE).ok, false,
+        'tampering tagged provenance after scan invalidates immutable grant');
+}
+{
+    const x = fixture();
+    x.state.scanPlan = { ...x.state.scanPlan, tagged:true };
+    x.state.coverage.tagged = false;
+    x.state.roots.TAGGED.add('verified-tag-root');
+    x.state.queue.set('tagged-verified', item('tagged-verified',
+        'TAGGED','TAGGED','verified-tag-root'));
+    assert.ok(!x.verifiedAccessibleMedia().some(m => m.id === 'tagged-verified'),
+        'a TAGGED GraphQL page with missing files must not grant partial authority');
+}
+
 function excludedWhen(label, mutate, id) {
     const x = fixture(); mutate(x);
     assert.ok(!x.verifiedAccessibleMedia().some(m => m.id === id), label);
