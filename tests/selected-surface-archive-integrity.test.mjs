@@ -242,4 +242,127 @@ async function highlightFixture(items) {
 }
 assert.ok(!source.includes('probeAnonymousPublicControl'));
 assert.ok(!source.includes("const controls = ['instagram', 'natgeo']"));
+
+// Regression: TAGGED XDTMediaDict image fields must enter the real downloader
+// via addMedia. A video cover is NOT a downloadable MP4.
+{
+    const state={queue:new Map(),diskActive:false};
+    const rootKind=new Function(extract('rootKind')+'\nreturn rootKind;')();
+    const bestImage=new Function(extract('bestImage')+'\nreturn bestImage;')();
+    const bestVideo=new Function(extract('bestVideo')+'\nreturn bestVideo;')();
+    const isVideo=new Function(extract('isVideo')+'\nreturn isVideo;')();
+    const addMedia=new Function(
+        'state','rootKind','authenticatedMediaVisibility',
+        'scanSelected','normalizePk','shortcodeId',
+        'registerOwnedRootMembership','isVideo','bestVideo',
+        'bestImage','originalToken','filename','PRIORITY','registerOwnedRoot',
+        extract('addMedia')+'\nreturn addMedia;'
+    )(state,rootKind,()=>'',()=>true,normalizePk,()=>'',()=>{},
+        isVideo,bestVideo,bestImage,()=>'',m=>m.id+'.jpg',{},()=>{});
+    const photo={
+        pk:'3101',media_type:1,code:'abc',
+        display_uri:'https://cdn.example.test/full-display.jpg',
+    };
+    assert.equal(addMedia(photo,'TAGGED','TAGGED'),1,
+        'XDT display_uri should produce one real tagged archive entry');
+    assert.equal(state.queue.get('3101').url,photo.display_uri);
+    assert.equal(proofFn(state)(photo,'TAGGED').ok,true,
+        'actual TAGGED media is resolved by the production proof gate');
+
+    const invalidCandidates={
+        pk:'3102',media_type:1,
+        image_versions2:{candidates:[{width:1080,height:1080}]},
+        display_uri:'https://cdn.example.test/fallback-display.jpg',
+    };
+    assert.equal(addMedia(invalidCandidates,'TAGGED','TAGGED'),1,
+        'malformed image candidates must not suppress a valid display_uri');
+
+    const videoPosterOnly={
+        pk:'3103',media_type:2,
+        display_uri:'https://cdn.example.test/video-cover.jpg',
+    };
+    assert.equal(addMedia(videoPosterOnly,'TAGGED','TAGGED'),0,
+        'video cover must NEVER be archived as the video file');
+    assert.equal(proofFn(state)(videoPosterOnly,'TAGGED').ok,false);
+}
+
+// Regression: browser TAGGED responses are captured by the REQUEST's verified
+// numeric ID before the userscript resolves its scan profile. They survive
+// exactly one matching scan for at most 20 seconds, without any extra network.
+{
+    const TAGGED_CONNECTION_KEY=
+        'xdt_api__v1__usertags__user_id__feed_connection';
+    const net={
+        taggedNativeByUserId:new Map(),
+        taggedBootstrapConsumedByUserId:new Set(),
+        taggedDocInitial:'',taggedDocConnection:'',
+        taggedNativeVariables:null,taggedInitialData:null,
+        taggedInitialUserId:'',
+    };
+    const keyedConnection=new Function(extract('keyedConnection')+
+        '\nreturn keyedConnection;')();
+    const taggedConn=new Function('keyedConnection','TAGGED_CONNECTION_KEY',
+        extract('taggedConn')+'\nreturn taggedConn;'
+    )(keyedConnection,TAGGED_CONNECTION_KEY);
+    const captureTagged=new Function(
+        'net','keyedConnection','TAGGED_CONNECTION_KEY',
+        extract('captureTagged')+'\nreturn captureTagged;'
+    )(net,keyedConnection,TAGGED_CONNECTION_KEY);
+    const prepare=new Function('net','APP','taggedConn',
+        extract('prepareTaggedNativeEvidenceForScan')+
+        '\nreturn prepareTaggedNativeEvidenceForScan;'
+    )(net,{PROFILE_BOOTSTRAP_MAX_AGE_MS:20000},taggedConn);
+    const uid='45790055326',now=5000000;
+    const native={
+        data:{[TAGGED_CONNECTION_KEY]:{
+            edges:[{node:{pk:'3101',media_type:1,
+                display_uri:'https://cdn.example.test/3101.jpg'}}],
+            page_info:{has_next_page:false,end_cursor:null},
+        }},
+    };
+    const meta={
+        friendly:'PolarisProfileTaggedTabContentQuery',
+        docId:'28390247837269928',
+        variables:{user_id:uid,count:12,after:null},
+    };
+    assert.equal(captureTagged(native,meta,now),true,
+        'native response can be captured even before scan userId exists');
+    assert.equal(prepare('some_other_user',now+1).retained,false,
+        'another target must not gain these TAGGED roots');
+    const retained=prepare(uid,now+1000);
+    assert.equal(retained.retained,true);
+    assert.equal(retained.roots,1);
+    assert.equal(net.taggedInitialData,native);
+    assert.equal(net.taggedInitialUserId,uid);
+    assert.equal(net.taggedDocInitial,meta.docId);
+    assert.equal(prepare(uid,now+1001).retained,false,
+        'captured first page is single use');
+    assert.equal(captureTagged(native,meta,now+2000),true,
+        'a genuinely new native response replaces the consumed snapshot');
+    assert.equal(prepare(uid,now+22001).retained,false,
+        'expired native observations cannot be reused');
+    assert.equal(captureTagged(native,{...meta,variables:{
+        user_id:uid,after:'continuation-cursor'
+    }},now+3000),false,'continuation is not a first page');
+    assert.equal(captureTagged({data:{other:{
+        edges:[{node:{pk:'1'}}],page_info:{has_next_page:false}
+    }}},meta,now+3000),false,
+        'unrelated GraphQL connection is not TAGGED proof');
+    assert.equal(taggedConn({data:{unrelated:{
+        edges:[{node:{pk:'1'}}],page_info:{has_next_page:false}
+    }}}),null);
+    assert.equal(captureTagged({...native,errors:[{message:'fail'}]},
+        meta,now+4000),false,'GraphQL partial errors cannot validate TAGGED');
+}
+
+{
+    const start=source.indexOf('    async function scanAll()');
+    const scan=source.slice(start,source.indexOf('    function ',start+10));
+    assert.ok(scan.includes('prepareTaggedNativeEvidenceForScan('),
+        'scanAll must consume native TAGGED evidence');
+    assert.ok(scan.indexOf('net.taggedInitialData = null;') <
+        scan.indexOf('prepareTaggedNativeEvidenceForScan('),
+        'TAGGED first page is restored after the per-scan reset');
+}
+
 console.log('Surface integrity and target-only HTTP policy — PASS');
