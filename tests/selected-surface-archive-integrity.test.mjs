@@ -138,11 +138,11 @@ async function storyFixture(items) {
     const log=[];
     const scanner=new Function(
         'state','fetchWebStoryReel','hiId','addMedia',
-        'discoveredMediaResolution','updateStats','log','throwIfInstagramStop',
+        'discoveredMediaResolution','updateStats','log','status','throwIfInstagramStop',
         extract('scanStory')+'\nreturn scanStory;'
     )(state,async()=>[{id:'123',items}],v=>String(v),
         (media,_kind,origin)=>archive(media,origin,state),
-        proofFn(state),()=>{},(...args)=>log.push(args),()=>{});
+        proofFn(state),()=>{},(...args)=>log.push(args),()=>{},()=>{});
     return {completed:await scanner(),state,log};
 }
 {
