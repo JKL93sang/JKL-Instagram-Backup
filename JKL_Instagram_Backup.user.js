@@ -9845,6 +9845,9 @@
         if (Number.isSafeInteger(claimedCount) && claimedCount > units.length) {
             return fail('carousel_item_count_gap');
         }
+        const rootId = normalizePk(root);
+        if (!rootId) return fail('missing_root_identity');
+
         const observed = new Set();
         for (const unit of units) {
             const id = normalizePk(unit);
@@ -9858,6 +9861,8 @@
                 !stored.filename ||
                 !(stored.sources instanceof Set) ||
                 !stored.sources.has(String(source)) ||
+                !(stored.rootIds instanceof Set) ||
+                !stored.rootIds.has(String(rootId)) ||
                 (!stored.url && !stored.diskBacked)
             ) {
                 return fail('unresolved_media_unit');
