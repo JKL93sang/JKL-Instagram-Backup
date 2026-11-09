@@ -146,6 +146,7 @@ function gmScenario(reply) {
         extract('rateLimitCircuitBreak') +
         extract('apiUnhealthyError') +
         extract('unsafePrivateRestMethod') +
+        extract('instagramRequestScope') +
         extract('gmRequest') +
         '\nreturn gmRequest;');
     const request=create(state,gm);
@@ -196,6 +197,7 @@ for (const [type, reply, flag] of [
         extract('rateLimitCircuitBreak') +
         extract('apiUnhealthyError') +
         extract('unsafePrivateRestMethod') +
+        extract('instagramRequestScope') +
         extract('gmRequest') +
         '\nreturn gmRequest;'
     );
@@ -250,6 +252,7 @@ for (const [type, reply, flag] of [
         extract('rateLimitCircuitBreak') +
         extract('apiUnhealthyError') +
         extract('unsafePrivateRestMethod') +
+        extract('instagramRequestScope') +
         extract('gmRequest') +
         '\nreturn gmRequest;'
     );
@@ -296,6 +299,7 @@ for (const [kind, event, expected] of [
         extract('rateLimitCircuitBreak')+
         extract('apiUnhealthyError')+
         extract('unsafePrivateRestMethod') +
+        extract('instagramRequestScope') +
         extract('gmRequest') +
         '\nreturn gmRequest;'
     );
@@ -343,6 +347,7 @@ for (const [kind, event, expected] of [
         extract('rateLimitCircuitBreak')+
         extract('apiUnhealthyError')+
         extract('unsafePrivateRestMethod') +
+        extract('instagramRequestScope') +
         extract('gmRequest') +
         '\nreturn gmRequest;'
     )(state,opts=>{
@@ -365,6 +370,54 @@ for (const [kind, event, expected] of [
         method:'GET',url:'https://www.instagram.com/api/v1/users/1/info/',
     });
     assert.equal(sent,2,'known profile REST GET must remain functional');
+}
+
+// Responses from CDN media hosts can be JSON / 401 / 429 without
+// implying any authenticated Instagram API session restriction.
+for (const responseKind of ['load', 'error']) {
+    for (const [status, body] of [
+        [401, '{"message":"challenge_required"}'],
+        [429, '{"message":"feedback_required"}'],
+    ]) {
+        const state={
+            running:true,cancelled:false,scanComplete:false,scanOutcome:'RUNNING',
+            feedbackRequired:false,feedbackMessage:'',rateLimited:false,
+            rateLimitMessage:'',apiUnhealthy:false,apiUnhealthyMessage:'',
+        };
+        const sent=[];
+        const request=new Function('state','GM_xmlhttpRequest',
+            extract('feedbackRequiredIn')+
+            extract('instagramAuthChallengeIn')+
+            extract('feedbackCircuitBreak')+
+            extract('rateLimitCircuitBreak')+
+            extract('apiUnhealthyError')+
+            extract('unsafePrivateRestMethod')+
+            extract('instagramRequestScope')+
+            extract('gmRequest')+
+            '\nreturn gmRequest;'
+        )(state,options=>sent.push(options));
+        const promise=request({
+            method:'GET',
+            url:'https://scontent.cdninstagram.com/example.jpg',
+            responseType:'arraybuffer',
+        });
+        assert.equal(sent.length,1);
+        const event={status,responseText:body,
+            responseHeaders:'content-type: application/json'};
+        if(responseKind==='load') {
+            sent[0].onload(event);
+            assert.equal((await promise).status,status);
+        } else {
+            sent[0].onerror(event);
+            await assert.rejects(promise,e=>e.status===status);
+        }
+        assert.equal(state.feedbackRequired,false,
+            'CDN response must not trigger an Instagram feedback circuit');
+        assert.equal(state.rateLimited,false,
+            'CDN status must not trigger Instagram API rate circuit');
+        assert.equal(state.apiUnhealthy,false,
+            'CDN 401 must not invalidate Instagram authentication');
+    }
 }
 
 // Authenticated media-info must not spray the same request at 2 domains
