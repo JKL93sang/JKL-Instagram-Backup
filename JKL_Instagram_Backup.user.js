@@ -9780,6 +9780,56 @@
         return completed;
     }
 
+    // A server pagination end proves the LIST ended, not that each item
+    // became an archived file. Validate each returned unit by exact ID and
+    // source provenance, including sidecars and previously indexed files.
+    // Never request extra data merely to make this check pass.
+    function discoveredMediaResolution(raw, source) {
+        const fail = reason => ({ok:false, reason});
+        const root = raw?.media && typeof raw.media === 'object'
+            ? raw.media : raw;
+        if (!root || typeof root !== 'object') return fail('missing_root');
+        const children = Array.isArray(root.carousel_media) &&
+            root.carousel_media.length
+                ? root.carousel_media
+                : (root?.edge_sidecar_to_children?.edges || [])
+                    .map(e => e?.node).filter(Boolean);
+        const units = children.length ? children : [root];
+        const isCarousel = Number(root.media_type) === 8 ||
+            root.__typename === 'GraphSidecar' ||
+            String(root.product_type || '').toLowerCase() === 'carousel_container';
+        const claimedCount = Number(root.carousel_media_count || 0);
+
+        if (root?.edge_sidecar_to_children?.page_info?.has_next_page === true) {
+            return fail('sidecar_pagination_unfinished');
+        }
+        if (isCarousel && children.length < 2) {
+            return fail('carousel_children_unavailable');
+        }
+        if (Number.isSafeInteger(claimedCount) && claimedCount > units.length) {
+            return fail('carousel_item_count_gap');
+        }
+        const observed = new Set();
+        for (const unit of units) {
+            const id = normalizePk(unit);
+            if (!id || observed.has(id)) {
+                return fail('missing_or_duplicate_unit_identity');
+            }
+            observed.add(id);
+            const stored = state.queue.get(String(id));
+            if (
+                !stored ||
+                !stored.filename ||
+                !(stored.sources instanceof Set) ||
+                !stored.sources.has(String(source)) ||
+                (!stored.url && !stored.diskBacked)
+            ) {
+                return fail('unresolved_media_unit');
+            }
+        }
+        return {ok:true, reason:'all_discovered_units_archived'};
+    }
+
     async function scanTaggedGraphQL() {
         state.coverage.tagged = false;
 
@@ -9824,6 +9874,8 @@
         let cursor = '';
         let pages = 0;
         let totalRoots = 0;
+        let unresolvedRoots = 0;
+        let resolvedRoots = 0;
         let endReason = 'max_pages';
         const seenCursors = new Set();
 
@@ -9938,11 +9990,13 @@
                 edges.length;
 
             for (const e of edges) {
-                addMedia(
-                    edgeNode(e),
-                    'TAGGED',
-                    'TAGGED'
-                );
+                const media = edgeNode(e);
+                const rootId = normalizePk(media);
+                if (rootId) state.roots.TAGGED.add(rootId);
+                addMedia(media, 'TAGGED', 'TAGGED');
+                const proof = discoveredMediaResolution(media, 'TAGGED');
+                if (proof.ok) resolvedRoots++;
+                else unresolvedRoots++;
             }
 
             updateStats();
@@ -9967,8 +10021,11 @@
             );
 
             if (!hasNext) {
-                state.coverage.tagged = true;
-                endReason = 'page_info_end';
+                state.coverage.tagged =
+                    unresolvedRoots === 0 && pi.has_next_page === false;
+                endReason = state.coverage.tagged
+                    ? 'page_info_end_all_media_resolved'
+                    : 'page_info_end_media_unresolved';
                 break;
             }
 
@@ -10008,7 +10065,12 @@
 
         log(
             `TAGGED GraphQL complete: pages=${pages}, roots=${totalRoots}, ` +
-            `end=${endReason}, ended=${state.coverage.tagged}.`
+            `resolved=${resolvedRoots}, unresolved=${unresolvedRoots}, ` +
+            `end=${endReason}, ended=${state.coverage.tagged}. ` +
+            (unresolvedRoots
+                ? 'Returned tagged roots lack archived media units; ' +
+                  'not treating pagination end as download completeness.'
+                : '')
         );
 
         return state.coverage.tagged;
@@ -10179,32 +10241,27 @@
             return false;
         }
 
-        for (
-            const x
-            of (
-                Array.isArray(items)
-                    ? items
-                    : []
-            )
-        ) {
-            addMedia(
-                x,
-                'STORY',
-                'STORY_WEB_GRAPHQL'
-            );
+        let unresolvedItems = 0;
+        for (const x of (Array.isArray(items) ? items : [])) {
+            addMedia(x, 'STORY', 'STORY_WEB_GRAPHQL');
+            if (!discoveredMediaResolution(x, 'STORY_WEB_GRAPHQL').ok) {
+                unresolvedItems++;
+            }
         }
 
-        state.coverage.story =
-            true;
+        // A server-complete STORY response with an undownloadable item
+        // is an incomplete archive, not an empty/successful collection.
+        state.coverage.story = unresolvedItems === 0;
 
         updateStats();
 
         log(
             `STORY Web GraphQL: ${Array.isArray(items) ? items.length : 0} current items, ` +
-            `reels=${reels.length}, ended=true.`
+            `unresolved=${unresolvedItems}, reels=${reels.length}, ` +
+            `ended=${state.coverage.story}.`
         );
 
-        return true;
+        return state.coverage.story;
     }
 
     async function getHighlightTrayWeb() {
@@ -10491,12 +10548,21 @@
                 continue;
             }
 
+            let unresolvedItems = 0;
             for (const x of items) {
-                addMedia(
-                    x,
-                    'HIGHLIGHT',
-                    `HIGHLIGHT_REEL:${id}`,
-                    { highlightId: id }
+                const source = `HIGHLIGHT_REEL:${id}`;
+                addMedia(x, 'HIGHLIGHT', source, { highlightId: id });
+                if (!discoveredMediaResolution(x, source).ok) {
+                    unresolvedItems++;
+                    allOk = false;
+                }
+            }
+            if (unresolvedItems) {
+                log(
+                    `HIGHLIGHT “${title}” [${id}]: ${unresolvedItems}/${items.length} ` +
+                    'returned items have unresolved media units. ' +
+                    'Highlight coverage remains INCOMPLETE.',
+                    'warn'
                 );
             }
 
