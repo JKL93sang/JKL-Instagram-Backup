@@ -145,6 +145,7 @@ function gmScenario(reply) {
         extract('feedbackCircuitBreak') +
         extract('rateLimitCircuitBreak') +
         extract('apiUnhealthyError') +
+        extract('unsafePrivateRestMethod') +
         extract('gmRequest') +
         '\nreturn gmRequest;');
     const request=create(state,gm);
@@ -194,6 +195,7 @@ for (const [type, reply, flag] of [
         extract('feedbackCircuitBreak') +
         extract('rateLimitCircuitBreak') +
         extract('apiUnhealthyError') +
+        extract('unsafePrivateRestMethod') +
         extract('gmRequest') +
         '\nreturn gmRequest;'
     );
@@ -247,6 +249,7 @@ for (const [type, reply, flag] of [
         extract('feedbackCircuitBreak') +
         extract('rateLimitCircuitBreak') +
         extract('apiUnhealthyError') +
+        extract('unsafePrivateRestMethod') +
         extract('gmRequest') +
         '\nreturn gmRequest;'
     );
@@ -292,7 +295,8 @@ for (const [kind, event, expected] of [
         extract('feedbackCircuitBreak')+
         extract('rateLimitCircuitBreak')+
         extract('apiUnhealthyError')+
-        extract('gmRequest')+
+        extract('unsafePrivateRestMethod') +
+        extract('gmRequest') +
         '\nreturn gmRequest;'
     );
     const request=build(state,opts=>sent.push(opts));
@@ -338,7 +342,8 @@ for (const [kind, event, expected] of [
         extract('feedbackCircuitBreak')+
         extract('rateLimitCircuitBreak')+
         extract('apiUnhealthyError')+
-        extract('gmRequest')+
+        extract('unsafePrivateRestMethod') +
+        extract('gmRequest') +
         '\nreturn gmRequest;'
     )(state,opts=>{
         sent++;
