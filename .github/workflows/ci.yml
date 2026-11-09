@@ -78,6 +78,9 @@ jobs:
       - name: Surface-to-file integrity and target-only public fallback integration tests
         run: node tests/selected-surface-archive-integrity.test.mjs
 
+      - name: Passive native REELS bootstrap, one-shot scope and partial archive tests
+        run: node tests/passive-native-reels-bootstrap-regression.test.mjs
+
       - name: REELS verified-native cursor pagination tests
         run: node tests/reels-native-pagination-regression.test.mjs
 
