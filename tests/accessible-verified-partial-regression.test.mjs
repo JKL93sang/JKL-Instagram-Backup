@@ -173,8 +173,8 @@ assert.ok(f.logs.some(x => x[0].includes('ACCESSIBLE PARTIAL READY')));
     assert.ok(!x.verifiedAccessibleMedia().some(m => m.id === 'tagged-unverified'));
     x.capturePartialDownloadGrants();
     const count = x.state.partialDownloadGrants.accessible.mediaCount;
-    assert.equal(count, 7,
-        '4 fixture baseline archived units plus 2 highlights and one tagged');
+    assert.equal(count, 6,
+        'one POST, two highlights, one STORY, one AVATAR and one TAGGED');
     x.state.running = false;
     assert.equal(x.verifiedPartialDownloadIntegrity(MODE.ACCESSIBLE).ok, true);
     x.state.roots.TAGGED.clear();
