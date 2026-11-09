@@ -75,6 +75,9 @@ jobs:
       - name: REELS evidence and authenticated-request safety architecture tests
         run: node tests/reels-evidence-and-request-safety-regression.test.mjs
 
+      - name: Surface-to-file integrity and target-only public fallback integration tests
+        run: node tests/selected-surface-archive-integrity.test.mjs
+
       - name: REELS verified-native cursor pagination tests
         run: node tests/reels-native-pagination-regression.test.mjs
 
