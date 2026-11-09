@@ -10873,6 +10873,20 @@
                     );
             }
 
+            if (m.type === 'TAGGED') {
+                // A tagged item is not owned by the target account, but
+                // it is part of this viewer's authenticated Web TAGGED
+                // collection. Authorize only when the collection's server
+                // pagination AND each returned media unit were reconciled.
+                return state.scanPlan?.tagged === true &&
+                    state.coverage.tagged === true &&
+                    m.sources.has('TAGGED') &&
+                    m.rootIds instanceof Set &&
+                    [...m.rootIds].some(rootId =>
+                        state.roots.TAGGED.has(String(rootId))
+                    );
+            }
+
             if (m.type === 'HIGHLIGHT') {
                 return state.scanPlan?.highlight === true &&
                     state.coverage.highlights === true &&
@@ -10909,6 +10923,7 @@
             plan: {
                 post: state.scanPlan?.post === true,
                 reel: state.scanPlan?.reel === true,
+                tagged: state.scanPlan?.tagged === true,
                 highlight: state.scanPlan?.highlight === true,
                 story: state.scanPlan?.story === true,
                 avatar: state.scanPlan?.avatar === true,
@@ -10916,6 +10931,7 @@
             coverage: {
                 publicShadow: state.coverage.publicShadow === true,
                 ownedHydration: state.coverage.ownedHydration === true,
+                tagged: state.coverage.tagged === true,
                 highlights: state.coverage.highlights === true,
                 story: state.coverage.story === true,
                 avatar: state.coverage.avatar === true,
@@ -10930,6 +10946,7 @@
                 .map(([id, info]) => [id, info.title, info.folder])
                 .sort((a, b) => a[0].localeCompare(b[0])),
             roots: {
+                tagged: [...state.roots.TAGGED].map(String).sort(),
                 highlight: [...state.roots.HIGHLIGHT].map(String).sort(),
                 story: [...state.roots.STORY].map(String).sort(),
                 avatar: [...state.roots.AVATAR].map(String).sort(),
