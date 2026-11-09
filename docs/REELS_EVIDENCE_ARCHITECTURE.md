@@ -95,3 +95,20 @@ New tests: `tests/selected-surface-archive-integrity.test.mjs` executes the prod
 
 **Remaining blockers:** the absent-tab REELS feed is still unobservable from the available evidence; the current script does not recover or prove hidden-from-grid Reels in this case. A tagged post with metadata but no usable media URL remains unarchived unless Instagram genuinely exposes an authorized usable media payload. No further browser/account scan has been requested or executed by this audit. Existing authenticated REST requests retain a nonzero restriction risk.
 
+
+## v1.5.86 — native Web Reels observed before the scan, without Reels-tab probing
+
+This offline pass addresses three concrete issues:
+
+1. **Lost pre-scan Reels evidence:** `scanAll` cleared `net.reelsByUserId` unconditionally after identity resolution, discarding any real, user-targeted, native Web Reels response captured just before scanning. `prepareReelsNativeEvidenceForScan(uid)` now preserves only a current-profile native response captured within `PROFILE_BOOTSTRAP_MAX_AGE_MS` (20 seconds), with at least one target-scoped initial request and actual roots. The snapshot is consumed **once**; stale, future-dated, or previously consumed evidence is cleared. A fresh initial native Reel page replaces previous cached roots rather than unioning separate page-load observations.
+2. **Absent Reels-tab discovery:** when the tab is absent, the script never opens a speculative URL or GraphQL endpoint, but it can now ingest already-observed, target-scoped native Reels as `REEL_NATIVE_OBSERVED`. A root enters `verifiedPassiveReelRootIds` only when all its media units are present in the archive inventory with the matching root ID, source, filename and URL or indexed file. Such units may enter `VERIFIED ACCESSIBLE PARTIAL`, with the verified root IDs included in the immutable source fingerprint. **The Reels feed is still INCOMPLETE** without independent, exhaustive server pagination. An already-observed native root is NOT a zero-count or full-feed proof.
+3. **Origin-scoped network errors:** media CDN and image hosts can produce HTTP 401, 429 or JSON errors that do not mean the authenticated Instagram API session is restricted. `gmRequest` now uses `instagramRequestScope(url)` to open account-level feedback/429/401/challenge circuits only for actual Instagram origins (and 401/checkpoint for Instagram API paths). CDN errors remain individual media failures. This avoids a false session shutdown from a broken or expired CDN URL.
+4. **Parent media integrity:** `discoveredMediaResolution` also requires each unit's `rootIds` to contain the exact parent root ID from its current collection, not merely matching a reused source tag or media ID. This blocks cross-root false completeness when a media unit appears in multiple contexts.
+5. **Offline testing:** new `tests/passive-native-reels-bootstrap-regression.test.mjs` evaluates the real native capture function, single-use TTL bootstrap, absent-tab scanner, source-checked partial selection, stale/replayed snapshots, cross-profile response rejection, and unresolvable native roots. Existing REELS pagination/no-tab fixtures were updated to include the new metadata. CDN 401/429 isolation is tested for both GM `onload` and `onerror`; 176 Highlights and all other regressions remain in CI.
+
+### Operational interpretation and remaining risk
+
+This capability depends **strictly on genuine browser-native Reels data that Instagram has already exposed for the same target**. It generates **zero additional Reels network probes**. The Nov 9 example (`@jennnii97`), with no Reels tab, no native Reels data and no clips metadata, still cannot be called complete or assumed empty, and no extra Reel will appear unless the browser itself exposes one in a validated response.
+
+These synthetic tests prove the scripted state transitions, not the behavior of Instagram in a real logged-in session. No user/account testing has been performed for v1.5.86, and no account safety guarantee is possible. `main` remains stable v1.5.78; PR #18 remains DRAFT.
+
