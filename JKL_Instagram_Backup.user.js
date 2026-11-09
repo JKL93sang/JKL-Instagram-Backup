@@ -9795,11 +9795,20 @@
                 : (root?.edge_sidecar_to_children?.edges || [])
                     .map(e => e?.node).filter(Boolean);
         const units = children.length ? children : [root];
+        const product = String(
+            root.product_type || root.media_product_type || ''
+        ).toLowerCase();
         const isCarousel = Number(root.media_type) === 8 ||
             root.__typename === 'GraphSidecar' ||
-            String(root.product_type || '').toLowerCase() === 'carousel_container';
-        const claimedCount = Number(root.carousel_media_count || 0);
+            ['carousel_container', 'carousel'].includes(product);
+        const rawClaim = root.carousel_media_count;
+        const claimedCount = rawClaim == null || rawClaim === ''
+            ? 0 : Number(rawClaim);
 
+        if (rawClaim != null && rawClaim !== '' &&
+            (!Number.isSafeInteger(claimedCount) || claimedCount < 0)) {
+            return fail('invalid_carousel_item_count');
+        }
         if (root?.edge_sidecar_to_children?.page_info?.has_next_page === true) {
             return fail('sidecar_pagination_unfinished');
         }
