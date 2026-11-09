@@ -22,14 +22,19 @@ function scenario({ hasLink = false, navOK = false } = {}) {
         userId: '45790055326',
         coverage: { reels: true },
         roots: { REEL: new Set() },
+        verifiedPassiveReelRootIds: new Set(),
+    };
+    const net = {
+        reelsByUserId: new Map(),
+        reelNativeAuditByUserId: new Map(),
     };
     const location = { pathname:'/jennnii97/' };
     const runner = new Function(
-        'state', 'location', 'window', 'log', 'status',
+        'state', 'net', 'location', 'window', 'log', 'status',
         'pathNorm', 'findAnchor', 'go', 'scanReelsNativeCompletion', 'updateStats',
         extract('scanReels') + '\nreturn scanReels;'
     )(
-        state, location, { scrollY: 0 },
+        state, net, location, { scrollY: 0 },
         (msg, level) => logs.push({ msg, level }),
         () => {},
         x => String(x).endsWith('/') ? String(x).slice(0, -1) : String(x),
@@ -53,7 +58,7 @@ assert.equal(noTab.counts.navigation, 0, 'no navigation attempt without link');
 assert.equal(noTab.counts.nativeCompletion, 0, 'no unsupported native completion request');
 assert.equal(noTab.state.coverage.reels, false,
     'absence of a tab is not proof of zero reels');
-assert.ok(noTab.logs.some(x => x.msg.includes('no request attempted')),
+assert.ok(noTab.logs.some(x => x.msg.includes('No new REELS request')),
     'feedback_required endpoint must not be called when native tab is absent');
 
 const failedClick = scenario({ hasLink: true, navOK: false });
