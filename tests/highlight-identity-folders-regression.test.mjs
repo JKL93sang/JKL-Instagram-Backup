@@ -89,7 +89,7 @@ const testApi = new Function(
         const m = {
             id, type, highlightId: context.highlightId,
             highlightIds: new Set([context.highlightId]),
-            sources: new Set([tag]),
+            sources: new Set([tag]), rootIds: new Set([String(id)]),
             filename: username + ' - HIGHLIGHT - 2026_11_08 - ' + id + '.jpg',
             url: 'https://example.test/' + id,
         };
