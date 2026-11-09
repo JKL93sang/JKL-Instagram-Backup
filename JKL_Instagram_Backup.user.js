@@ -314,6 +314,9 @@
         taggedNativeVariables: null,
         taggedInitialData: null,
         taggedInitialUserId: '',
+        // Authentic native TAGGED first pages, isolated by requested user ID.
+        taggedNativeByUserId: new Map(),
+        taggedBootstrapConsumedByUserId: new Set(),
 
         relayFbDtsg: '',
         relayLsd: '',
@@ -2046,40 +2049,24 @@
             x?.display_resources ||
             [];
 
-        if (
-            Array.isArray(c) &&
-            c.length
-        ) {
-            return [...c]
-                .map(
-                    v => ({
-                        u:
-                            v.url ||
-                            v.src ||
-                            '',
-
-                        a:
-                            Number(
-                                v.width ||
-                                v.config_width ||
-                                0
-                            ) *
-                            Number(
-                                v.height ||
-                                v.config_height ||
-                                0
-                            ),
-                    })
-                )
+        if (Array.isArray(c) && c.length) {
+            const highestResolution = [...c]
+                .map(v => ({
+                    u: v.url || v.src || '',
+                    a: Number(v.width || v.config_width || 0) *
+                        Number(v.height || v.config_height || 0),
+                }))
                 .filter(v => v.u)
-                .sort(
-                    (a, b) =>
-                        b.a - a.a
-                )[0]
-                ?.u || '';
+                .sort((a, b) => b.a - a.a)[0]?.u;
+            if (highestResolution) return highestResolution;
         }
 
+        // XDTMediaDict (including TAGGED GraphQL) calls the display image
+        // "display_uri"; "display_url" is the older GraphQL spelling.
+        // Never use this image fallback for a video (addMedia asks
+        // bestVideo() for video media and refuses poster-only entries).
         return (
+            x?.display_uri ||
             x?.display_url ||
             x?.thumbnail_url ||
             x?.profile_pic_url_hd ||
@@ -3927,9 +3914,47 @@
             connection(data, REEL_CONNECTION_KEY);
     }
     function taggedConn(data) {
-        return keyedConnection(data, TAGGED_CONNECTION_KEY) ||
-            connection(data, TAGGED_CONNECTION_KEY);
+        // Generic recursive "any edges" is not TAGGED evidence. GraphQL
+        // payloads can contain unrelated connections or partial errors.
+        return keyedConnection(data, TAGGED_CONNECTION_KEY);
     }
+
+    function captureTagged(data, meta, now = Date.now()) {
+        if (!data || (Array.isArray(data.errors) && data.errors.length)) {
+            return false;
+        }
+        const conn = keyedConnection(data, TAGGED_CONNECTION_KEY);
+        if (!conn || !Array.isArray(conn.edges) ||
+            typeof conn.page_info?.has_next_page !== 'boolean') {
+            return false;
+        }
+        const v = meta?.variables;
+        if (!v || typeof v !== 'object') return false;
+        const uid = String(
+            v.user_id ?? v.data?.user_id ?? v.target_user_id ?? ''
+        ).split('_')[0];
+        if (!/^\d+$/.test(uid)) return false;
+
+        // A continuation cannot serve as an initial-page snapshot.
+        const after = v.after ?? v.data?.after ?? null;
+        if (after !== null && after !== '') return false;
+        let variables;
+        try {
+            variables = JSON.parse(JSON.stringify(v));
+        } catch {
+            return false;
+        }
+        const docId = /^\d+$/.test(String(meta?.docId || ''))
+            ? String(meta.docId) : '';
+        net.taggedNativeByUserId.set(uid, {
+            uid, data, variables, docId,
+            friendly: String(meta?.friendly || ''),
+            capturedAt: Number(now),
+        });
+        net.taggedBootstrapConsumedByUserId.delete(uid);
+        return true;
+    }
+
     function highlightTrayConn(data) {
         const direct =
             data?.data?.highlights ||
@@ -4584,38 +4609,6 @@
                                     String(m.docId);
                             }
 
-                            if (
-                                TAGGED_NAMES.has(m.friendly) &&
-                                m.docId
-                            ) {
-                                if (
-                                    m.friendly ===
-                                    'PolarisProfileTaggedTabContentQuery_connection'
-                                ) {
-                                    net.taggedDocConnection =
-                                        String(m.docId);
-                                }
-                                else {
-                                    net.taggedDocInitial =
-                                        String(m.docId);
-                                }
-
-                                if (
-                                    m.variables &&
-                                    typeof m.variables === 'object'
-                                ) {
-                                    try {
-                                        net.taggedNativeVariables =
-                                            JSON.parse(
-                                                JSON.stringify(
-                                                    m.variables
-                                                )
-                                            );
-                                    }
-                                    catch {}
-                                }
-                            }
-
                             const knownProfileQuery =
                                 GRID_NAMES.has(m.friendly) ||
                                 REEL_NAMES.has(m.friendly);
@@ -4676,8 +4669,7 @@
                                         const hasReelConnection =
                                             !!keyedConnection(data, REEL_CONNECTION_KEY);
                                         const hasTaggedConnection =
-                                            !!keyedConnection(data, TAGGED_CONNECTION_KEY) ||
-                                            !!connection(data, TAGGED_CONNECTION_KEY);
+                                            !!keyedConnection(data, TAGGED_CONNECTION_KEY);
                                         const hasHighlightTray =
                                             !!highlightTrayConn(data);
                                         const targetsProfile =
@@ -4694,15 +4686,8 @@
                                                 String(state.userId || '');
                                         }
 
-                                        if (
-                                            TAGGED_NAMES.has(m.friendly) &&
-                                            hasTaggedConnection &&
-                                            targetsProfile
-                                        ) {
-                                            net.taggedInitialData =
-                                                data;
-                                            net.taggedInitialUserId =
-                                                String(state.userId || '');
+                                        if (hasTaggedConnection) {
+                                            captureTagged(data, m);
                                         }
 
                                         if (
@@ -4848,39 +4833,6 @@
 
                     if (
                         meta &&
-                        TAGGED_NAMES.has(meta.friendly) &&
-                        meta.docId
-                    ) {
-                        if (
-                            meta.friendly ===
-                            'PolarisProfileTaggedTabContentQuery_connection'
-                        ) {
-                            net.taggedDocConnection =
-                                String(meta.docId);
-                        }
-                        else {
-                            net.taggedDocInitial =
-                                String(meta.docId);
-                        }
-
-                        if (
-                            meta.variables &&
-                            typeof meta.variables === 'object'
-                        ) {
-                            try {
-                                net.taggedNativeVariables =
-                                    JSON.parse(
-                                        JSON.stringify(
-                                            meta.variables
-                                        )
-                                    );
-                            }
-                            catch {}
-                        }
-                    }
-
-                    if (
-                        meta &&
                         (
                             GRID_NAMES.has(meta.friendly) ||
                             REEL_NAMES.has(meta.friendly) ||
@@ -4949,8 +4901,7 @@
                                     const hasReelConnection =
                                         !!keyedConnection(data, REEL_CONNECTION_KEY);
                                     const hasTaggedConnection =
-                                        !!keyedConnection(data, TAGGED_CONNECTION_KEY) ||
-                                        !!connection(data, TAGGED_CONNECTION_KEY);
+                                        !!keyedConnection(data, TAGGED_CONNECTION_KEY);
                                     const hasHighlightTray =
                                         !!highlightTrayConn(data);
                                     const targetsProfile =
@@ -4967,15 +4918,8 @@
                                             String(state.userId || '');
                                     }
 
-                                    if (
-                                        TAGGED_NAMES.has(meta.friendly) &&
-                                        hasTaggedConnection &&
-                                        targetsProfile
-                                    ) {
-                                        net.taggedInitialData =
-                                            data;
-                                        net.taggedInitialUserId =
-                                            String(state.userId || '');
+                                    if (hasTaggedConnection) {
+                                        captureTagged(data, meta);
                                     }
 
                                     if (
@@ -8350,6 +8294,41 @@
         return {retained:false, roots:0, ageMs:null};
     }
 
+    // Consume only a fresh, ID-bound first TAGGED page captured by the real
+    // browser. A previous profile or scan cannot reuse it as completion proof.
+    function prepareTaggedNativeEvidenceForScan(uid, now = Date.now()) {
+        const id = String(uid || '');
+        const snapshot = net.taggedNativeByUserId.get(id);
+        const age = Number(now) - Number(snapshot?.capturedAt);
+        const eligible = !!snapshot && snapshot.uid === id &&
+            Number.isFinite(age) && age >= 0 &&
+            age <= APP.PROFILE_BOOTSTRAP_MAX_AGE_MS &&
+            !net.taggedBootstrapConsumedByUserId.has(id) &&
+            !!taggedConn(snapshot.data) &&
+            typeof taggedConn(snapshot.data)?.page_info?.has_next_page === 'boolean';
+
+        if (!eligible) {
+            net.taggedNativeByUserId.delete(id);
+            return {retained:false, roots:0, ageMs:null};
+        }
+
+        net.taggedBootstrapConsumedByUserId.add(id);
+        net.taggedNativeByUserId.delete(id);
+        net.taggedInitialData = snapshot.data;
+        net.taggedInitialUserId = id;
+        net.taggedNativeVariables = snapshot.variables;
+        if (snapshot.friendly.endsWith('_connection')) {
+            net.taggedDocConnection = snapshot.docId;
+        } else {
+            net.taggedDocInitial = snapshot.docId;
+        }
+        return {
+            retained:true,
+            roots:taggedConn(snapshot.data).edges.length,
+            ageMs:age,
+        };
+    }
+
     function profileCompletionRequirement({
         primeCaptured = false,
         nativeEnded = false,
@@ -9994,6 +9973,7 @@
         let totalRoots = 0;
         let unresolvedRoots = 0;
         let resolvedRoots = 0;
+        const unresolvedReasons = new Map();
         let endReason = 'max_pages';
         const seenCursors = new Set();
 
@@ -10091,6 +10071,13 @@
             const conn =
                 taggedConn(d);
 
+            if (Array.isArray(d?.errors) && d.errors.length) {
+                log('TAGGED GraphQL page ' + page +
+                    ': server returned GraphQL errors; refusing partial success.',
+                    'warn');
+                return false;
+            }
+
             if (!conn) {
                 log(
                     `TAGGED GraphQL page ${page}: tagged connection missing.`,
@@ -10113,8 +10100,15 @@
                 if (rootId) state.roots.TAGGED.add(rootId);
                 addMedia(media, 'TAGGED', 'TAGGED');
                 const proof = discoveredMediaResolution(media, 'TAGGED');
-                if (proof.ok) resolvedRoots++;
-                else unresolvedRoots++;
+                if (proof.ok) {
+                    resolvedRoots++;
+                } else {
+                    unresolvedRoots++;
+                    unresolvedReasons.set(
+                        proof.reason,
+                        (unresolvedReasons.get(proof.reason) || 0) + 1
+                    );
+                }
             }
 
             updateStats();
@@ -10184,7 +10178,9 @@
         log(
             `TAGGED GraphQL complete: pages=${pages}, roots=${totalRoots}, ` +
             `resolved=${resolvedRoots}, unresolved=${unresolvedRoots}, ` +
-            `end=${endReason}, ended=${state.coverage.tagged}. ` +
+            `end=${endReason}, ended=${state.coverage.tagged}, ` +
+            `reasons=${[...unresolvedReasons].map(([key, count]) =>
+                key + ':' + count).join(',') || '-'}. ` +
             (unresolvedRoots
                 ? 'Returned tagged roots lack archived media units; ' +
                   'not treating pagination end as download completeness.'
@@ -12032,6 +12028,16 @@
             net.taggedNativeVariables = null;
             net.taggedInitialData = null;
             net.taggedInitialUserId = '';
+            const taggedBootstrap = prepareTaggedNativeEvidenceForScan(
+                state.userId
+            );
+            if (scanSelected('tagged') && taggedBootstrap.retained) {
+                log(
+                    'TAGGED native Web bootstrap preserved: ' +
+                    taggedBootstrap.roots + ' first-page roots, age=' +
+                    taggedBootstrap.ageMs + ' ms; no duplicate first request.'
+                );
+            }
 
             net.highlightTrayDoc = '';
             net.highlightTrayFriendly = '';
