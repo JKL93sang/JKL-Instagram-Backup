@@ -65,6 +65,7 @@ function scenario({
         'updateStats', 'performance', 'scanProfilerPhase',
         'resolveProfile', 'refreshProfileInfo', 'prepareProfileNativeEvidenceForScan',
         'prepareReelsNativeEvidenceForScan',
+        'prepareTaggedNativeEvidenceForScan',
         'scanPublicShadow', 'scanMainGrid', 'scanConnectedHiddenCandidates',
         'scanReels', 'scanTagged', 'scanHighlights', 'scanStory',
         'scanAvatar', 'hydrateOwnedRootsDeep', 'logScanProfilerSummary',
@@ -120,6 +121,7 @@ function scenario({
             state.exclusive.hasExclusiveFeedContent = false;
             return true;
         },
+        () => ({ retained:false }),
         () => ({ retained:false }),
         () => ({ retained:false }),
         async () => {
