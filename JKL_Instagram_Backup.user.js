@@ -2043,7 +2043,7 @@
             .split('_')[0];
     }
 
-    function bestImage(x) {
+    function bestImage(x, allowPreviewFallback = true) {
         const c =
             x?.image_versions2?.candidates ||
             x?.display_resources ||
@@ -2068,10 +2068,12 @@
         return (
             x?.display_uri ||
             x?.display_url ||
-            x?.thumbnail_url ||
-            x?.profile_pic_url_hd ||
-            x?.profile_pic_url ||
-            ''
+            (allowPreviewFallback
+                ? (x?.thumbnail_url ||
+                    x?.profile_pic_url_hd ||
+                    x?.profile_pic_url ||
+                    '')
+                : '')
         );
     }
 
@@ -2546,7 +2548,8 @@
             const url =
                 video
                     ? bestVideo(child)
-                    : bestImage(child);
+                    // A TAGGED preview/avatar does not prove a full photo.
+                    : bestImage(child, type !== 'TAGGED');
 
             const diskMeta =
                 state.diskActive
