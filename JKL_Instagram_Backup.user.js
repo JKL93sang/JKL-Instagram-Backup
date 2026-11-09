@@ -208,6 +208,9 @@
 
         // Authorized only after full authenticated media-info, never previews.
         verifiedSubscriberRootIds: new Set(),
+        // Individual Reel units from already-observed, target-bound native
+        // Web responses. This is never proof of full REELS pagination.
+        verifiedPassiveReelRootIds: new Set(),
         partialDownloadGrants: { subscriber: null, accessible: null },
 
         roots: {
@@ -303,6 +306,8 @@
         reelNativeAuditByUserId: new Map(),
         reelNativeInitialByUserId: new Map(),
         reelNativeContinuationByUserId: new Map(),
+        reelCaptureSeenAtByUserId: new Map(),
+        reelBootstrapConsumedByUserId: new Set(),
 
         taggedDocInitial: '',
         taggedDocConnection: '',
@@ -1229,6 +1234,7 @@
         state.hidden.failed = 0;
         state.hidden.recoveredCodes = [];
         state.verifiedSubscriberRootIds.clear();
+        state.verifiedPassiveReelRootIds.clear();
         state.highlightCatalog.clear();
         state.highlightRenameNotices.clear();
         clearPartialDownloadGrants();
@@ -4356,8 +4362,15 @@
         const c = reelConn(data);
         if (!c || !Array.isArray(c.edges)) return;
 
-        const map = net.reelsByUserId.get(uid) || new Map();
+        const variables = meta?.variables;
+        const cursor = reelNativeCursorField(variables);
+        const isContinuation = !!cursor?.value;
 
+        // A fresh initial page replaces older passive observations of this
+        // profile. Never combine roots from independent browser page loads.
+        const map = isContinuation
+            ? (net.reelsByUserId.get(uid) || new Map())
+            : new Map();
         for (const e of c.edges) {
             const n = edgeNode(e);
             const k = normalizePk(n) ||
@@ -4367,10 +4380,11 @@
 
         net.reelsByUserId.set(uid, map);
         net.reelPageInfo.set(uid, c.page_info || null);
-
-        const variables = meta?.variables;
-        const cursor = reelNativeCursorField(variables);
-        const isContinuation = !!cursor?.value;
+        net.reelCaptureSeenAtByUserId.set(uid, Date.now());
+        // A newly observed initial request is fresh evidence for one scan.
+        if (!isContinuation) {
+            net.reelBootstrapConsumedByUserId.delete(uid);
+        }
 
         const audit = net.reelNativeAuditByUserId.get(uid) || {
             initial:0, continuation:0, cursorPath:'',
@@ -9215,11 +9229,44 @@
             pathNorm(location.pathname) !== pathNorm(target) &&
             !findAnchor(target)
         ) {
+            const cached = net.reelsByUserId.get(state.userId) || new Map();
+            const audit = net.reelNativeAuditByUserId.get(state.userId);
+            let resolved = 0;
+            let unresolved = 0;
+
+            // A missing tab is not permission to issue another request.
+            // Preserve media from real Web responses observed before this
+            // scan, provided they were scoped to the current profile. Each
+            // media unit still needs an exact source-to-file proof.
+            if (audit?.initial >= 1) {
+                for (const raw of cached.values()) {
+                    const rootId = normalizePk(raw);
+                    if (!/^\d+$/.test(rootId)) {
+                        unresolved++;
+                        continue;
+                    }
+                    addMedia(raw, 'REEL', 'REEL_NATIVE_OBSERVED');
+                    if (
+                        discoveredMediaResolution(
+                            raw, 'REEL_NATIVE_OBSERVED'
+                        ).ok
+                    ) {
+                        state.verifiedPassiveReelRootIds.add(rootId);
+                        resolved++;
+                    }
+                    else {
+                        unresolved++;
+                    }
+                }
+            }
+
             state.coverage.reels = false;
             log(
-                'REELS tab absent: no verified native Web pagination exists. ' +
-                'Private mobile clips/user/ is disabled after Instagram ' +
-                'feedback_required; no request attempted. ' +
+                'REELS tab absent: native_observed=' + resolved +
+                ', native_unresolved=' + unresolved +
+                '. Individual verified media can enter ACCESSIBLE PARTIAL; ' +
+                'this does NOT prove the complete REELS feed. No new ' +
+                'REELS request or private mobile clips/user/ probe. ' +
                 'REELS remains INCOMPLETE.',
                 'warn'
             );
@@ -10914,6 +10961,19 @@
                     );
             }
 
+            if (m.type === 'REEL') {
+                // Only a media unit from a genuinely observed, target-scoped
+                // native Web Reel response. Unknown feed completeness
+                // remains an independent guard for full-archive mode.
+                return state.scanPlan?.reel === true &&
+                    m.sources.has('REEL_NATIVE_OBSERVED') &&
+                    m.rootIds instanceof Set &&
+                    state.verifiedPassiveReelRootIds instanceof Set &&
+                    [...m.rootIds].some(rootId =>
+                        state.verifiedPassiveReelRootIds.has(String(rootId))
+                    );
+            }
+
             if (m.type === 'TAGGED') {
                 // A tagged item is not owned by the target account, but
                 // it is part of this viewer's authenticated Web TAGGED
@@ -10987,6 +11047,8 @@
                 .map(([id, info]) => [id, info.title, info.folder])
                 .sort((a, b) => a[0].localeCompare(b[0])),
             roots: {
+                passiveReels: [...(state.verifiedPassiveReelRootIds || [])]
+                    .map(String).sort(),
                 tagged: [...state.roots.TAGGED].map(String).sort(),
                 highlight: [...state.roots.HIGHLIGHT].map(String).sort(),
                 story: [...state.roots.STORY].map(String).sort(),
@@ -11924,16 +11986,39 @@
                   'has_next=' + nativeBootstrap.pageInfo.has_next_page + '.'
                 : 'PROFILE native bootstrap unavailable or stale; ' +
                   'a fresh verified server response is required.');
-            net.reelsByUserId.set(
-                state.userId,
-                new Map()
-            );
-            net.reelPageInfo.delete(
-                state.userId
-            );
-            net.reelNativeAuditByUserId.delete(state.userId);
-            net.reelNativeInitialByUserId.delete(state.userId);
-            net.reelNativeContinuationByUserId.delete(state.userId);
+            // The old reset discarded real, freshly observed Reels before
+            // REELS scanning even started. Preserve only a target-bound,
+            // first-use native Web capture within the bootstrap TTL.
+            const reelObservedAt =
+                net.reelCaptureSeenAtByUserId?.get(state.userId);
+            const reelAge = Date.now() - Number(reelObservedAt);
+            const reelAudit = net.reelNativeAuditByUserId.get(state.userId);
+            const reelCache = net.reelsByUserId.get(state.userId);
+            const reelBootstrapFresh =
+                Number.isFinite(reelObservedAt) &&
+                Number.isFinite(reelAge) && reelAge >= 0 &&
+                reelAge <= APP.PROFILE_BOOTSTRAP_MAX_AGE_MS &&
+                reelAudit?.initial >= 1 &&
+                reelCache instanceof Map &&
+                reelCache.size > 0 &&
+                net.reelBootstrapConsumedByUserId?.has(state.userId) !== true;
+
+            if (reelBootstrapFresh) {
+                net.reelBootstrapConsumedByUserId.add(state.userId);
+                log(
+                    'REELS native Web bootstrap preserved: ' +
+                    reelCache.size + ' already-observed roots, age=' +
+                    reelAge + ' ms; no additional request.'
+                );
+            }
+            else {
+                net.reelsByUserId.set(state.userId, new Map());
+                net.reelPageInfo.delete(state.userId);
+                net.reelNativeAuditByUserId.delete(state.userId);
+                net.reelNativeInitialByUserId.delete(state.userId);
+                net.reelNativeContinuationByUserId.delete(state.userId);
+                net.reelCaptureSeenAtByUserId?.delete(state.userId);
+            }
 
             net.taggedDocInitial = '';
             net.taggedDocConnection = '';
