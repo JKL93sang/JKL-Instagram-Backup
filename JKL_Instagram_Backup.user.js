@@ -379,6 +379,27 @@
         return null;
     }
 
+    // A CDN media failure is NOT evidence that the Instagram API session
+    // is invalid. Keep account/session circuit breakers scoped to the
+    // instagram.com origin (and 401 checks only to API/GraphQL paths).
+    // Never decide by Content-Type alone: CDN error payloads may be JSON.
+    function instagramRequestScope(url) {
+        try {
+            const u = new URL(String(url || ''));
+            const host = u.hostname.toLowerCase();
+            const instagramOrigin = host === 'instagram.com' ||
+                host.endsWith('.instagram.com');
+            const api = instagramOrigin && (
+                u.pathname.startsWith('/api/') ||
+                u.pathname.startsWith('/graphql')
+            );
+            return {instagramOrigin, api};
+        }
+        catch {
+            return {instagramOrigin:false, api:false};
+        }
+    }
+
     function gmRequest(options) {
         // Bound GM transports to two concurrent in-flight requests.
         // Any pending work is rejected after an Instagram safety circuit.
@@ -485,12 +506,7 @@
                 timeout: 30000,
                 ...request,
                 onload: response => {
-                    const url = String(request.url || '');
-                    const headersText = String(response?.responseHeaders || '');
-                    const apiLike =
-                        /(^|\.)instagram\.com\/api\//i.test(url) ||
-                        /(^|\.)instagram\.com\/graphql/i.test(url) ||
-                        /content-type:\s*(?:application|text)\/(?:json|javascript)/i.test(headersText);
+                    const scope = instagramRequestScope(request.url);
 
                     const payload =
                         typeof response?.responseText === 'string'
@@ -509,7 +525,7 @@
                     if (
                         feedbackCheck &&
                         Number(response?.status || 0) === 429 &&
-                        /(^|\.)instagram\.com(?:\/|$)/i.test(url)
+                        scope.instagramOrigin
                     ) {
                         finish(rateLimitCircuitBreak(
                             `${feedbackLabel}: Instagram returned HTTP 429.`
@@ -519,7 +535,7 @@
 
                     if (
                         feedbackCheck &&
-                        apiLike &&
+                        scope.api &&
                         Number(response?.status || 0) === 401
                     ) {
                         finish(apiUnhealthyError(
@@ -530,7 +546,7 @@
 
                     if (
                         feedbackCheck &&
-                        apiLike &&
+                        scope.api &&
                         feedbackRequiredIn(payload)
                     ) {
                         finish(feedbackCircuitBreak(
@@ -541,7 +557,7 @@
 
                     if (
                         feedbackCheck &&
-                        apiLike &&
+                        scope.api &&
                         instagramAuthChallengeIn(payload)
                     ) {
                         finish(apiUnhealthyError(
@@ -568,20 +584,21 @@
                     // Some GM implementations report a denied HTTP response
                     // through onerror, not onload. Apply the same hard stop
                     // semantics in BOTH transport callback paths.
-                    if (status === 429) {
+                    const scope = instagramRequestScope(request.url);
+                    if (scope.instagramOrigin && status === 429) {
                         finish(rateLimitCircuitBreak(
                             `${feedbackLabel}: Instagram returned HTTP 429.`
                         ));
                         return;
                     }
                     const body = response?.responseText ?? response?.response;
-                    if (feedbackRequiredIn(body)) {
+                    if (scope.instagramOrigin && feedbackRequiredIn(body)) {
                         finish(feedbackCircuitBreak(
                             `${feedbackLabel}: Instagram returned feedback_required.`
                         ));
                         return;
                     }
-                    if (status === 401 || instagramAuthChallengeIn(body)) {
+                    if (scope.api && (status === 401 || instagramAuthChallengeIn(body))) {
                         finish(apiUnhealthyError(
                             `${feedbackLabel}: Instagram authentication/checkpoint required; stopping requests.`
                         ));
