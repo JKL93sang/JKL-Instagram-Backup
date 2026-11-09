@@ -64,6 +64,7 @@ function scenario({
         'resetDownloadProgress', 'resetCoverage',
         'updateStats', 'performance', 'scanProfilerPhase',
         'resolveProfile', 'refreshProfileInfo', 'prepareProfileNativeEvidenceForScan',
+        'prepareReelsNativeEvidenceForScan',
         'scanPublicShadow', 'scanMainGrid', 'scanConnectedHiddenCandidates',
         'scanReels', 'scanTagged', 'scanHighlights', 'scanStory',
         'scanAvatar', 'hydrateOwnedRootsDeep', 'logScanProfilerSummary',
@@ -119,6 +120,7 @@ function scenario({
             state.exclusive.hasExclusiveFeedContent = false;
             return true;
         },
+        () => ({ retained:false }),
         () => ({ retained:false }),
         async () => {
             state.shadow.applicable = !privateProfile;
