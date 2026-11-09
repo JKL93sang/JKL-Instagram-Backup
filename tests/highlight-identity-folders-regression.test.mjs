@@ -35,7 +35,8 @@ const helpers = [
     'highlightFallbackFolderTitle', 'mediaArchiveCategory',
     'archiveDownloadPath', 'highlightArchivePathIdentity',
     'matchesHighlightArchivePath', 'reconcileHighlightTitleHistory',
-    'reportHighlightFolderRenames', 'scanHighlights', 'indexFolder', 'existingReason',
+    'reportHighlightFolderRenames', 'discoveredMediaResolution',
+    'scanHighlights', 'indexFolder', 'existingReason',
     'downloadAttempt',
 ].map(extract).join('\n');
 
@@ -43,7 +44,7 @@ const testApi = new Function(
     'state', 'APP', 'getHighlightTrayWeb', 'highlightTrayConn',
     'edgeNode', 'setScanProgressPhase', 'log', 'status',
     'fetchWebStoryReel', 'throwIfInstagramStop', 'addMedia',
-    'updateStats', 'sleep', 'rand',
+    'normalizePk', 'updateStats', 'sleep', 'rand',
     'filename', 'canonicalShortcode', 'legacyMatch', 'GM_download',
     'loadDb', 'flushLedger',
     helpers + '\nreturn { highlightFolderName, buildHighlightCatalog, ' +
@@ -94,6 +95,7 @@ const testApi = new Function(
         };
         state.queue.set(id, m);
     },
+    item => String(item?.pk || item?.id || '').split('_')[0],
     () => {}, async () => {}, () => 0,
     m => m.filename,
     x => x, () => false,
