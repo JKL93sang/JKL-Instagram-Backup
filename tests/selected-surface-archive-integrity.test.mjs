@@ -76,6 +76,13 @@ function proofFn(state) {
     assert.equal(resolve({...sidecar,carousel_media:[
         sidecar.carousel_media[0],sidecar.carousel_media[0]]},tag).ok,false,
         'duplicate child identity is not an exhaustive archive');
+    assert.equal(resolve(mk('77','https://example.test/cover.jpg',
+        {product_type:'carousel'}),tag).ok,false,
+        'carousel product type without child inventory cannot be complete');
+    assert.equal(resolve({...sidecar,carousel_media_count:'oops'},tag).ok,false,
+        'malformed carousel count is unknown, never a proof');
+    assert.equal(resolve({...sidecar,carousel_media_count:1.25},tag).ok,false,
+        'fractional count cannot prove completeness');
 }
 
 // Exercise actual TAGGED scanner: previously page_info_end marked a complete
