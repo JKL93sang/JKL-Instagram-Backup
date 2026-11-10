@@ -99,6 +99,9 @@ jobs:
       - name: PROFILE public-gap passive no-synthetic-Relay integration tests
         run: node tests/profile-public-gap-passive-regression.test.mjs
 
+      - name: Native PROFILE individual POST carousel verified partial tests
+        run: node tests/profile-native-individual-post-partial-regression.test.mjs
+
       - name: Native capture provenance, privacy and transport isolation tests
         run: node tests/native-capture-provenance-regression.test.mjs
 
