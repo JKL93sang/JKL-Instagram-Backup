@@ -224,4 +224,81 @@ assert.ok(
     source.includes('net.gridNativeAuditByUser.delete('),
     'native request state must be cleared at the start of each scan'
 );
+// Exercise the ACTUAL request builder, not only a mocked GraphQL response.
+// Regression from 2026-11-10: /api/graphql silently dropped the
+// X-Root-Field-Name header even when a successful native capture had it.
+{
+    const calls=[];
+    const netTransport={
+        relayTemplates:{api:null,query:null},
+        relayFbDtsg:'',relayLsd:'',relayJazoest:'',
+        relayBloksVersionId:'',
+    };
+    const dispatch=new Function(
+        'net','cookie','relayJazoest','fetchJson',
+        extract('webRelayGql')+'\\nreturn webRelayGql;'
+    )(
+        netTransport,
+        name=>name==='ds_user_id'?'actor-123':'',
+        ()=> '2example',
+        async(url,options,label,tries)=>{
+            calls.push({url,options,label,tries});
+            return {data:{}};
+        }
+    );
+    const nativeApiTemplate={
+        body:{
+            fb_dtsg:'test-native-dtsg',lsd:'test-native-lsd',
+            __d:'www',doc_id:'observed-doc',
+            fb_api_req_friendly_name:'ObservedNativeQuery',
+            variables:'{}',other_proven_field:'preserved',
+        },
+        headers:{
+            'x-root-field-name':
+                'xdt_api__v1__feed__user_timeline_graphql_connection',
+            'x-fb-lsd':'test-native-lsd',
+        },
+    };
+    const vars={username:'example.account',first:12,after:'observed-next-cursor'};
+    await dispatch('observed-doc',vars,'ObservedNativeQuery',{
+        endpoint:'api',nativeTemplate:nativeApiTemplate,
+        rootField:'UNVERIFIED_SUGGESTED_ROOT',
+    });
+    assert.equal(calls.length,1);
+    assert.equal(calls[0].url,'https://www.instagram.com/api/graphql');
+    assert.equal(calls[0].tries,1,'no automatic retries');
+    assert.equal(calls[0].options.headers['X-Root-Field-Name'],
+        nativeApiTemplate.headers['x-root-field-name'],
+        'replay the actually observed native root header, not the guessed option');
+    assert.deepEqual(JSON.parse(calls[0].options.body.get('variables')),vars);
+    assert.equal(calls[0].options.body.get('doc_id'),'observed-doc');
+    assert.equal(calls[0].options.body.get('other_proven_field'),'preserved');
+    assert.equal(calls[0].options.headers['X-FB-LSD'],'test-native-lsd');
+
+    calls.length=0;
+    await dispatch('observed-doc',vars,'ObservedNativeQuery',{
+        endpoint:'api',
+        nativeTemplate:{
+            body:{fb_dtsg:'test-native-dtsg'},
+            headers:{'x-root-field-name':''},
+        },
+        rootField:'UNVERIFIED_SUGGESTED_ROOT',
+    });
+    assert.equal(calls.length,1);
+    assert.equal(calls[0].options.headers['X-Root-Field-Name'],undefined,
+        'do not inject an unobserved root field on /api/graphql');
+
+    calls.length=0;
+    await dispatch('observed-doc',vars,'ObservedNativeQuery',{
+        endpoint:'query',
+        nativeTemplate:nativeApiTemplate,
+        rootField:'EXPECTED_QUERY_ROOT',
+    });
+    assert.equal(calls[0].url,'https://www.instagram.com/graphql/query');
+    assert.equal(calls[0].options.headers['X-Root-Field-Name'],
+        'EXPECTED_QUERY_ROOT',
+        'legacy /graphql/query root selection remains unchanged');
+    assert.equal(calls[0].options.headers['X-FB-LSD'],'test-native-lsd');
+}
+
 console.log('Native PROFILE Relay pagination regression tests passed.');
