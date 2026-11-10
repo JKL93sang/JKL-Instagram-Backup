@@ -236,7 +236,7 @@ assert.ok(
     };
     const dispatch=new Function(
         'net','cookie','relayJazoest','fetchJson',
-        extract('webRelayGql')+'\\nreturn webRelayGql;'
+        extract('webRelayGql')+'\nreturn webRelayGql;'
     )(
         netTransport,
         name=>name==='ds_user_id'?'actor-123':'',
