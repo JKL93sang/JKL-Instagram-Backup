@@ -18,7 +18,7 @@ const methods = [
     'explicitEmptyReelsProof',
     'classifyReelsEvidence',
     'reconcileEmptyReelsCoverage',
-    'requiredCoverage', 'incompleteCoverage',
+    'reelsSurfaceSkipped', 'requiredCoverage', 'incompleteCoverage',
     'scanAll',
 ].map(extract).join('\n');
 
@@ -199,19 +199,34 @@ function scenario({
 {
     const x = scenario({clips:null});
     await x.run();
-    assert.equal(x.state.scanOutcome, 'INCOMPLETE');
+    assert.equal(x.state.scanOutcome, 'EXPOSED_COMPLETE',
+        'no tab and no observed clips: process all accessible media');
     assert.equal(x.state.coverage.profileGrid, true);
-    assert.equal(x.state.coverage.reels, false);
+    assert.equal(x.state.coverage.reels, false,
+        'the skipped tab is not relabeled as a proven-empty Reel feed');
+    assert.equal(x.state.reelsDiagnosis.kind, 'NOT_EXPOSED');
     assert.equal(x.nativeCalls, 0, 'good PROFILE proof survives missing Reel metadata');
-    assert.equal(x.partialGrants, 1);
+    assert.equal(x.partialGrants, 0, 'normal batch is available, no partial grant needed');
+    assert.ok(x.logs.some(l=>l.msg.includes('REELS SKIPPED')));
 }
 {
     const x = scenario({clips:null,latestReelMedia:0});
     await x.run();
-    assert.equal(x.state.scanOutcome, 'INCOMPLETE',
-        'REST empty sentinel alone is not explicit zero clips evidence');
+    assert.equal(x.state.scanOutcome, 'EXPOSED_COMPLETE',
+        'missing tab is skipped for the exposed archive, not proof of zero clips');
+    assert.equal(x.state.coverage.reels, false);
     assert.ok(x.logs.some(l => l.msg.includes('REELS evidence=NOT_EXPOSED')));
     assert.equal(x.state.reelsDiagnosis.kind, 'NOT_EXPOSED');
+}
+{
+    const x = scenario({clips:null,ssrClipsCount:null,noTab:true});
+    await x.run();
+    assert.equal(x.state.scanOutcome,'EXPOSED_COMPLETE',
+        'no-tab target in the real user log finishes exposed surfaces');
+    assert.equal(x.state.scanComplete,true);
+    assert.equal(x.state.coverage.reels,false);
+    assert.ok(x.statuses.some(v=>v.msg.includes('REELS tab absent')));
+    assert.ok(!x.logs.some(v=>v.msg.includes('SCAN FINISHED — INCOMPLETE')));
 }
 {
     const x = scenario({clips:null,latestReelMedia:0,ssrHasAnyClips:false});
