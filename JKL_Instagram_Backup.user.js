@@ -8747,6 +8747,7 @@
         let endReason = 'max_pages';
         let pages = 0;
         let totalEdges = 0;
+        let stagnantResumePages = 0;
         const seenCursors = new Set(cursor ? [cursor] : []);
 
         // Native cursor resumes must not duplicate the old full crawl or
@@ -8817,6 +8818,7 @@
             totalEdges += edges.length;
             const before = ownedCount();
             const nativeMap = net.gridByUser.get(userKey) || new Map();
+            const nativeBefore = nativeMap.size;
 
             for (const edge of edges) {
                 const node = edgeNode(edge);
@@ -8867,6 +8869,31 @@
                     ? 'native_resume_page_info_end_exact_union'
                     : 'page_info_end';
                 break;
+            }
+
+            // A server that keeps advertising more pages while returning
+            // the same known 34/34 roots is not a completion proof. In
+            // resume mode, stop after two consecutive non-progressing
+            // pages instead of provoking repeated server_execution faults.
+            if (tailOnly) {
+                const nativeUnion = new Set([
+                    ...state.shadow.rootIds,
+                    ...net.gridByUser.get(userKey).keys(),
+                ]);
+                const noProgress = added === 0 &&
+                    nativeMap.size === nativeBefore &&
+                    nativeUnion.size === Number(state.expected);
+                stagnantResumePages = noProgress
+                    ? stagnantResumePages + 1 : 0;
+                if (stagnantResumePages >= 2) {
+                    endReason = 'native_resume_stalled_without_server_end';
+                    log('PROFILE native cursor returned two consecutive ' +
+                        'no-progress pages with exact counter reconciliation, ' +
+                        'but still has_next=true. Stopping without a third ' +
+                        'request; grid remains INCOMPLETE, other independently ' +
+                        'verified sources can proceed.', 'warn');
+                    break;
+                }
             }
 
             const next = String(c?.page_info?.end_cursor || '');
