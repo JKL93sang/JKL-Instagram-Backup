@@ -8622,13 +8622,13 @@
         // Continue only from the observed server cursor, and grant main-grid
         // completion ONLY if the separately ended PUBLIC timeline plus these
         // captured native IDs exactly matches the authenticated main counter.
-        const pi = net.gridPageInfo.get(userKey);
-        const nativeMap = net.gridByUser.get(userKey);
+        const pi = net.gridPageInfo?.get(userKey);
+        const nativeMap = net.gridByUser?.get(userKey);
         const publicIds = state.shadow?.rootIds;
         const accountId = String(
             state.profileInfo?.pk || state.profileInfo?.id || ''
         ).split('_')[0];
-        const age = Date.now() - Number(net.gridCaptureSeenAtByUser.get(userKey));
+        const age = Date.now() - Number(net.gridCaptureSeenAtByUser?.get(userKey));
         const expected = Number(state.expected);
         const cursor = pi?.end_cursor;
         if (
