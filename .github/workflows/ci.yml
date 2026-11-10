@@ -54,6 +54,9 @@ jobs:
       - name: Single download controller regression tests
         run: node tests/single-download-regression.test.mjs
 
+      - name: Single download click and media-info integrity execution tests
+        run: node tests/single-download-execution-regression.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
