@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.89
-// @description  TEST v1.5.89: verified PROFILE native-tail completion, bounded cross-source reconciliation, no-Reels-tab skip and TAGGED hydration.
+// @version      1.5.90
+// @description  TEST v1.5.90: resume verified native PROFILE cursor, safe REELS partial, intact TAGGED/HIDDEN coverage.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.89', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.90', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -8613,45 +8613,57 @@
             !validNative(continuation) ||
             !/^(?:root|nested)$/.test(audit.cursorLocation)) return null;
 
-        if (audit.initial >= 1 && validNative(initial)) {
-            return { initial, continuation, mode:'full', startCursor:null };
-        }
+        const hasFullContract = audit.initial >= 1 && validNative(initial);
 
-        // A real target-scoped *continuation* was captured, but Instagram
-        // did not reissue the first-page native request. Do not invent one.
-        // Continue only from the observed server cursor, and grant main-grid
-        // completion ONLY if the separately ended PUBLIC timeline plus these
-        // captured native IDs exactly matches the authenticated main counter.
+        // Resume a target-scoped, actually observed native continuation,
+        // even when the first page was also captured. Replaying the whole
+        // first-page timeline duplicates work and can push Instagram into
+        // server_execution failures without discovering new roots.
+        // The cursor must come from the latest fresh, successful native
+        // response and from the exact expected timeline connection.
         const pi = net.gridPageInfo?.get(userKey);
         const nativeMap = net.gridByUser?.get(userKey);
-        const publicIds = state.shadow?.rootIds;
+        const publicIds = state?.shadow?.rootIds;
         const accountId = String(
-            state.profileInfo?.pk || state.profileInfo?.id || ''
+            state?.profileInfo?.pk || state?.profileInfo?.id || ''
         ).split('_')[0];
-        const age = Date.now() - Number(net.gridCaptureSeenAtByUser?.get(userKey));
-        const expected = Number(state.expected);
+        const timestamp = net.gridCaptureSeenAtByUser?.get(userKey);
+        const age = Date.now() - Number(timestamp);
+        const expected = Number(state?.expected);
         const cursor = pi?.end_cursor;
-        if (
-            audit.initial !== 0 ||
-            continuation.timelineKeyVerified !== true ||
-            audit.lastHasNext !== 'true' ||
-            pi?.has_next_page !== true ||
-            typeof cursor !== 'string' || !cursor ||
-            !Number.isFinite(age) || age < 0 ||
-            age > APP.PROFILE_BOOTSTRAP_MAX_AGE_MS ||
-            accountId !== String(state.userId || '') ||
-            state.profileInfo?.is_private !== false ||
-            state.shadow?.applicable !== true ||
-            state.shadow?.pageInfoEnded !== true ||
-            state.coverage.publicShadow !== true ||
-            String(state.shadow.profileId || '') !== String(state.userId || '') ||
-            !(publicIds instanceof Set) ||
-            !(nativeMap instanceof Map) || nativeMap.size < 1 ||
-            !Number.isSafeInteger(expected) ||
-            publicIds.size < 1 || publicIds.size >= expected
-        ) return null;
-        return {initial:null, continuation,
-            mode:'observed_tail', startCursor:cursor};
+        const canResume = (
+            continuation.timelineKeyVerified === true &&
+            audit.lastHasNext === 'true' &&
+            pi?.has_next_page === true &&
+            typeof cursor === 'string' && !!cursor &&
+            Number.isFinite(timestamp) && Number.isFinite(age) &&
+            age >= 0 && age <= APP.PROFILE_BOOTSTRAP_MAX_AGE_MS &&
+            accountId === String(state?.userId || '') &&
+            state?.profileInfo?.is_private === false &&
+            state?.shadow?.applicable === true &&
+            state?.shadow?.pageInfoEnded === true &&
+            state?.coverage?.publicShadow === true &&
+            String(state?.shadow?.profileId || '') === String(state?.userId || '') &&
+            publicIds instanceof Set &&
+            nativeMap instanceof Map && nativeMap.size > 0 &&
+            Number.isSafeInteger(expected) && expected > 0 &&
+            publicIds.size >= 1 && publicIds.size < expected
+        );
+        if (canResume) {
+            return {
+                initial: hasFullContract ? initial : null,
+                continuation,
+                mode: hasFullContract ? 'native_resume' : 'observed_tail',
+                startCursor:cursor,
+            };
+        }
+
+        // Original dual-contract replay remains available when a safe
+        // current native cursor cannot be established. Never manufacture
+        // an initial request if it was not natively captured.
+        return hasFullContract
+            ? { initial, continuation, mode:'full', startCursor:null }
+            : null;
     }
 
     function profileCompletionVariables(nativeVariables,cursor=null) {
@@ -8716,7 +8728,8 @@
         }
 
         const docId = contracts.continuation.docId;
-        const tailOnly = contracts.mode === 'observed_tail';
+        const tailOnly = contracts.mode === 'observed_tail' ||
+            contracts.mode === 'native_resume';
         log(
             'PROFILE verified native Relay completion starting: ' +
             'current=' + startOwned +
@@ -8736,10 +8749,10 @@
         let totalEdges = 0;
         const seenCursors = new Set(cursor ? [cursor] : []);
 
-        // The continuation-only recovery is strictly bounded: a missing
-        // first-page capture must not turn into an unbounded crawl.
+        // Native cursor resumes must not duplicate the old full crawl or
+        // produce a request storm. Other full fallback paths keep their cap.
         const maxPages = tailOnly
-            ? Math.min(8, APP.PROFILE_MAX_SCROLLS)
+            ? Math.min(4, APP.PROFILE_MAX_SCROLLS)
             : APP.PROFILE_MAX_SCROLLS;
         for (let page = 1; page <= maxPages; page++) {
             if (state.cancelled) throw new Error('Cancelled');
@@ -8809,13 +8822,13 @@
                 const node = edgeNode(edge);
                 const id = normalizePk(node);
                 if (tailOnly && !/^\d+$/.test(id)) {
-                    endReason = 'native_tail_invalid_identity';
+                    endReason = 'native_resume_invalid_identity';
                     break;
                 }
                 if (tailOnly) nativeMap.set(id,node);
                 addMedia(node, '', 'PROFILE_FALLBACK');
             }
-            if (endReason === 'native_tail_invalid_identity') break;
+            if (endReason === 'native_resume_invalid_identity') break;
             if (tailOnly) net.gridByUser.set(userKey,nativeMap);
 
             const added = Math.max(0, ownedCount() - before);
@@ -8840,8 +8853,8 @@
                             state.roots.POST.has(id) || state.roots.REEL.has(id)
                         );
                     if (!matched) {
-                        endReason = 'native_tail_union_counter_unverified';
-                        log('PROFILE native tail ended, but PUBLIC/native ' +
+                        endReason = 'native_resume_union_counter_unverified';
+                        log('PROFILE native cursor ended, but PUBLIC/native ' +
                             'root union=' + known.size +
                             ' does not reconcile to authenticated counter=' +
                             state.expected + ' with resolved root identities. ' +
@@ -8851,7 +8864,7 @@
                 }
                 ended = true;
                 endReason = tailOnly
-                    ? 'native_tail_page_info_end_exact_union'
+                    ? 'native_resume_page_info_end_exact_union'
                     : 'page_info_end';
                 break;
             }
