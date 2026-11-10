@@ -354,9 +354,9 @@ assert.ok(
  * Static anti-regression: when fallback is requested, only fallback.ended
  * may prove PROFILE completion. The old stale-page-info OR must never return.
  */
-assert.match(
-    extractFunction('scanMainGrid'),
-    /navigationEnded\\s*=\\s*fallback\\.ended\\s*===\\s*true;/,
+assert.ok(
+    extractFunction('scanMainGrid').replace(/\s+/g,'')
+        .includes('navigationEnded=fallback.ended===true;'),
     'When permitted, only the actual fallback server-end proves completion'
 );
 assert.ok(
