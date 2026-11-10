@@ -8721,7 +8721,7 @@
             'PROFILE verified native Relay completion starting: ' +
             'current=' + startOwned +
             ', reason=' + reason +
-            ', initial_doc=' + contracts.initial.docId +
+            ', initial_doc=' + (contracts.initial?.docId || '-') +
             ', continuation_doc=' + docId +
             ', native_doc=' + (observedDoc || '-') +
             ', mode=' + contracts.mode + '.',
