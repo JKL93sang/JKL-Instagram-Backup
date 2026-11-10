@@ -1308,7 +1308,15 @@
     // Classifier NOT_EXPOSED is issued only after the public grid, connected
     // hidden and owned hydration pass, with no positive Reel evidence.
     function reelsSurfaceSkipped() {
+        // Operational skip for a truly absent tab, not proof of zero clips.
+        // Do not authorize a full exposed-surface scan if the user-info
+        // response belongs to a different Instagram account.
+        const apiUserId = String(
+            state.profileInfo?.pk || state.profileInfo?.id || ''
+        ).split('_')[0];
         return scanSelected('reel') &&
+            !!apiUserId &&
+            apiUserId === String(state.userId || '') &&
             state.coverage.reels !== true &&
             state.reelsDiagnosis?.kind === 'NOT_EXPOSED' &&
             state.coverage.profileGrid === true &&
