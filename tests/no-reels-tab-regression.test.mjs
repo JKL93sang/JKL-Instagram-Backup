@@ -151,6 +151,52 @@ assert.deepEqual(remaining, [['REELS tab', 'reels']],
         restore();
     }
 }
+
+// Download authorization remains real, not just a cosmetic "complete" UI.
+// An exposed-only complete scan may download its verified inventory, but
+// any later missing guard, identity drift or queue mutation revokes it.
+{
+    const userId='45790055326';
+    const state={
+        userId,username:'jennnii97',
+        profileInfo:{pk:userId,is_private:false},
+        exclusive:{known:true,hasExclusiveFeedContent:false},
+        shadow:{profileId:userId,pageInfoEnded:true,reelIds:new Set()},
+        coverage:{profileGrid:true,publicShadow:true,connectedHidden:true,
+            ownedHydration:true,reels:false,tagged:true},
+        reelsDiagnosis:{kind:'NOT_EXPOSED'},
+        roots:{REEL:new Set()},
+        scanComplete:true,scanOutcome:'EXPOSED_COMPLETE',scanUserId:userId,
+        queue:new Map([['1',{id:'1',url:'https://example.test/1.jpg'}],
+            ['2',{id:'2',url:'https://example.test/2.jpg'}]]),
+        scanQueueSize:2,scanQueueFingerprint:'1,2',
+    };
+    const plan={post:true,reel:true,tagged:true};
+    const scanDownloadFingerprint=()=>[...state.queue.keys()].join(',');
+    const DOWNLOAD_MODE={COMPLETE:'complete'};
+    const auth=new Function('state','scanSelected','scanSelection',
+        'scanDownloadFingerprint','DOWNLOAD_MODE','verifiedPartialDownloadIntegrity',
+        extract('reelsSurfaceSkipped')+
+        extract('requiredCoverage')+
+        extract('incompleteCoverage')+
+        extract('completedScanIntegrity')+
+        extract('authorizeDownloadScope')+
+        '\nreturn authorizeDownloadScope;'
+    )(state,k=>plan[k]===true,()=>plan,scanDownloadFingerprint,
+        DOWNLOAD_MODE,()=>({ok:false,reason:'not expected'}));
+    const ready=auth('complete');
+    assert.equal(ready.ok,true,
+        'no-tab with 2 verified files unlocks the standard download batch');
+    assert.equal(ready.media.length,2);
+    state.profileInfo.pk='999';
+    assert.equal(auth('complete').ok,false,'cross-user metadata revokes exposed batch');
+    state.profileInfo.pk=userId;
+    state.reelsDiagnosis.kind='UNVERIFIED';
+    assert.equal(auth('complete').ok,false,'new positive Reel evidence revokes skip');
+    state.reelsDiagnosis.kind='NOT_EXPOSED';
+    state.queue.set('3',{id:'3',url:'https://example.test/3.jpg'});
+    assert.equal(auth('complete').ok,false,'changed queue revokes file authorization');
+}
 assert.ok(source.includes("'PolarisProfileReelsTabContentQuery'"));
 assert.ok(!source.includes('async function scanReelsFallback('));
 assert.ok(source.includes('=== SCAN STOPPED — INSTAGRAM API UNHEALTHY ==='));
