@@ -2802,7 +2802,7 @@
                         feedbackLabel: label,
                         headers: {
                             Accept: '*/*',
-                            'User-Agent': APP.MOBILE_UA,
+                            ...(singleWebOnly ? {} : {'User-Agent': APP.MOBILE_UA}),
                             'X-IG-App-ID': APP.APP_ID,
                             Referer: 'https://www.instagram.com/',
                         },
