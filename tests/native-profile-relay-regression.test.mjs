@@ -51,11 +51,14 @@ const net = {
     gridNativeAuditByUser:new Map(),
 };
 const names = new Set(['PolarisProfilePostsTabContentQuery_connection']);
+const state = {userId:'123',profileInfo:{pk:'123'},shadow:{},
+    coverage:{publicShadow:false},expected:0};
+const APP={PROFILE_BOOTSTRAP_MAX_AGE_MS:20000};
 const helpers = new Function(
-    'net','GRID_NAMES','requestTargetsCurrentProfile',
+    'net','GRID_NAMES','requestTargetsCurrentProfile','state','APP',
     nativeSource + '\n' + varsSource +
     '\nreturn {profileNativeCompletionRequest,profileCompletionVariables};'
-)(net,names,meta=>meta.variables?.username==='sample.account');
+)(net,names,meta=>meta.variables?.username==='sample.account',state,APP);
 
 assert.equal(
     helpers.profileNativeCompletionRequest('sample.account'),
