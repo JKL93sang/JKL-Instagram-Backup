@@ -92,7 +92,7 @@ function proofFn(state) {
 
 // Exercise actual TAGGED scanner: previously page_info_end marked a complete
 // scan although two edges yielded zero archived files (observed 2026-11-09).
-async function taggedFixture(data,{hasNext=false}={}) {
+async function taggedFixture(data,{hasNext=false,details={}}={}) {
     const state={
         userId:'123',cancelled:false,
         coverage:{tagged:false},queue:new Map(),
@@ -102,7 +102,12 @@ async function taggedFixture(data,{hasNext=false}={}) {
         taggedDocInitial:null,taggedDocConnection:null,taggedNativeVariables:null,
         taggedInitialData:null,taggedInitialUserId:'',
     };
-    const logs=[],calls=[];
+    const logs=[],calls=[],mediaInfoCalls=[];
+    const fetchOwnedMediaInfo=async(id,label,policy)=>{
+        mediaInfoCalls.push({id,label,policy});
+        if (Object.hasOwn(details,id)) return details[id];
+        throw Error('synthetic media-info unavailable');
+    };
     const gql=async(doc,vars,friendly)=>{
         calls.push({doc,vars,friendly});
         return {conn:{edges:data.map(node=>({node})),
@@ -110,15 +115,16 @@ async function taggedFixture(data,{hasNext=false}={}) {
     };
     const scanner=new Function('state','net','APP','gql','taggedConn',
         'edgeNode','addMedia','discoveredMediaResolution','normalizePk',
-        'updateStats','log','throwIfInstagramStop','sleep','rand',
+        'fetchOwnedMediaInfo','updateStats','log','throwIfInstagramStop','sleep','rand',
         extract('scanTaggedGraphQL')+
         '\nreturn scanTaggedGraphQL;'
-    )(state,net,{TAGGED_FALLBACK_DOC:'fixture',TAGGED_MAX_PAGES:5},
+    )(state,net,{TAGGED_FALLBACK_DOC:'fixture',TAGGED_MAX_PAGES:5,
+        TAGGED_HYDRATION_LIMIT:8},
         gql,d=>d.conn,e=>e.node,
         (media,_kind,origin)=>archive(media,origin,state),
-        proofFn(state),normalizePk,()=>{},
+        proofFn(state),normalizePk,fetchOwnedMediaInfo,()=>{},
         (...args)=>logs.push(args),()=>{},async()=>{},()=>0);
-    return {completed:await scanner(),state,calls,logs};
+    return {completed:await scanner(),state,calls,logs,mediaInfoCalls};
 }
 {
     const x=await taggedFixture([mk('1'),mk('2')]);
@@ -127,7 +133,50 @@ async function taggedFixture(data,{hasNext=false}={}) {
     assert.equal(x.state.roots.TAGGED.size,2,'all discovered tagged IDs recorded');
     assert.equal(x.state.queue.size,0,'zero queued files is not a success');
     assert.ok(x.logs.some(x=>x[0].includes('unresolved=2')));
-    assert.equal(x.calls.length,1,'no speculative follow-up request');
+    assert.equal(x.calls.length,1,'no additional GraphQL request');
+    assert.equal(x.mediaInfoCalls.length,2,
+        'one bounded same-origin hydration attempt for each thin tagged root');
+    assert.ok(x.mediaInfoCalls.every(c=>c.policy.singleWebOnly===true),
+        'no mobile host or retry fallback permitted');
+}
+{
+    const x=await taggedFixture([mk('1'),mk('2')],{details:{
+        '1':mk('1','https://cdn.example.test/1.jpg',{media_type:1}),
+        '2':mk('2','https://cdn.example.test/2.jpg',{media_type:1}),
+    }});
+    assert.equal(x.completed,true,'thin TAGGED discovery must hydrate full URLs');
+    assert.equal(x.state.queue.size,2);
+    assert.equal(x.mediaInfoCalls.length,2);
+    assert.ok(x.logs.some(x=>x[0].includes('hydration=2/2')));
+}
+{
+    const x=await taggedFixture([
+        mk('91','',{media_type:2,display_uri:'https://cdn.example.test/cover.jpg'}),
+    ],{details:{'91':mk('91','',{media_type:2,
+        video_versions:[{url:'https://cdn.example.test/real.mp4'}],
+        url:'https://cdn.example.test/real.mp4'})}});
+    assert.equal(x.completed,true,'poster-only tagged video is hydrated to MP4');
+    assert.equal(x.mediaInfoCalls.length,1);
+}
+{
+    const x=await taggedFixture([mk('44')],{details:{
+        '44':mk('45','https://cdn.example.test/wrong.jpg'),
+    }});
+    assert.equal(x.completed,false,'wrong identity is never archived as tagged');
+    assert.equal(x.state.queue.size,0);
+    assert.ok(x.logs.some(x=>x[0].includes('media_info_identity_mismatch')));
+}
+{
+    const x=await taggedFixture(Array.from({length:10},
+        (_,i)=>mk(String(100+i))),{details:Object.fromEntries(
+        Array.from({length:10},(_,i)=>[
+            String(100+i),mk(String(100+i),'https://cdn.example.test/'+i+'.jpg')
+        ])
+    )});
+    assert.equal(x.completed,false,'bounded hydration does not claim complete');
+    assert.equal(x.mediaInfoCalls.length,8,'maximum eight hydrated roots');
+    assert.equal(x.state.queue.size,8);
+    assert.ok(x.logs.some(x=>x[0].includes('hydration_limit_reached')));
 }
 {
     const x=await taggedFixture([
@@ -242,6 +291,32 @@ async function highlightFixture(items) {
 }
 assert.ok(!source.includes('probeAnonymousPublicControl'));
 assert.ok(!source.includes("const controls = ['instagram', 'natgeo']"));
+
+// Production media-info helper must execute only ONE request on the browser
+// origin when invoked for TAGGED, and may not silently try i.instagram.com.
+{
+    const requests=[];
+    const info=new Function('state','APP','gmRequest',
+        'feedbackRequiredIn','feedbackCircuitBreak',
+        'throwIfInstagramStop','apiUnhealthyError','rateLimitCircuitBreak',
+        'sleep','rand',
+        extract('fetchOwnedMediaInfo')+'\nreturn fetchOwnedMediaInfo;'
+    )({cancelled:false},{HYDRATE_RETRIES:3,APP_ID:'test',MOBILE_UA:'test'},
+        async args=>{
+            requests.push(args);
+            return {status:200,responseText:JSON.stringify({
+                status:'ok',items:[{pk:'889',media_type:1,
+                    image_versions2:{candidates:[{url:'https://cdn.example.test/889.jpg'}]}}],
+            })};
+        },
+        ()=>false,()=>{throw Error('feedback')},()=>{},
+        m=>new Error(m),m=>new Error(m),async()=>{},()=>0);
+    const media=await info('889','TAGGED test',{singleWebOnly:true});
+    assert.equal(media.pk,'889');
+    assert.equal(requests.length,1);
+    assert.ok(requests[0].url.startsWith('https://www.instagram.com/'));
+    assert.ok(!requests[0].url.includes('clips/user'));
+}
 
 // Regression: TAGGED XDTMediaDict image fields must enter the real downloader
 // via addMedia. A video cover is NOT a downloadable MP4.
