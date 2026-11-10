@@ -18,7 +18,11 @@ function harness(opts={}){
  };
  const nativeIds=[...pubIds.slice(0,11),'8000',...(opts.stagnant?['8001']:[])];
  const nativeMap=new Map(nativeIds.map(id=>[id,{pk:id,media_type:1}]));
- const capturedAt=Date.now()-(opts.stale?30000:500);
+ const capturedAt=Date.now()-(opts.delayedByPublic?48000:opts.stale?30000:500);
+ if(opts.scanAttested) state.nativeProfileEvidenceSession={
+  key:user,userId:opts.wrongAttestedUser?'other':uid,
+  acceptedAt:Date.now()-45000,acceptedCapturedAt:capturedAt,
+ };
  const net={
   gridNativeInitialByUser:new Map(),
   gridNativeContinuationByUser:new Map(),gridNativeAuditByUser:new Map(),
@@ -121,6 +125,47 @@ function harness(opts={}){
  assert.equal(x.calls.length,2,'no third repeated query');
  assert.equal(result.endReason,'native_resume_stalled_without_server_end');
  assert.ok(x.logs.some(entry=>String(entry[0]).includes('no-progress pages')));
+}
+// The actual 1.5.90 failure: valid native capture at scan start,
+// then 34+ seconds PUBLIC SHADOW and ~10 seconds main-grid navigation.
+// A 20-second global TTL must not force first-page replay mid-scan.
+{
+ const x=harness({initialCaptured:true,delayedByPublic:true,scanAttested:true});
+ const c=x.profileNativeCompletionRequest('aphrodixiaa');
+ assert.equal(c?.mode,'native_resume',
+  'same-scan native evidence survives slow PUBLIC SHADOW');
+ assert.equal(c.startCursor,'real-next-cursor');
+ const result=await x.scanProfileGraphQLFallback();
+ assert.equal(result.ended,true);
+ assert.equal(x.calls.length,1,'no re-fetch of first two native pages');
+ assert.ok(x.logs.some(v=>String(v[0]).includes('same_scan=true')));
+}
+// A stale snapshot without matching scan attestation is not a valid
+// reason to replay page one. It fails closed with zero GraphQL requests.
+for(const [label,options] of [
+ ['delayed without attestation',{initialCaptured:true,delayedByPublic:true}],
+ ['attestation for another profile',{
+   initialCaptured:true,delayedByPublic:true,
+   scanAttested:true,wrongAttestedUser:true
+ }],
+]) {
+ const x=harness(options);
+ assert.equal(x.profileNativeCompletionRequest('aphrodixiaa'),null,label);
+ const result=await x.scanProfileGraphQLFallback();
+ assert.equal(result.ended,false,label);
+ assert.equal(x.calls.length,0,'no dangerous full replay: '+label);
+ assert.ok(x.logs.some(v=>String(v[0]).includes('No full first-page replay')));
+}
+// An official known native PROFILE query, captured as BOTH initial
+// and continuation, remains target-scoped even if Instagram omits
+// the exact raw connection key from metadata.
+{
+ const x=harness({initialCaptured:true,noExactKey:true});
+ const c=x.profileNativeCompletionRequest('aphrodixiaa');
+ assert.equal(c?.mode,'native_resume');
+ assert.equal(c?.exactKey,false);
+ assert.equal((await x.scanProfileGraphQLFallback()).ended,true);
+ assert.equal(x.calls.length,1);
 }
 for(const [name,opts] of [
  ['wrong profile identity',{foreign:true}],
