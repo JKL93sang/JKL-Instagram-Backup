@@ -140,8 +140,9 @@ for(const [label,mutate] of [
     const x=fixture({mutate});
     x.reconcilePassiveProfilePostRoots();
     assert.equal(x.state.verifiedPassiveProfilePostRootIds.size,0,label);
-    assert.deepEqual(x.verifiedAccessibleMedia().map(m=>m.id),['100001'],
-        'no unauthenticated native-only units: '+label);
+    assert.deepEqual(x.verifiedAccessibleMedia().map(m=>m.id),
+        x.state.coverage.ownedHydration===true ? ['100001'] : [],
+        'no unverified native-only units and no unhydrated PUBLIC item: '+label);
 }
 {
     // A second fake child in queue must not be counted as proof just
