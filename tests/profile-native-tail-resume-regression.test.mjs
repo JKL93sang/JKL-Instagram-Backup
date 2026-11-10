@@ -59,9 +59,11 @@ function harness(opts={}){
   meta=>meta.variables.username===user,
   async (doc,vars,friendly,options)=>{
    calls.push({doc,vars,friendly,options});
-   const id=opts.missing?'1000':'8001';
+   const id=(opts.missing||opts.stagnant)?'1000':'8001';
+   const hasNext=opts.stagnant?true:(opts.hasNext??false);
    const connection={edges:[{node:{pk:id,media_type:1}}],
-    page_info:{has_next_page:opts.hasNext??false,end_cursor:opts.hasNext?'repeat':''}};
+    page_info:{has_next_page:hasNext,
+      end_cursor:opts.stagnant?'next-'+calls.length:hasNext?'repeat':''}};
    return opts.wrongConnection?
     {data:{some_unrelated_connection:connection}}:
     {data:{xdt_api__v1__feed__user_timeline_graphql_connection:connection}};
@@ -108,6 +110,17 @@ function harness(opts={}){
  assert.equal(x.calls[0].vars.after,'real-next-cursor');
  assert.equal(done.endReason,'native_resume_page_info_end_exact_union');
  assert.ok(x.logs.some(x=>x[0].includes('mode=native_resume')));
+}
+// Identical native continuation pages must never lead to a third
+// speculative query (v1.5.89 observed 2x12 known roots then server_execution).
+{
+ const x=harness({initialCaptured:true,stagnant:true});
+ const result=await x.scanProfileGraphQLFallback();
+ assert.equal(result.ended,false);
+ assert.equal(result.pages,2);
+ assert.equal(x.calls.length,2,'no third repeated query');
+ assert.equal(result.endReason,'native_resume_stalled_without_server_end');
+ assert.ok(x.logs.some(entry=>String(entry[0]).includes('no-progress pages')));
 }
 for(const [name,opts] of [
  ['wrong profile identity',{foreign:true}],
