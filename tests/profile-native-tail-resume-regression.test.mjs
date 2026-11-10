@@ -14,9 +14,9 @@ function harness(opts={}){
   username:user,userId:uid,expected:34,cancelled:false,
   profileInfo:{pk:opts.foreign?'999':uid,is_private:false},
   shadow:{applicable:true,pageInfoEnded:true,profileId:uid,rootIds:new Set(pubIds)},
-  coverage:{publicShadow:true},roots:{POST:new Set([...pubIds,'8000']),REEL:new Set()},
+  coverage:{publicShadow:true},roots:{POST:new Set([...pubIds,'8000',...(opts.stagnant?['8001']:[])]),REEL:new Set()},
  };
- const nativeIds=[...pubIds.slice(0,11),'8000'];
+ const nativeIds=[...pubIds.slice(0,11),'8000',...(opts.stagnant?['8001']:[])];
  const nativeMap=new Map(nativeIds.map(id=>[id,{pk:id,media_type:1}]));
  const capturedAt=Date.now()-(opts.stale?30000:500);
  const net={
