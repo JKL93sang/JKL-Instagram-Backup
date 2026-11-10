@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.87
-// @description  TEST v1.5.87: bounded TAGGED media hydration, strict archive proof, passive REELS evidence, safe scan circuits.
+// @version      1.5.88
+// @description  TEST v1.5.88: no-Reels-tab exposed-only completion, verified TAGGED hydration, strict media and session safeguards.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.87', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.88', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -963,7 +963,10 @@
 
         let currentText = 'Ready';
 
-        if (!state.running && state.scanOutcome === 'COMPLETE') {
+        if (!state.running && state.scanOutcome === 'EXPOSED_COMPLETE') {
+            currentText = 'Finished · EXPOSED SOURCES COMPLETE';
+        }
+        else if (!state.running && state.scanOutcome === 'COMPLETE') {
             currentText = 'Finished · COMPLETE';
         }
         else if (!state.running && state.scanOutcome === 'INCOMPLETE') {
@@ -1019,6 +1022,16 @@
             : null;
 
         if (!state.running || !current || !phase) {
+            if (state.scanOutcome === 'EXPOSED_COMPLETE') {
+                return {
+                    label: 'EXPOSED SCAN COMPLETE',
+                    percent: 100,
+                    value: '100%',
+                    detail: 'Visible sources verified · REELS tab absent/skipped',
+                    indeterminate: false,
+                };
+            }
+
             if (state.scanOutcome === 'COMPLETE') {
                 return {
                     label: 'SCAN COMPLETE',
@@ -1289,9 +1302,26 @@
         return out;
     }
 
+    // A verified absence of a native REELS navigation surface should not
+    // block downloading OTHER fully scanned categories. This is an operational
+    // skip, NEVER a claim of server-confirmed zero clips or a full archive.
+    // Classifier NOT_EXPOSED is issued only after the public grid, connected
+    // hidden and owned hydration pass, with no positive Reel evidence.
+    function reelsSurfaceSkipped() {
+        return scanSelected('reel') &&
+            state.coverage.reels !== true &&
+            state.reelsDiagnosis?.kind === 'NOT_EXPOSED' &&
+            state.coverage.profileGrid === true &&
+            state.coverage.connectedHidden === true &&
+            state.coverage.ownedHydration === true &&
+            state.roots.REEL.size === 0 &&
+            state.shadow.reelIds.size === 0;
+    }
+
     function incompleteCoverage() {
         return requiredCoverage()
-            .filter(([, key]) => !state.coverage[key])
+            .filter(([, key]) => !state.coverage[key] &&
+                !(key === 'reels' && reelsSurfaceSkipped()))
             .map(([label]) => label);
     }
 
@@ -6204,7 +6234,7 @@
         }
         else if (
             state.scanComplete &&
-            state.scanOutcome === 'COMPLETE'
+            ['COMPLETE', 'EXPOSED_COMPLETE'].includes(state.scanOutcome)
         ) {
             if (plannedDownload.total > 0) {
                 downloadValue = 'READY';
@@ -6245,16 +6275,11 @@
         const coverageText =
             !state.userId
                 ? 'NOT SCANNED'
-                : (
-                    state.scanOutcome === 'INCOMPLETE' &&
-                    missingCoverage.length === 1 &&
-                    missingCoverage[0] === 'REELS tab' &&
-                    state.reelsDiagnosis?.kind === 'NOT_EXPOSED'
-                        ? 'VERIFIED PARTIAL'
-                        : missingCoverage.length
-                            ? 'INCOMPLETE'
-                            : 'COVERAGE OK'
-                );
+                : state.scanOutcome === 'EXPOSED_COMPLETE'
+                    ? 'EXPOSED OK · REELS SKIPPED'
+                    : missingCoverage.length
+                        ? 'INCOMPLETE'
+                        : 'COVERAGE OK';
 
         const coverageClass =
             !state.userId
@@ -9221,7 +9246,8 @@
     // clips/user/ endpoint. This desktop userscript must NEVER replay that
     // endpoint: it requires a distinct mobile-app auth/signature context.
     // Native Web REELS capture remains the only verified discovery route.
-    // An absent navigation tab is UNKNOWN, not evidence of an empty feed.
+    // An absent tab is operationally skipped after strict cross-surface
+    // reconciliation; it is not evidence of an empty REELS feed.
     async function scanReels() {
         log(
             'Scanning native REELS tab…'
@@ -9285,7 +9311,8 @@
                 '. Individual verified media can enter ACCESSIBLE PARTIAL; ' +
                 'this does NOT prove the complete REELS feed. No new ' +
                 'REELS request or private mobile clips/user/ probe. ' +
-                'REELS remains INCOMPLETE.',
+                'REELS surface skipped if other selected sources verify; ' +
+                'absence is NOT proof of zero clips.',
                 'warn'
             );
             updateStats();
@@ -11330,11 +11357,19 @@
     function completedScanIntegrity() {
         if (
             !state.scanComplete ||
-            state.scanOutcome !== 'COMPLETE'
+            !['COMPLETE', 'EXPOSED_COMPLETE'].includes(state.scanOutcome)
         ) {
             return {
                 ok: false,
                 reason: `last scan outcome=${state.scanOutcome || 'NONE'}`,
+            };
+        }
+
+        if (state.scanOutcome === 'EXPOSED_COMPLETE' &&
+            !reelsSurfaceSkipped()) {
+            return {
+                ok: false,
+                reason: 'Reels no-tab skip lost its verified conditions',
             };
         }
 
@@ -11496,7 +11531,7 @@
             `PROFILE=${state.coverage.profileGrid}, ` +
             `PUBLIC_SHADOW=${shadowCoverageLabel()}, ` +
             `CONNECTED_HIDDEN=${state.coverage.connectedHidden}, ` +
-            `REELS=${state.coverage.reels}, ` +
+            `REELS=${reelsSurfaceSkipped() ? 'SKIPPED_NO_TAB' : state.coverage.reels}, ` +
             `OWNED_HYDRATION=${state.coverage.ownedHydration}, ` +
             `TAGGED=${state.coverage.tagged}, ` +
             `HIGHLIGHTS=${state.coverage.highlights}, ` +
@@ -11886,13 +11921,14 @@
 
         if (state.coverage.reels === true) return;
 
-        // A non-exposed tab is not a failed network attempt, nor is it
-        // proof of no Reels. The other independently verified sources may
-        // still be archived using immutable accessible-partial grants.
+        // A non-exposed tab is not a failed network attempt, nor proof
+        // of no Reels. It may be skipped operationally once the other
+        // independent sources have verified their coverage.
         const detail = state.reelsDiagnosis.kind === 'NOT_EXPOSED'
             ? 'No REELS tab or explicit zero-count was exposed. ' +
-              'All other selected verifiable surfaces can finish normally; ' +
-              'full REELS exhaustiveness is UNKNOWN, not zero.'
+              'No Reel is visible; the inaccessible tab is skipped when ' +
+              'all other selected sources verify. Full REELS exhaustiveness ' +
+              'remains UNKNOWN, not proven zero.'
             : 'No verified REELS server-end: ' +
               (proof?.reason || state.reelsDiagnosis.reason) + '.';
         log(
@@ -12250,13 +12286,17 @@
                 !state.apiUnhealthy
             ) {
                 state.scanComplete = true;
-                state.scanOutcome = 'COMPLETE';
+                const reelsSkipped = reelsSurfaceSkipped();
+                state.scanOutcome = reelsSkipped
+                    ? 'EXPOSED_COMPLETE' : 'COMPLETE';
                 state.scanUserId = String(state.userId || '');
                 state.scanQueueSize = state.queue.size;
                 state.scanQueueFingerprint = scanDownloadFingerprint();
 
                 status(
-                    `Accessible scan complete: ${state.queue.size} unique media.`,
+                    reelsSkipped
+                        ? `Exposed sources complete: ${state.queue.size} unique media. REELS tab absent; skipped (no zero-clips proof).`
+                        : `Accessible scan complete: ${state.queue.size} unique media.`,
                     'ok'
                 );
 
@@ -12290,7 +12330,12 @@
                     );
                 }
 
-                log('=== SCAN FINISHED — COMPLETE ===', 'ok');
+                log(
+                    reelsSkipped
+                        ? '=== SCAN FINISHED — EXPOSED SOURCES COMPLETE (REELS SKIPPED) ==='
+                        : '=== SCAN FINISHED — COMPLETE ===',
+                    'ok'
+                );
             }
             else {
                 state.scanComplete = false;
