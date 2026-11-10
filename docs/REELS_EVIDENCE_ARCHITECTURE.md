@@ -148,3 +148,17 @@ The existing source-to-archive `discoveredMediaResolution()` gate remains mandat
 **Verification:** [Userscript CI SUCCESS #42736515560](https://github.com/JKL93sang/JKL-Instagram-Backup/actions/runs/42736515560) at `c13894f1a32b25585a58f9fa7a4717bfb290751c`. Integration fixtures exercise two thin TAGGED roots later hydrated to complete media, video/cover, wrong-ID rejection, one same-origin request per root and the 8-request circuit limit. **CI uses synthetic records and cannot prove Instagram allows this GET for the two real tagged posts.** User browser validation is pending.
 
 Distribution: same experimental branch and DRAFT PR #18, `@version=1.5.87` (to activate normal Tampermonkey version detection for existing test installs), **`main=1.5.78` unchanged**. REELS no-tab case remains `INCOMPLETE`; this work does not solve it.
+
+
+## v1.5.88 — Non-blocking absent REELS tab, scoped exposed archive (2026-11-10)
+
+**User-required behavior:** If no REELS tab and no Reel is observed, continue scanning TAGGED/HIGHLIGHTS/STORY/AVATAR and finish normally rather than getting stuck at `REELS=false`. The previous v1.5.87 already continued the phases but left the final download batch locked due to the unexposed REELS guard.
+
+**Correct distinction:**
+- `PROVEN`: Instagram provided an explicit zero count corroborated by public pagination or a complete native REELS feed. Normal `COMPLETE` state remains unchanged.
+- `NOT_EXPOSED`: no native tab, no positive Reel evidence, public grid/account ID verified, hidden candidates and owned hydration verified. The inaccessible REELS surface is **operationally skipped**. The scan ends `EXPOSED_COMPLETE`, **not** `COMPLETE`, and the regular batch downloader is enabled for the actual, verified selected sources. In the UI and log it is reported as `REELS=SKIPPED_NO_TAB`. This does **not** assert that the entire Instagram Reels feed has exactly zero clips.
+- `UNVERIFIED` / `UNKNOWN`: tab exists but cannot be exhausted, positive Reel evidence, contradictory metadata, cross-account identity, incomplete public grid, hidden or hydration failure, etc. The scan stays `INCOMPLETE`; no full batch authorization.
+
+`incompleteCoverage()` omits only a strongly eligible NOT_EXPOSED REELS surface. `completedScanIntegrity()` additionally validates `EXPOSED_COMPLETE` against the unchanged no-tab eligibility, target account identity, queue size and file fingerprint. Changing selected categories, queue or account revokes authorization. Other source failures (e.g., TAGGED) remain mandatory blockers; no invented zero Reel roots, no extra REELS requests or private mobile `clips/user/` call.
+
+**Tests:** Native no-tab skipping, exact identity binding, public-grid/hidden/hydration gating, positive Reel evidence, remaining TAGGED blocker, scanAll integration, standard batch authorization and post-scan revocation are all covered with synthetic fixtures. This is code validation, not browser observation. PR #18 remains DRAFT and `main` stays v1.5.78 until real validation.
