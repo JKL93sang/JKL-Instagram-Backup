@@ -11195,16 +11195,31 @@
             }
 
             if (m.type === 'REEL') {
-                // Only a media unit from a genuinely observed, target-scoped
-                // native Web Reel response. Unknown feed completeness
-                // remains an independent guard for full-archive mode.
-                return state.scanPlan?.reel === true &&
-                    m.sources.has('REEL_NATIVE_OBSERVED') &&
-                    m.rootIds instanceof Set &&
+                if (state.scanPlan?.reel !== true ||
+                    !(m.rootIds instanceof Set)) return false;
+
+                // Passive single-file observations can be archived when
+                // their exact native response supplied the downloadable
+                // unit, even if the complete Reels feed is unavailable.
+                const passive = m.sources.has('REEL_NATIVE_OBSERVED') &&
                     state.verifiedPassiveReelRootIds instanceof Set &&
                     [...m.rootIds].some(rootId =>
                         state.verifiedPassiveReelRootIds.has(String(rootId))
                     );
+
+                // Independently COMPLETE target-scoped REELS pagination
+                // plus fully authenticated media-info hydration also
+                // proves each REEL unit, even when the unrelated mixed
+                // PROFILE grid remains INCOMPLETE. Never grant this for
+                // a merely observed, unhydrated or unfinished Reels list.
+                const nativeCompleted = state.coverage.reels === true &&
+                    state.coverage.ownedHydration === true &&
+                    m.sources.has('OWNED_DEEP_HYDRATION') &&
+                    [...m.rootIds].some(rootId =>
+                        state.roots.REEL.has(String(rootId))
+                    );
+
+                return passive || nativeCompleted;
             }
 
             if (m.type === 'TAGGED') {
