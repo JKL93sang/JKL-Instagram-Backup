@@ -86,6 +86,24 @@ const helper=new Function(
     assert.equal(helper(x,'POST',rootId).length,1);
 }
 
+// Test the real GM_download dispatch (with no network).
+{
+    const attempt=extract('downloadStandaloneAttempt');
+    const writes=[];
+    const dispatch=new Function('GM_download','archiveDownloadPath',
+        attempt+'\nreturn downloadStandaloneAttempt;'
+    )(
+        opts=>{writes.push(opts);opts.onload();},
+        (m,username)=>username+'/'+username+' - POSTS/'+m.filename,
+    );
+    const file=helper(createCarousel(),'POST',rootId)[0];
+    await dispatch(file);
+    assert.equal(writes.length,1);
+    assert.equal(writes[0].name,user+'/'+user+' - POSTS/'+file.filename);
+    assert.equal(writes[0].saveAs,false);
+    assert.equal(writes[0].conflictAction,'overwrite');
+}
+
 const actualDownload=extract('downloadSingleTarget');
 const actualClick=extract('handleSingleDownloadClick');
 const actualFindButton=extract('singleDownloadButtonFromEvent');
@@ -100,7 +118,11 @@ const executer=new Function(
     (msg,level)=>logs.push([msg,level]),
     async id=>{assert.equal(id,rootId);return createCarousel();},
     helper,
-    async file=>{requested.push(file.id);},
+    async file=>{
+        assert.equal(state.downloading,true,
+            'single transfer must hold global operation mutex');
+        requested.push(file.id);
+    },
     async()=>{},APP,()=>{},
 );
 const target={kind:'media',route:'p',mediaId:rootId,shortcode:'demo',key:'media:'+rootId};
@@ -108,6 +130,8 @@ await executer(target);
 assert.deepEqual(requested,['990002','990003','990004']);
 assert.ok(statuses.some(([x,level])=>x.includes('3 fichier(s)')&&level==='ok'));
 assert.equal(singleDownloadState.busy.size,0);
+assert.equal(state.downloading,false,
+    'single transfer must release global operation mutex on success');
 
 // A missing child URL MUST block before any GM_download request starts.
 requested.length=0;
@@ -123,7 +147,13 @@ const broken=new Function(
 );
 await broken(target);
 assert.equal(requested.length,0,'no partial writes on incomplete carousel');
+assert.equal(state.downloading,false,
+    'failed media validation must release global operation mutex');
 assert.ok(logs.some(([x])=>x.includes('Single download failed')));
+state.downloading=true;
+await executer(target);
+assert.equal(requested.length,0,'no concurrent single transfer during a bulk download');
+state.downloading=false;
 
 // Verify window-capture click routing is not merely a string presence check.
 const button={dataset:{targetKind:'media',mediaId:rootId,route:'p',shortcode:'demo'},disabled:false};
