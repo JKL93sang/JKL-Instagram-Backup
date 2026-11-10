@@ -1,5 +1,14 @@
 # REELS evidence architecture and account-safety review
 
+## v1.5.92 TEST — exact native Relay root-field propagation (2026-11-10)
+
+- Real Firefox log on @aphrodixiaa at 22:07-22:08, v1.5.91: PUBLIC SHADOW completed 32/34; PROFILE captured 12 native roots and accepted its 42.9-second-old, same-scan continuation (`mode=observed_tail`, `initial=0`, `continuation=1`, `exact_key=true`). The first script-initiated native Relay continuation returned a GraphQL `server_execution` error and the scan stopped safely as `IG_API_UNHEALTHY`. It did **not** prove the PROFILE server end. `observed_tail` is correct when no initial page was captured.
+- Confirmed code defect: `webRelayGql()` dropped a natively captured `X-Root-Field-Name` on `/api/graphql`; this header had only been forwarded on `/graphql/query`. It may affect request fidelity, but the log does **not** expose the failing endpoint or prove this specific omission caused Instagram's server error.
+- Narrow fix: on `/api/graphql`, forward `X-Root-Field-Name` **only if present on the same captured native contract**; never synthesize it from a presumed connection key. Preserve existing `/graphql/query` behavior. No change to endpoints, retries, pagination limits, safety circuits, HIDDEN, REELS, TAGGED, HIGHLIGHTS, STORY or downloads.
+- New executable request-construction tests in `tests/native-profile-relay-regression.test.mjs` verify actual `webRelayGql` output for both URLs: real native root field forwarded, unobserved field not fabricated, query routing unchanged, and `doc_id`, variables, and other native body fields preserved. `@version`, `APP.VERSION` and distribution tests aligned to `1.5.92`.
+- CI SUCCESS: [GitHub Actions #42909267801](https://github.com/JKL93sang/JKL-Instagram-Backup/actions/runs/42909267801) (all checks); this is offline/synthetic only. **Browser validation is still pending.** PR #18 remains DRAFT; `main=1.5.78` remains untouched. No repeated live Instagram request was made for this fix.
+
+
 **Status:** experimental branch only; do not merge to production on the basis of this review alone. No Instagram account, session, browser automation, or private endpoint was contacted to produce this change. Tests use synthetic fixtures and GitHub Actions.
 
 ## Objective and non-negotiable invariants
