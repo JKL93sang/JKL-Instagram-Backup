@@ -8736,7 +8736,12 @@
         let totalEdges = 0;
         const seenCursors = new Set(cursor ? [cursor] : []);
 
-        for (let page = 1; page <= APP.PROFILE_MAX_SCROLLS; page++) {
+        // The continuation-only recovery is strictly bounded: a missing
+        // first-page capture must not turn into an unbounded crawl.
+        const maxPages = tailOnly
+            ? Math.min(8, APP.PROFILE_MAX_SCROLLS)
+            : APP.PROFILE_MAX_SCROLLS;
+        for (let page = 1; page <= maxPages; page++) {
             if (state.cancelled) throw new Error('Cancelled');
 
             const contract = cursor
