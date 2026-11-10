@@ -19,6 +19,7 @@ const methods = [
     'classifyReelsEvidence',
     'reconcileEmptyReelsCoverage',
     'reelsSurfaceSkipped', 'requiredCoverage', 'incompleteCoverage',
+    'reconcilePassiveProfilePostRoots',
     'scanAll',
 ].map(extract).join('\n');
 
