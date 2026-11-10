@@ -128,3 +128,23 @@ The existing source-to-archive `discoveredMediaResolution()` gate remains mandat
 **Offline acceptance:** `tests/selected-surface-archive-integrity.test.mjs` executes the real production `bestImage`, `bestVideo`, `isVideo`, `addMedia`, `discoveredMediaResolution`, `captureTagged`, `prepareTaggedNativeEvidenceForScan` and targeted GraphQL connection parsing. It checks XDT display URI images, invalid image candidates, video cover rejection, thumbnail-only rejection, wrong user ID, one-shot TTL, stale data, pagination continuation, unrelated connection and partial GraphQL errors. The full scanAll integration harness was aligned with the new required tagged bootstrap dependency.
 
 **CI:** [Userscript CI success #42559458072](https://github.com/JKL93sang/JKL-Instagram-Backup/actions/runs/42559458072) on `d5d33d07fc37585f33053b843de38f37250083ee`. All steps passed. This is offline code validation, **not** proof that the two real tagged items now download or that hidden REELS are discoverable. No Instagram browser scan or account request was performed, `@version` remains `1.5.86`, `main` remains `1.5.78`, and PR #18 stays DRAFT.
+
+
+## v1.5.87 — TAGGED: discovery is not a downloadable media unit (2026-11-10)
+
+### Reproduced real-world failure (v1.5.86, @jennnii97)
+
+- GraphQL TAGGED delivered `edges=2`, `has_next=false`, with `resolved=0`, `unresolved=2`, `reasons=unresolved_media_unit:2`; **no TAGGED entries reached the archive queue**.
+- The full scan had `POST=1`, `HIGHLIGHT=176`, `AVATAR=1`, `QUEUE=178`, with `TAGGED=false` and `REELS=false`. The discrepancy is confirmed by the user log; the *exact nested JSON of the two returned TAGGED nodes remains unavailable*.
+- The v1.5.86 `display_uri` fix was real but insufficient; a listing with valid IDs is not guaranteed to provide archive-grade URLs, particularly for videos with a cover but no playable URL.
+
+### Structural fix, without speculative discovery
+
+1. Retain strict GraphQL TAGGED connection and source+unit+parent ID archival proof. Each source list item is explicitly discovered before attempting optional media hydration.
+2. For unresolved entries with numeric IDs and incomplete URLs/sidecars, use existing `fetchOwnedMediaInfo()` with `{singleWebOnly:true}`, targeting only `GET https://www.instagram.com/api/v1/media/{pk}/info/`, **once per eligible root**. No `i.instagram.com` fallback, mobile User-Agent impersonation, mobile `clips/user/`, guessed GraphQL docs, or automatic retry for these TAGGED requests.
+3. Validate the detailed response's root ID against the discovered root; verify complete children, real image/video URLs and parent provenance. Never accept a video poster in lieu of an MP4 or a hydrated carousel missing children from the original inventory.
+4. Cap additional GET requests at **8 per scan** to bound account/session risk. Beyond that, report incomplete coverage instead of flooding; a restricted/invalid response is not a success signal. Log only kind and field-presence indicators, without URLs, cookies, or payload dumps.
+
+**Verification:** [Userscript CI SUCCESS #42736515560](https://github.com/JKL93sang/JKL-Instagram-Backup/actions/runs/42736515560) at `c13894f1a32b25585a58f9fa7a4717bfb290751c`. Integration fixtures exercise two thin TAGGED roots later hydrated to complete media, video/cover, wrong-ID rejection, one same-origin request per root and the 8-request circuit limit. **CI uses synthetic records and cannot prove Instagram allows this GET for the two real tagged posts.** User browser validation is pending.
+
+Distribution: same experimental branch and DRAFT PR #18, `@version=1.5.87` (to activate normal Tampermonkey version detection for existing test installs), **`main=1.5.78` unchanged**. REELS no-tab case remains `INCOMPLETE`; this work does not solve it.
