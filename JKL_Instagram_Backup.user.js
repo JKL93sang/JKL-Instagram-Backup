@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.90
-// @description  TEST v1.5.90: resume verified native PROFILE cursor, safe REELS partial, intact TAGGED/HIDDEN coverage.
+// @version      1.5.91
+// @description  TEST v1.5.91: retain same-scan PROFILE native evidence, bounded cursor recovery and safe partial downloads.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.90', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.91', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -8631,36 +8631,74 @@
         const age = Date.now() - Number(timestamp);
         const expected = Number(state?.expected);
         const cursor = pi?.end_cursor;
-        const canResume = (
-            continuation.timelineKeyVerified === true &&
-            audit.lastHasNext === 'true' &&
-            pi?.has_next_page === true &&
-            typeof cursor === 'string' && !!cursor &&
-            Number.isFinite(timestamp) && Number.isFinite(age) &&
-            age >= 0 && age <= APP.PROFILE_BOOTSTRAP_MAX_AGE_MS &&
-            accountId === String(state?.userId || '') &&
+        const sameUser = accountId === String(state?.userId || '') &&
+            String(state?.shadow?.profileId || '') === String(state?.userId || '');
+        const publicPartial = sameUser &&
             state?.profileInfo?.is_private === false &&
             state?.shadow?.applicable === true &&
             state?.shadow?.pageInfoEnded === true &&
             state?.coverage?.publicShadow === true &&
-            String(state?.shadow?.profileId || '') === String(state?.userId || '') &&
             publicIds instanceof Set &&
-            nativeMap instanceof Map && nativeMap.size > 0 &&
             Number.isSafeInteger(expected) && expected > 0 &&
-            publicIds.size >= 1 && publicIds.size < expected
-        );
+            publicIds.size > 0 && publicIds.size < expected;
+        const session = state?.nativeProfileEvidenceSession;
+        const sessionAge = Date.now() - Number(session?.acceptedAt);
+        const inScan = !!session && session.key === userKey &&
+            session.userId === String(state?.userId || '') &&
+            Number.isFinite(session.acceptedAt) &&
+            Number.isFinite(sessionAge) &&
+            sessionAge >= 0 && sessionAge <= 120000 &&
+            Number.isFinite(timestamp) &&
+            (timestamp === session.acceptedCapturedAt ||
+                timestamp >= session.acceptedAt);
+        const fresh = Number.isFinite(timestamp) &&
+            Number.isFinite(age) && age >= 0 &&
+            (age <= APP.PROFILE_BOOTSTRAP_MAX_AGE_MS || inScan);
+        const knownQuery = GRID_NAMES.has(continuation.friendly);
+        const exactKey = continuation.timelineKeyVerified === true;
+        const trusted = exactKey || (hasFullContract && knownQuery);
+        const canResume = trusted &&
+            audit.lastHasNext === 'true' &&
+            pi?.has_next_page === true &&
+            typeof cursor === 'string' && !!cursor &&
+            fresh && publicPartial &&
+            nativeMap instanceof Map && nativeMap.size > 0;
         if (canResume) {
+            log('PROFILE native resume selected: ' +
+                'mode=' + (hasFullContract ? 'native_resume' : 'observed_tail') +
+                ', age_ms=' + Math.round(age) +
+                ', same_scan=' + inScan +
+                ', known_query=' + knownQuery +
+                ', exact_key=' + exactKey +
+                ', public=' + publicIds.size + '/' + expected +
+                ', native_roots=' + nativeMap.size + '.');
             return {
-                initial: hasFullContract ? initial : null,
+                initial:hasFullContract ? initial : null,
                 continuation,
-                mode: hasFullContract ? 'native_resume' : 'observed_tail',
-                startCursor:cursor,
+                mode:hasFullContract ? 'native_resume' : 'observed_tail',
+                startCursor:cursor, exactKey,
             };
         }
 
-        // Original dual-contract replay remains available when a safe
-        // current native cursor cannot be established. Never manufacture
-        // an initial request if it was not natively captured.
+        // Never replay a known, unfinished PROFILE from its first page
+        // after independently finishing PUBLIC SHADOW. This repeatedly
+        // requested already-known media, then triggered server_execution.
+        if (publicPartial && pi?.has_next_page === true) {
+            const reasons = [];
+            if (!trusted) reasons.push('continuation_unverified');
+            if (audit.lastHasNext !== 'true') reasons.push('next_page_conflict');
+            if (!cursor) reasons.push('cursor_missing');
+            if (!fresh) reasons.push('outside_current_scan');
+            if (!(nativeMap instanceof Map) || !nativeMap.size) {
+                reasons.push('native_roots_missing');
+            }
+            log('PROFILE native resume unavailable: ' +
+                (reasons.join(',') || 'insufficient_provenance') +
+                '. No full first-page replay. PROFILE remains INCOMPLETE; ' +
+                'other independently verified sources can proceed.', 'warn');
+            return null;
+        }
+
         return hasFullContract
             ? { initial, continuation, mode:'full', startCursor:null }
             : null;
@@ -8799,7 +8837,7 @@
 
             // Tail-only mode has no captured initial request to validate
             // its connection shape. Require the exact native timeline key.
-            const c = tailOnly
+            const c = tailOnly && contracts.exactKey === true
                 ? keyedConnection(data, GRID_CONNECTION_KEY)
                 : gridConn(data);
             if (!c || !Array.isArray(c.edges) ||
@@ -12215,6 +12253,7 @@
         );
         state.scanComplete = false;
         state.scanOutcome = 'RUNNING';
+        state.nativeProfileEvidenceSession = null;
         state.scanUserId = '';
         state.scanQueueSize = 0;
         state.scanQueueFingerprint = '';
@@ -12270,6 +12309,17 @@
                   'has_next=' + nativeBootstrap.pageInfo.has_next_page + '.'
                 : 'PROFILE native bootstrap unavailable or stale; ' +
                   'a fresh verified server response is required.');
+            // The native snapshot was verified as fresh at scan entry.
+            // PUBLIC SHADOW can take >20s without invalidating this scan.
+            const profileEvidenceKey = state.username.toLowerCase();
+            state.nativeProfileEvidenceSession = {
+                key:profileEvidenceKey,
+                userId:String(state.userId || ''),
+                acceptedAt:Date.now(),
+                acceptedCapturedAt:nativeBootstrap.retained
+                    ? net.gridCaptureSeenAtByUser.get(profileEvidenceKey)
+                    : null,
+            };
             const reelBootstrap = prepareReelsNativeEvidenceForScan(
                 state.userId
             );
