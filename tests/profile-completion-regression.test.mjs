@@ -354,11 +354,16 @@ assert.ok(
  * Static anti-regression: when fallback is requested, only fallback.ended
  * may prove PROFILE completion. The old stale-page-info OR must never return.
  */
+assert.match(
+    extractFunction('scanMainGrid'),
+    /navigationEnded\\s*=\\s*fallback\\.ended\\s*===\\s*true;/,
+    'When permitted, only the actual fallback server-end proves completion'
+);
 assert.ok(
-    source.includes(
-        'navigationEnded =\n                    fallback.ended ===\n                    true;'
+    extractFunction('scanMainGrid').includes(
+        'if (profilePublicGapAvoidsSyntheticRelay())'
     ),
-    'canonical fallback is not authoritative in scanMainGrid'
+    'A verified PUBLIC gap must skip synthetic continuation before dispatch'
 );
 
 assert.ok(
