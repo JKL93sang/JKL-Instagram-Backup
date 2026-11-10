@@ -104,6 +104,8 @@ assert.deepEqual(remaining, [['REELS tab', 'reels']],
 // not fabricated proof that the user's complete Reels feed contains zero.
 {
     const state={
+        userId:'45790055326',
+        profileInfo:{pk:'45790055326'},
         coverage:{profileGrid:true,publicShadow:true,connectedHidden:true,
             ownedHydration:true,reels:false,tagged:true},
         reelsDiagnosis:{kind:'NOT_EXPOSED'},
@@ -127,6 +129,11 @@ assert.deepEqual(remaining, [['REELS tab', 'reels']],
         'an actual TAGGED failure remains blocking even when Reels skipped');
     state.coverage.tagged=true;
     for(const [label,mutate,restore] of [
+        ['wrong profile identity',()=>{
+            state.profileInfo.pk='987654321';
+        },()=>{
+            state.profileInfo.pk='45790055326';
+        }],
         ['observed reel',()=>state.roots.REEL.add('42'),
             ()=>state.roots.REEL.clear()],
         ['positive clips metadata / tab',()=>{state.reelsDiagnosis.kind='UNVERIFIED';},
