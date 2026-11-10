@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.92
-// @description  TEST v1.5.92: replay captured native Relay root header on api/graphql; safe PROFILE cursor recovery.
+// @version      1.5.93
+// @description  TEST v1.5.93: avoid rejected synthetic PROFILE Relay on verified public gaps; continue safe partial scan.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.92', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.93', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -8597,6 +8597,34 @@
             pageInfo: null,
         };
     }
+    function profilePublicGapAvoidsSyntheticRelay() {
+        // A verified, target-scoped PUBLIC timeline has already ended,
+        // but it exposes fewer roots than Instagram's authenticated
+        // count. Replaying a captured PROFILE cursor through a
+        // userscript-generated Relay request caused server_execution in
+        // real Firefox v1.5.91 AND v1.5.92, before any useful next page.
+        //
+        // Do not initiate another reconstructed PROFILE request in this
+        // state. Continue with the genuine browser-native evidence and
+        // independently verified archive sources instead. The official
+        // media counter alone NEVER proves the missing server end.
+        const id = String(state.userId || '');
+        const apiId = String(
+            state.profileInfo?.pk || state.profileInfo?.id || ''
+        ).split('_')[0];
+        const publicIds = state.shadow?.rootIds;
+        const expected = Number(state.expected);
+        return !!id && apiId === id &&
+            state.profileInfo?.is_private === false &&
+            state.shadow?.applicable === true &&
+            state.coverage?.publicShadow === true &&
+            state.shadow?.pageInfoEnded === true &&
+            String(state.shadow?.profileId || '') === id &&
+            publicIds instanceof Set &&
+            Number.isSafeInteger(expected) && expected > 0 &&
+            publicIds.size > 0 && publicIds.size < expected;
+    }
+
     function profileNativeCompletionRequest(userKey) {
         const initial = net.gridNativeInitialByUser.get(userKey);
         const continuation =
@@ -9246,21 +9274,42 @@
                     'warn'
                 );
 
-                const fallback =
-                    await scanProfileGraphQLFallback({
-                        reason,
-                        preferCanonicalDoc:
-                            true,
-                    });
+                if (profilePublicGapAvoidsSyntheticRelay()) {
+                    // Both 1.5.91 and 1.5.92 received server_execution
+                    // on the first reconstructed PROFILE continuation.
+                    // Never turn 34/34 observed roots into a fabricated
+                    // terminal page, and never poison the other sources
+                    // with another unnecessary GraphQL API failure.
+                    navigationEnded = false;
+                    log(
+                        'PROFILE native Relay replay skipped: verified ' +
+                        'PUBLIC source ended at ' +
+                        state.shadow.rootIds.size + '/' + state.expected +
+                        ', but authenticated PROFILE completion is ' +
+                        'unproven. No script-generated PROFILE GraphQL; ' +
+                        'continuing other independently verified surfaces. ' +
+                        'PROFILE remains INCOMPLETE until native server-end ' +
+                        'or later strict cross-surface proof.',
+                        'warn'
+                    );
+                }
+                else {
+                    const fallback =
+                        await scanProfileGraphQLFallback({
+                            reason,
+                            preferCanonicalDoc:
+                                true,
+                        });
 
-                /*
-                 * Once canonical completion is requested, ONLY its own
-                 * pagination result may prove the end. Never OR it with a
-                 * stale/partial native page_info=false.
-                 */
-                navigationEnded =
-                    fallback.ended ===
-                    true;
+                    /*
+                     * Once canonical completion is requested, ONLY its
+                     * own pagination result may prove the end. Never OR
+                     * it with stale/partial native page_info=false.
+                     */
+                    navigationEnded =
+                        fallback.ended ===
+                        true;
+                }
             }
 
             /*
