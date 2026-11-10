@@ -458,7 +458,7 @@ for (const code of [400,401,403,404,410,422]) {
 
 assert.ok(!source.includes('scanReelsAuthenticatedWithoutTab'));
 assert.ok(!source.includes('https://www.instagram.com/api/v1/clips/user/'));
-assert.ok(extract('scanReels').includes('REELS remains INCOMPLETE'));
+assert.ok(extract('scanReels').includes('REELS surface skipped if other selected sources verify'));
 assert.ok(extract('capturePartialDownloadGrants').includes(
     "state.scanOutcome !== 'INCOMPLETE'"
 ), 'only verified immutable partial sources may be downloaded');
