@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.93
-// @description  TEST v1.5.93: avoid rejected synthetic PROFILE Relay on verified public gaps; continue safe partial scan.
+// @version      1.5.94
+// @description  TEST v1.5.94: individual native PROFILE POST proof for partial archive; no false grid completion.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.93', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.94', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -211,6 +211,10 @@
         // Individual Reel units from already-observed, target-bound native
         // Web responses. This is never proof of full REELS pagination.
         verifiedPassiveReelRootIds: new Set(),
+        // Fully resolved media in a genuine, target-bound native PROFILE
+        // response may be saved individually even when PROFILE pagination
+        // has not reached a proven server end. Never a full-grid proof.
+        verifiedPassiveProfilePostRootIds: new Set(),
         partialDownloadGrants: { subscriber: null, accessible: null },
 
         roots: {
@@ -1251,6 +1255,7 @@
         state.hidden.recoveredCodes = [];
         state.verifiedSubscriberRootIds.clear();
         state.verifiedPassiveReelRootIds.clear();
+        state.verifiedPassiveProfilePostRootIds?.clear?.();
         state.highlightCatalog.clear();
         state.highlightRenameNotices.clear();
         clearPartialDownloadGrants();
@@ -11289,6 +11294,92 @@
     // Only independently proven, accessible surfaces are included.
     // REELS, TAGGED, subscriber media and unverified PROFILE-only items
     // never enter this bounded partial download.
+    function reconcilePassiveProfilePostRoots() {
+        // A partial native PROFILE timeline can contain individually
+        // complete, genuinely browser-observed POST carousels even while
+        // has_next_page remains true. This is permission to save those
+        // individual fully backed units, never proof of grid completion.
+        const verified = state.verifiedPassiveProfilePostRootIds;
+        if (!(verified instanceof Set)) return;
+        verified.clear();
+
+        if (!scanSelected('post') ||
+            state.coverage.ownedHydration !== true ||
+            state.cancelled || state.feedbackRequired ||
+            state.rateLimited || state.apiUnhealthy) return;
+
+        const key = String(state.username || '').toLowerCase();
+        const uid = String(state.userId || '');
+        const apiId = String(
+            state.profileInfo?.pk || state.profileInfo?.id || ''
+        ).split('_')[0];
+        const session = state.nativeProfileEvidenceSession;
+        const capturedAt = net.gridCaptureSeenAtByUser?.get?.(key);
+        const audit = net.gridNativeAuditByUser?.get?.(key);
+        const roots = net.gridByUser?.get?.(key);
+
+        // The observer only stores server-successful responses from a
+        // PROFILE request explicitly targeted to this account. Revalidate
+        // the account and the current scan's accepted capture window.
+        const currentCapture = !!session &&
+            session.key === key && session.userId === uid &&
+            Number.isFinite(session.acceptedAt) &&
+            Number.isFinite(capturedAt) &&
+            (capturedAt === session.acceptedCapturedAt ||
+                capturedAt >= session.acceptedAt);
+        if (!uid || apiId !== uid || !currentCapture ||
+            !(roots instanceof Map) ||
+            !audit || (audit.initial || 0) + (audit.continuation || 0) < 1) {
+            return;
+        }
+
+        for (const [keyId, raw] of roots) {
+            const id = normalizePk(raw);
+            if (!/^\d+$/.test(id) || String(keyId) !== id ||
+                !state.roots.POST.has(id)) continue;
+
+            const rec = state.rootCatalog.get(id);
+            if (!rec || rec.type !== 'POST' ||
+                !(rec.sources instanceof Set) ||
+                !rec.sources.has('PROFILE_GRID_NATIVE') ||
+                rec.structureComplete !== true ||
+                rec.forceHydrate === true ||
+                !Number.isSafeInteger(rec.expectedUnits) ||
+                rec.expectedUnits < 1) continue;
+
+            // Do not accept a native preview of only a few carousel
+            // children just because a later media-info call populated
+            // more units. Every child must be directly proven in the
+            // captured native root and the same archive inventory.
+            const sidecar = Array.isArray(raw?.carousel_media) &&
+                raw.carousel_media.length
+                    ? raw.carousel_media
+                    : (raw?.edge_sidecar_to_children?.edges || [])
+                        .map(e => e?.node).filter(Boolean);
+            const nativeUnits = sidecar.length || 1;
+            if (nativeUnits !== rec.expectedUnits ||
+                queuedUnitsForRoot(id) !== rec.expectedUnits) continue;
+
+            if (discoveredMediaResolution(raw, 'PROFILE_GRID_NATIVE').ok) {
+                verified.add(id);
+            }
+        }
+
+        if (verified.size) {
+            const items = [...state.queue.values()].filter(m =>
+                m?.type === 'POST' &&
+                m?.sources instanceof Set &&
+                m.sources.has('PROFILE_GRID_NATIVE') &&
+                m?.rootIds instanceof Set &&
+                [...m.rootIds].some(id => verified.has(String(id)))
+            ).length;
+            log('PROFILE individually verified native POST roots=' +
+                verified.size + ', media=' + items +
+                '. Partial-access proof only; PROFILE pagination ' +
+                'remains independently guarded.');
+        }
+    }
+
     function verifiedAccessibleMedia() {
         const shadowVerified =
             state.scanPlan?.post === true &&
@@ -11309,8 +11400,8 @@
             const id = String(m.id);
 
             if (m.type === 'POST') {
-                return shadowVerified &&
-                    m.rootIds instanceof Set &&
+                if (!(m.rootIds instanceof Set)) return false;
+                const publicProven = shadowVerified &&
                     [...m.rootIds].some(rootId =>
                         state.shadow.postIds.has(String(rootId))
                     ) &&
@@ -11318,6 +11409,15 @@
                         m.sources.has('PROFILE_PUBLIC_SHADOW') ||
                         m.sources.has('OWNED_DEEP_HYDRATION')
                     );
+                const nativeIndividualProven =
+                    state.scanPlan?.post === true &&
+                    state.coverage.ownedHydration === true &&
+                    m.sources.has('PROFILE_GRID_NATIVE') &&
+                    state.verifiedPassiveProfilePostRootIds instanceof Set &&
+                    [...m.rootIds].some(rootId =>
+                        state.verifiedPassiveProfilePostRootIds.has(String(rootId))
+                    );
+                return publicProven || nativeIndividualProven;
             }
 
             if (m.type === 'REEL') {
@@ -11423,6 +11523,9 @@
             roots: {
                 passiveReels: [...(state.verifiedPassiveReelRootIds || [])]
                     .map(String).sort(),
+                passiveProfilePosts:
+                    [...(state.verifiedPassiveProfilePostRootIds || [])]
+                        .map(String).sort(),
                 tagged: [...state.roots.TAGGED].map(String).sort(),
                 highlight: [...state.roots.HIGHLIGHT].map(String).sort(),
                 story: [...state.roots.STORY].map(String).sort(),
@@ -12518,6 +12621,7 @@
             // completed, using strict cross-surface evidence.
             reconcileProfileGridCoverage();
             reconcileEmptyReelsCoverage();
+            reconcilePassiveProfilePostRoots();
             updateStats();
 
             logScanProfilerSummary(
