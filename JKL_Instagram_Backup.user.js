@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.86
-// @description  TEST v1.5.86: passive native REELS recovery, identity-bound partial archiving, strict media-to-root checks and safer scoped network circuits.
+// @version      1.5.87
+// @description  TEST v1.5.87: bounded TAGGED media hydration, strict archive proof, passive REELS evidence, safe scan circuits.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,10 +31,10 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.86', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.87', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
-        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000,
+        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
         REEL_SCROLL_MIN: 350, REEL_SCROLL_MAX: 1600, REEL_SCROLL_POLL: 120,
         PAGE_MIN: 650, PAGE_MAX: 1250, SHADOW_PAGE_MIN: 250, SHADOW_PAGE_MAX: 450, SHADOW_MAX_PAGES: 200, DOWNLOAD_DELAY: 0, DOWNLOAD_WORKERS: 1, DOWNLOAD_RETRIES: 3, LEDGER_FLUSH_EVERY: 25, DL_DIAG_SAMPLES: 20, MAX_LOG: 300,
         HYDRATE_MIN: 180, HYDRATE_MAX: 320, HYDRATE_RETRIES: 3, HYDRATE_WORKERS: 4, HYDRATE_LARGE_THRESHOLD: 250, HYDRATE_LARGE_WORKERS: 2, HYDRATE_BULK_THRESHOLD: 100, HYDRATE_BULK_SIZE: 20, HYDRATE_SINGLE_FALLBACK_CAP: 100,
@@ -2767,21 +2767,27 @@
         return n;
     }
 
-    async function fetchOwnedMediaInfo(rootId, label = 'OWNED media') {
+    async function fetchOwnedMediaInfo(rootId, label = 'OWNED media', options = {}) {
         const id = String(rootId || '');
 
         if (!/^\d+$/.test(id)) {
             throw new Error(`${label}: invalid root ID ${id || '-'}`);
         }
 
-        const endpoints = [
-            `https://i.instagram.com/api/v1/media/${id}/info/`,
-            `https://www.instagram.com/api/v1/media/${id}/info/`,
-        ];
+        // TAGGED uses one existing same-origin media-info GET and no retry:
+        // an incomplete listing is not permission for repeated mobile API probes.
+        const singleWebOnly = options?.singleWebOnly === true;
+        const endpoints = singleWebOnly
+            ? [`https://www.instagram.com/api/v1/media/${id}/info/`]
+            : [
+                `https://i.instagram.com/api/v1/media/${id}/info/`,
+                `https://www.instagram.com/api/v1/media/${id}/info/`,
+            ];
+        const maxAttempts = singleWebOnly ? 1 : APP.HYDRATE_RETRIES;
 
         let last = null;
 
-        for (let attempt = 1; attempt <= APP.HYDRATE_RETRIES; attempt++) {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             let invalidJson200Endpoints = 0;
 
             for (const url of endpoints) {
@@ -2896,7 +2902,7 @@
                 }
             }
 
-            if (attempt < APP.HYDRATE_RETRIES) {
+            if (attempt < maxAttempts) {
                 const wait =
                     last?.status === 429
                         ? 6000 + rand(0, 2500)
@@ -9977,6 +9983,8 @@
         let unresolvedRoots = 0;
         let resolvedRoots = 0;
         const unresolvedReasons = new Map();
+        let hydrationAttempts = 0;
+        let hydratedRoots = 0;
         let endReason = 'max_pages';
         const seenCursors = new Set();
 
@@ -10102,7 +10110,62 @@
                 const rootId = normalizePk(media);
                 if (rootId) state.roots.TAGGED.add(rootId);
                 addMedia(media, 'TAGGED', 'TAGGED');
-                const proof = discoveredMediaResolution(media, 'TAGGED');
+                let proof = discoveredMediaResolution(media, 'TAGGED');
+                let recovery = 'not_needed';
+
+                // TAGGED is a discovery list, not guaranteed full media-info.
+                // Resolve missing file units through the SAME media-info GET
+                // already used for owned-root hydration. At most one
+                // same-origin request per eligible root; no mobile clips probe,
+                // alternate host, retry storm or guessed GraphQL document.
+                const eligible = !proof.ok && /^\d+$/.test(rootId) &&
+                    [
+                        'unresolved_media_unit',
+                        'carousel_children_unavailable',
+                        'carousel_item_count_gap',
+                    ].includes(proof.reason);
+                if (eligible && hydrationAttempts < APP.TAGGED_HYDRATION_LIMIT) {
+                    hydrationAttempts++;
+                    recovery = 'web_media_info_attempted';
+                    try {
+                        const detailed = await fetchOwnedMediaInfo(
+                            rootId,
+                            'TAGGED media-info',
+                            {singleWebOnly: true}
+                        );
+                        if (normalizePk(detailed) !== rootId) {
+                            proof = {ok:false, reason:'media_info_identity_mismatch'};
+                        } else {
+                            addMedia(detailed, 'TAGGED', 'TAGGED');
+                            const detailedProof =
+                                discoveredMediaResolution(detailed, 'TAGGED');
+                            // Do not let a shorter hydrated carousel replace a
+                            // stronger unit-count claim from the original feed.
+                            const rawCount = Number(media?.carousel_media_count || 0);
+                            const fullChildren = Array.isArray(detailed?.carousel_media)
+                                ? detailed.carousel_media.length
+                                : Array.isArray(detailed?.edge_sidecar_to_children?.edges)
+                                    ? detailed.edge_sidecar_to_children.edges.length
+                                    : 0;
+                            if (detailedProof.ok && Number.isSafeInteger(rawCount) &&
+                                rawCount > 1 && fullChildren < rawCount) {
+                                proof = {ok:false, reason:'hydrated_carousel_count_gap'};
+                            } else {
+                                proof = detailedProof;
+                                if (proof.ok) {
+                                    hydratedRoots++;
+                                    recovery = 'web_media_info_resolved';
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        throwIfInstagramStop(err, 'TAGGED media-info');
+                        proof = {ok:false, reason:'web_media_info_unavailable'};
+                    }
+                } else if (eligible) {
+                    recovery = 'hydration_limit_reached';
+                }
+
                 if (proof.ok) {
                     resolvedRoots++;
                 } else {
@@ -10110,6 +10173,22 @@
                     unresolvedReasons.set(
                         proof.reason,
                         (unresolvedReasons.get(proof.reason) || 0) + 1
+                    );
+                    // Field-presence diagnostics only: no media URLs, cookies,
+                    // response dumps or personal payloads in the scan logs.
+                    const video = Number(media?.media_type) === 2 ||
+                        media?.is_video === true || media?.__typename === 'GraphVideo';
+                    log(
+                        'TAGGED unresolved media: kind=' +
+                        (Number(media?.media_type) || media?.__typename || '?') +
+                        ', image=' + !!(media?.display_uri || media?.display_url ||
+                            media?.image_versions2?.candidates?.length) +
+                        ', video=' + !!(media?.video_url ||
+                            media?.video_versions?.length) +
+                        ', video_kind=' + video +
+                        ', recovery=' + recovery +
+                        ', reason=' + proof.reason + '.',
+                        'warn'
                     );
                 }
             }
@@ -10181,6 +10260,7 @@
         log(
             `TAGGED GraphQL complete: pages=${pages}, roots=${totalRoots}, ` +
             `resolved=${resolvedRoots}, unresolved=${unresolvedRoots}, ` +
+            `hydration=${hydratedRoots}/${hydrationAttempts}, ` +
             `end=${endReason}, ended=${state.coverage.tagged}, ` +
             `reasons=${[...unresolvedReasons].map(([key, count]) =>
                 key + ':' + count).join(',') || '-'}. ` +
