@@ -99,6 +99,51 @@ const remaining = requiredCoverage().filter(([, key]) => key === 'reels');
 assert.deepEqual(remaining, [['REELS tab', 'reels']],
     'REELS must remain separately required for full archive completion');
 
+
+// A missing navigation tab is an operational SKIP for the exposed archive,
+// not fabricated proof that the user's complete Reels feed contains zero.
+{
+    const state={
+        coverage:{profileGrid:true,publicShadow:true,connectedHidden:true,
+            ownedHydration:true,reels:false,tagged:true},
+        reelsDiagnosis:{kind:'NOT_EXPOSED'},
+        roots:{REEL:new Set()},
+        shadow:{reelIds:new Set()},
+    };
+    const api=new Function('state','scanSelected','scanSelection',
+        extract('reelsSurfaceSkipped')+
+        extract('requiredCoverage')+
+        extract('incompleteCoverage')+
+        '\nreturn {reelsSurfaceSkipped,incompleteCoverage};'
+    )(state,k=>['post','reel','tagged'].includes(k),
+        ()=>({post:true,reel:true,tagged:true}));
+    assert.equal(api.reelsSurfaceSkipped(),true);
+    assert.ok(!api.incompleteCoverage().includes('REELS tab'),
+        'missing native tab must not block already-verified exposed surfaces');
+    assert.deepEqual(api.incompleteCoverage(),[]);
+
+    state.coverage.tagged=false;
+    assert.deepEqual(api.incompleteCoverage(),['TAGGED'],
+        'an actual TAGGED failure remains blocking even when Reels skipped');
+    state.coverage.tagged=true;
+    for(const [label,mutate,restore] of [
+        ['observed reel',()=>state.roots.REEL.add('42'),
+            ()=>state.roots.REEL.clear()],
+        ['positive clips metadata / tab',()=>{state.reelsDiagnosis.kind='UNVERIFIED';},
+            ()=>{state.reelsDiagnosis.kind='NOT_EXPOSED';}],
+        ['unknown public profile',()=>{state.coverage.profileGrid=false;},
+            ()=>{state.coverage.profileGrid=true;}],
+        ['unresolved hidden evidence',()=>{state.coverage.connectedHidden=false;},
+            ()=>{state.coverage.connectedHidden=true;}],
+        ['hydration incomplete',()=>{state.coverage.ownedHydration=false;},
+            ()=>{state.coverage.ownedHydration=true;}],
+    ]) {
+        mutate();
+        assert.equal(api.reelsSurfaceSkipped(),false,label);
+        assert.ok(api.incompleteCoverage().includes('REELS tab'),label);
+        restore();
+    }
+}
 assert.ok(source.includes("'PolarisProfileReelsTabContentQuery'"));
 assert.ok(!source.includes('async function scanReelsFallback('));
 assert.ok(source.includes('=== SCAN STOPPED — INSTAGRAM API UNHEALTHY ==='));
@@ -106,4 +151,4 @@ assert.ok(!source.includes('https://www.instagram.com/api/v1/clips/user/'),
     'desktop userscript must not issue private-mobile clips requests');
 assert.ok(!source.includes('scanReelsAuthenticatedWithoutTab'),
     'blocked fallback helper must not accidentally be reachable');
-console.log('No-tab fail-closed guard, no mobile POST, and independent PROFILE coverage tests passed.');
+console.log('No-tab operational skip, positive-evidence guard, no mobile POST and independent PROFILE coverage tests passed.');
