@@ -16123,6 +16123,9 @@
         singleDownloadState.busy.add(
             key
         );
+        // Use the common scan/download mutex; never overlap single
+        // actions with a bulk scan or another single-media transfer.
+        state.downloading = true;
     
         const oldHtml =
             button?.innerHTML ||
@@ -16264,6 +16267,7 @@
             singleDownloadState.busy.delete(
                 key
             );
+            state.downloading = false;
     
             if (
                 button &&
