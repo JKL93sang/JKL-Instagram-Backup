@@ -82,7 +82,7 @@ function harness(opts={}){
  assert.equal(x.calls[0].vars.after,'real-next-cursor');
  assert.equal(x.state.roots.POST.size,34);
  assert.equal(x.net.gridByUser.get('aphrodixiaa').has('8001'),true);
- assert.equal(done.endReason,'native_tail_page_info_end_exact_union');
+ assert.equal(done.endReason,'native_resume_page_info_end_exact_union');
 }
 for(const [name,opts] of [
  ['wrong profile identity',{foreign:true}],
@@ -97,7 +97,7 @@ for(const [name,opts] of [
  assert.equal(x.calls.length,0,'no speculative network '+name);
 }
 for(const [name,opts,reason] of [
- ['server-ended but incomplete union',{missing:true},'native_tail_union_counter_unverified'],
+ ['server-ended but incomplete union',{missing:true},'native_resume_union_counter_unverified'],
  ['wrong returned connection',{wrongConnection:true},'connection_missing'],
 ]){
  const x=harness(opts);
