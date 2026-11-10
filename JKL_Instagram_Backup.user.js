@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.94
-// @description  TEST v1.5.94: individual native PROFILE POST proof for partial archive; no false grid completion.
+// @version      1.5.95
+// @description  TEST v1.5.95: fail-closed standalone media identity and complete carousel downloads; preserve safe scan guards.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.94', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.95', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -15781,7 +15781,8 @@
 
     function standaloneUnits(
         raw,
-        forcedType = ''
+        forcedType = '',
+        expectedRootId = ''
     ) {
         const root =
             raw?.media &&
@@ -15789,8 +15790,16 @@
                 ? raw.media
                 : raw;
 
-        if (!root) {
-            return [];
+        if (!root || typeof root !== 'object') {
+            throw new Error('SINGLE: missing authenticated media root');
+        }
+
+        const rootId = normalizePk(root);
+        if (!/^\d+$/.test(rootId) ||
+            (expectedRootId && rootId !== String(expectedRootId))) {
+            throw new Error(
+                'SINGLE: Instagram media-info root identity does not match the requested media'
+            );
         }
 
         const type =
@@ -15822,32 +15831,49 @@
                     .map(e => e?.node)
                     .filter(Boolean);
 
-        const units =
-            children.length
-                ? children
-                : [root];
+        // A single-download must be all-or-nothing for the
+        // chosen root. Do not silently save only the first available
+        // children of an incomplete carousel.
+        const product = String(
+            root.product_type || root.media_product_type || ''
+        ).toLowerCase();
+        const carousel = Number(root.media_type) === 8 ||
+            root.__typename === 'GraphSidecar' ||
+            product === 'carousel_container' ||
+            product === 'carousel' ||
+            children.length > 1;
+        const countRaw = root.carousel_media_count;
+        const claimed = countRaw == null || countRaw === ''
+            ? 0 : Number(countRaw);
+        if ((countRaw != null && countRaw !== '' &&
+            (!Number.isSafeInteger(claimed) || claimed < 0)) ||
+            root?.edge_sidecar_to_children?.page_info?.has_next_page === true ||
+            (carousel && children.length < 2) ||
+            (claimed > 0 && claimed > (children.length || 1))) {
+            throw new Error(
+                'SINGLE: carousel structure is incomplete; refusing a partial download'
+            );
+        }
 
+        const units = children.length ? children : [root];
         const out = [];
+        const seen = new Set();
 
         for (const child of units) {
-            const id =
-                normalizePk(child) ||
-                normalizePk(root);
-
-            if (!id) {
-                continue;
+            const id = normalizePk(child);
+            if (!/^\d+$/.test(id) || seen.has(id)) {
+                throw new Error(
+                    'SINGLE: missing or duplicated carousel media identity'
+                );
             }
+            seen.add(id);
 
-            const video =
-                isVideo(child);
-
-            const url =
-                video
-                    ? bestVideo(child)
-                    : bestImage(child);
-
+            const video = isVideo(child);
+            const url = video ? bestVideo(child) : bestImage(child);
             if (!url) {
-                continue;
+                throw new Error(
+                    'SINGLE: media URL unavailable; refusing incomplete batch'
+                );
             }
 
             const timestamp =
@@ -16131,7 +16157,8 @@
             const files =
                 standaloneUnits(
                     item,
-                    forcedType
+                    forcedType,
+                    id
                 );
     
             if (!files.length) {
