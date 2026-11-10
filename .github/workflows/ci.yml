@@ -96,6 +96,9 @@ jobs:
       - name: PROFILE observed native-tail and public counter union regression tests
         run: node tests/profile-native-tail-resume-regression.test.mjs
 
+      - name: PROFILE public-gap passive no-synthetic-Relay integration tests
+        run: node tests/profile-public-gap-passive-regression.test.mjs
+
       - name: Native capture provenance, privacy and transport isolation tests
         run: node tests/native-capture-provenance-regression.test.mjs
 
