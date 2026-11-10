@@ -31,7 +31,14 @@ function harness(opts={}){
   template:{headers:{'x-root-field-name':'xdt_api__v1__feed__user_timeline_graphql_connection'},body:{}},
  };
  net.gridNativeContinuationByUser.set(user,contract);
- net.gridNativeAuditByUser.set(user,{initial:0,continuation:1,cursorLocation:'root',lastHasNext:'true'});
+ if(opts.initialCaptured) net.gridNativeInitialByUser.set(user,{
+  ...contract,docId:'77777777',
+  variables:{username:user,first:12},
+ });
+ net.gridNativeAuditByUser.set(user,{
+  initial:opts.initialCaptured?1:0,continuation:1,
+  cursorLocation:'root',lastHasNext:'true',
+ });
  net.gridPageInfo.set(user,{has_next_page:true,end_cursor:opts.cursorMissing?'':'real-next-cursor'});
  net.gridByUser.set(user,nativeMap);
  net.gridDocByUser.set(user,contract.docId);
@@ -83,6 +90,24 @@ function harness(opts={}){
  assert.equal(x.state.roots.POST.size,34);
  assert.equal(x.net.gridByUser.get('aphrodixiaa').has('8001'),true);
  assert.equal(done.endReason,'native_resume_page_info_end_exact_union');
+}
+// A live v1.5.89 incident: initial+continuation both exist, but
+// replaying from page 1 duplicated 12+12 edges before a third
+// GraphQL server_execution error. Resume at the last native cursor.
+{
+ const x=harness({initialCaptured:true});
+ const c=x.profileNativeCompletionRequest('aphrodixiaa');
+ assert.equal(c?.mode,'native_resume');
+ assert.equal(c.initial?.docId,'77777777');
+ assert.equal(c.startCursor,'real-next-cursor');
+ const done=await x.scanProfileGraphQLFallback();
+ assert.equal(done.ended,true);
+ assert.equal(done.pages,1,'native resumption must not reread two earlier pages');
+ assert.equal(x.calls.length,1);
+ assert.equal(x.calls[0].doc,'123456789');
+ assert.equal(x.calls[0].vars.after,'real-next-cursor');
+ assert.equal(done.endReason,'native_resume_page_info_end_exact_union');
+ assert.ok(x.logs.some(x=>x[0].includes('mode=native_resume')));
 }
 for(const [name,opts] of [
  ['wrong profile identity',{foreign:true}],
