@@ -96,5 +96,5 @@ assert.match(src,/profileSourceDiagnostics:\s*profileSourceDiagnosticSnapshot\(\
 assert.match(src,/PROFILE SOURCE AUDIT \(diagnostic only\)/);
 assert.ok(!extract('profileSourceDiagnosticSnapshot').includes('gmRequest('));
 assert.ok(!extract('profileSourceDiagnosticSnapshot').includes('nativeFetch('));
-assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.101');
+assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.102');
 console.log('PROFILE source audit: 115/117 vs 89 PUBLIC/40 native/361 independent REELS, safe snapshots and JSON export — PASS.');
