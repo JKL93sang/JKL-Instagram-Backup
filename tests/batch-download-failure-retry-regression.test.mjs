@@ -49,7 +49,7 @@ const state = {
     queue: new Map(items.map(x => [x.id, x])),
     downloaded: 0, failed: 0, diskActive: false,
     diskCanonical: new Set(), diskLocations: new Map(),
-    sessionPaths: new Map(), downloadProgress: null,
+    sessionPaths: new Map(), sessionCategories: new Map(), downloadProgress: null,
 };
 
 const ctx = {
@@ -57,7 +57,7 @@ const ctx = {
     DOWNLOAD_MODE: {COMPLETE: 'complete'},
     DOWNLOAD_MODE_LABEL: {complete: 'Download batch'},
     state,
-    existingReason: m => state.diskCanonical.has(String(m.id)) ? 'disk' : '',
+    existingReason: m => state.sessionCategories.get(String(m.id))?.has('POSTS') ? 'SESSION' : '',
     authorizeDownloadScope: () => ({ok: true, media: items}),
     unverifiedArchiveHistory: () => ({total: 0, ledger: 0}),
     status: (message, level) => statuses.push({message, level}),
@@ -84,7 +84,7 @@ await app.downloadMissing();
 
 assert.equal(state.downloaded, 128);
 assert.equal(state.failed, 1);
-assert.equal(state.diskCanonical.size, 128);
+assert.equal(state.diskCanonical.size, 0, 'callbacks must not mutate disk index');\nassert.equal(state.sessionCategories.size, 128);
 assert.equal(state.diskCanonical.has(missingId), false,
     'failed write cannot be registered as disk-present');
 assert.equal(ledger.length, 128,
@@ -97,7 +97,7 @@ assert.equal(state.downloadProgress.succeeded, 128);
 assert.equal(state.downloadProgress.failed, 1);
 assert.equal(state.downloadProgress.status, 'complete');
 assert.ok(logs.some(x => x.message.includes('129 media jobs processed') &&
-    x.message.includes('128/129 physical writes succeeded') &&
+    x.message.includes('128/129 GM_download success callbacks (disk not independently verified)') &&
     x.message.includes('1 failed') && x.level === 'warn'));
 assert.ok(statuses.some(x => x.message.includes('1 failed') &&
     x.level === 'warn'), 'UI cannot claim all writes succeeded');
@@ -108,7 +108,7 @@ allowRecovery = true;
 await app.downloadMissing();
 
 assert.equal(state.downloaded, 129);
-assert.equal(state.diskCanonical.size, 129);
+assert.equal(state.diskCanonical.size, 0, 'callbacks must not mutate disk index');\nassert.equal(state.sessionCategories.size, 129);
 assert.equal(ledger.length, 129);
 assert.equal(attempted.get(missingId), 4);
 assert.ok(items.filter(m => m.id !== missingId).every(
@@ -117,7 +117,7 @@ assert.ok(items.filter(m => m.id !== missingId).every(
 assert.equal(state.downloadProgress.total, 1);
 assert.equal(state.downloadProgress.succeeded, 1);
 assert.equal(state.downloadProgress.failed, 0);
-assert.ok(statuses.some(x => x.message.includes('1/1 physical writes succeeded') &&
+assert.ok(statuses.some(x => x.message.includes('1/1 GM_download success callbacks (disk not independently verified)') &&
     x.message.includes('0 failed') && x.level === 'ok'));
 assert.equal(flushCount, 2);
 
