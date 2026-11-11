@@ -17697,7 +17697,8 @@
                 position:fixed;
                 z-index:2147483645;
                 top:10px;
-                right:10px;
+                left:10px;
+                right:auto;
                 width:36px;
                 height:36px;
                 border:1px solid rgba(255,255,255,.30);
