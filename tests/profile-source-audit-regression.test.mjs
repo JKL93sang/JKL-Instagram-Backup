@@ -85,9 +85,9 @@ assert.equal(diagnostic().nativeServerEnded,true);
 assert.equal(diagnostic().counts.gapMainVsCounter,2,
     'observing an end flag is not proof of missing identity');
 
-assert.match(src,/profileMainGridRootIds\.clear\(\)/,
+assert.match(src,/profileMainGridRootIds\s*=\s*new Set\(\)/,
     'evidence must reset between profiles');
-assert.match(src,/profileDomObservedRootIds\.clear\(\)/);
+assert.match(src,/profileDomObservedRootIds\s*=\s*new Set\(\)/);
 assert.match(src,/state\.profileMainGridRootIds = new Set\(\[\s*\.\.\.state\.roots\.POST,\s*\.\.\.state\.roots\.REEL/,
     'freeze main-grid membership before independently scanning REELS');
 assert.match(src,/state\.profileDomObservedRootIds = new Set\(/);
