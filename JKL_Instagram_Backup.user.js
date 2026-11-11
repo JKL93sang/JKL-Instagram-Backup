@@ -1660,10 +1660,9 @@
         }
         logArchive.entries.push(line);
         if (logArchive.entries.length > APP.MAX_LOG_ARCHIVE) {
-            const remove = Math.min(
-                1000,
-                logArchive.entries.length - APP.MAX_LOG_ARCHIVE
-            );
+            // Remove in chunks to avoid O(archiveSize) shifting
+            // on every subsequent log entry in very large accounts.
+            const remove = Math.min(1000, logArchive.entries.length);
             logArchive.entries.splice(0, remove);
             logArchive.dropped += remove;
         }
@@ -1749,7 +1748,7 @@
             '--- DÉBUT DES LOGS ---',
         ];
         return heading.concat(saved, ['--- FIN DES LOGS ---', ''])
-            .join('\\r\\n');
+            .join('\r\n');
     }
 
     function exportLogs() {
@@ -1766,7 +1765,7 @@
         try {
             const text = buildLogExport(username, at);
             const blob = new Blob(
-                ['\\uFEFF', text],
+                ['\uFEFF', text],
                 { type: 'text/plain;charset=utf-8' }
             );
             url = URL.createObjectURL(blob);
