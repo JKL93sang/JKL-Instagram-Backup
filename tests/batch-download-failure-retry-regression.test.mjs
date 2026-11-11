@@ -84,7 +84,8 @@ await app.downloadMissing();
 
 assert.equal(state.downloaded, 128);
 assert.equal(state.failed, 1);
-assert.equal(state.diskCanonical.size, 0, 'callbacks must not mutate disk index');\nassert.equal(state.sessionCategories.size, 128);
+assert.equal(state.diskCanonical.size, 0, 'callbacks must not mutate disk index');
+assert.equal(state.sessionCategories.size, 128);
 assert.equal(state.diskCanonical.has(missingId), false,
     'failed write cannot be registered as disk-present');
 assert.equal(ledger.length, 128,
@@ -108,7 +109,8 @@ allowRecovery = true;
 await app.downloadMissing();
 
 assert.equal(state.downloaded, 129);
-assert.equal(state.diskCanonical.size, 0, 'callbacks must not mutate disk index');\nassert.equal(state.sessionCategories.size, 129);
+assert.equal(state.diskCanonical.size, 0, 'callbacks must not mutate disk index');
+assert.equal(state.sessionCategories.size, 129);
 assert.equal(ledger.length, 129);
 assert.equal(attempted.get(missingId), 4);
 assert.ok(items.filter(m => m.id !== missingId).every(
