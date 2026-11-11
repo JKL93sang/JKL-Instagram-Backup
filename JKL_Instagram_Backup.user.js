@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.100
-// @description  TEST v1.5.100: reliable solo download action in panel even when Instagram age overlays hide media.
+// @version      1.5.101
+// @description  TEST v1.5.101: viewport-pinned solo control on media, age-gate fallback and native tile reattachment.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.100', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.101', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -16789,80 +16789,43 @@
         );
     }
     function currentMediaRoot() {
-        const dialog =
-            document.querySelector(
-                'div[role="dialog"]'
-            );
+        const viewportW=window.innerWidth || 1;
+        const viewportH=window.innerHeight || 1;
+        const visible=el=>{
+            const r=el?.getBoundingClientRect?.();
+            return r && r.width>=180 && r.height>=140 &&
+                r.right>0 && r.bottom>0 &&
+                r.left<viewportW && r.top<viewportH;
+        };
 
-        if (
-            dialog?.querySelector(
-                'img,video'
-            )
-        ) {
-            return dialog;
+        // A content warning can replace the IMG/VIDEO entirely. The dialog
+        // still identifies the actively opened post or Reel by its URL.
+        const dialogs=[...document.querySelectorAll('div[role="dialog"]')]
+            .filter(visible);
+        if(dialogs.length) return dialogs[dialogs.length-1];
+
+        if(storyPermalinkInfo(location.href)) {
+            const sections=[...document.querySelectorAll('section')]
+                .filter(visible);
+            return sections.reverse().find(el=>el.querySelector('img,video')) ||
+                document.querySelector('main') || sections[0] || null;
         }
 
-        if (storyPermalinkInfo(location.href)) {
-            return document.querySelector('main') ||
-                document.body;
+        const articles=[...document.querySelectorAll('article')]
+            .filter(visible);
+        if(articles.length){
+            const candidates=articles.filter(el=>el.querySelector('img,video'));
+            return (candidates.length ? candidates : articles)
+                .sort((a,b)=>{
+                    const ra=a.getBoundingClientRect(),rb=b.getBoundingClientRect();
+                    return Math.abs(ra.left+ra.width/2-viewportW/2)-
+                        Math.abs(rb.left+rb.width/2-viewportW/2);
+                })[0];
         }
 
-        const articles =
-            [
-                ...document.querySelectorAll(
-                    'article'
-                ),
-            ];
-
-        const visible =
-            articles
-                .filter(
-                    article =>
-                        article.querySelector(
-                            'img,video'
-                        ) &&
-                        article.getClientRects()
-                            .length
-                )
-                .sort(
-                    (a, b) => {
-                        const ar =
-                            a.getBoundingClientRect();
-
-                        const br =
-                            b.getBoundingClientRect();
-
-                        const aa =
-                            Math.max(
-                                0,
-                                ar.width
-                            ) *
-                            Math.max(
-                                0,
-                                ar.height
-                            );
-
-                        const ba =
-                            Math.max(
-                                0,
-                                br.width
-                            ) *
-                            Math.max(
-                                0,
-                                br.height
-                            );
-
-                        return ba - aa;
-                    }
-                );
-
-        return (
-            visible[0] ||
-            document.querySelector(
-                'main'
-            ) ||
-            document.body
-        );
+        const main=document.querySelector('main[role="main"]') ||
+            document.querySelector('main');
+        return visible(main) ? main : null;
     }
 
     function largestCurrentMedia(root) {
@@ -16936,35 +16899,40 @@
             [0]?.media || null;
     }
 
-    function currentMediaOverlayHost(media, root) {
-        if (!media || !root) return null;
-        const rect = media.getBoundingClientRect();
+    function currentMediaOverlayHost(media,root) {
+        // Viewport-based anchor: never depend on React's exact media
+        // ancestor dimensions or inject our button inside its DOM.
+        const vw=window.innerWidth || 0,vh=window.innerHeight || 0;
+        if(!root || !vw || !vh) return null;
+        const visible=el=>{
+            const r=el?.getBoundingClientRect?.();
+            return r && r.width>=160 && r.height>=140 &&
+                r.right>0 && r.bottom>0 && r.left<vw && r.top<vh
+                ? r : null;
+        };
+        const rect=visible(media) ||
+            visible(root.querySelector?.('article')) ||
+            visible(root);
+        if(!rect) return null;
 
-        for (
-            let host=media.parentElement, depth=0;
-            host && depth<7;
-            host=host.parentElement, depth++
-        ) {
-            if (
-                host === document.body ||
-                host === document.documentElement
-            ) break;
+        // A main/dialog may fill the viewport while the actual Reel is
+        // centered in a narrower column. Keep the button beside that
+        // column, not at the extreme right of the browser.
+        const wide=rect.width>vw*.82;
+        const width=wide
+            ? Math.min(rect.width,Math.max(280,Math.min(640,vw*.62)))
+            : rect.width;
+        const leftEdge=wide ? rect.left+(rect.width-width)/2 : rect.left;
+        const top=Math.max(8,Math.min(vh-48,rect.top+12));
+        let left=Math.max(8,Math.min(vw-48,leftEdge+width-48));
 
-            // Do not nest an interactive button inside a link.
-            if (!host.matches?.('a,button')) {
-                const box=host.getBoundingClientRect();
-                if (
-                    box.width >= rect.width-8 &&
-                    box.height >= rect.height-8 &&
-                    box.width <= rect.width +
-                        Math.max(44,rect.width*0.16) &&
-                    box.height <= rect.height +
-                        Math.max(44,rect.height*0.16)
-                ) return host;
-            }
-            if (host === root) break;
+        // Avoid covering the button with our own high-z-index panel.
+        const panel=ui.box?.getBoundingClientRect?.();
+        if(panel && left+38>panel.left && left<panel.right &&
+            top+38>panel.top && top<panel.bottom) {
+            left=Math.max(8,Math.min(vw-48,leftEdge+12));
         }
-        return null;
+        return {left:Math.round(left),top:Math.round(top)};
     }
 
     function ensureCurrentDownloadButton() {
@@ -17002,27 +16970,20 @@
         return button;
     }
 
-    function placeCurrentDownloadButton(button, root) {
-        const host = currentMediaOverlayHost(
-            largestCurrentMedia(root),
-            root
-        );
-        if (!host) {
+    function placeCurrentDownloadButton(button,root) {
+        const anchor=currentMediaOverlayHost(largestCurrentMedia(root),root);
+        if(!anchor){
             button.remove();
             return 'unavailable';
         }
-        if (
-            getComputedStyle(host).position ===
-            'static'
-        ) host.style.position = 'relative';
-
-        button.classList.add(
-            'jkl-media-download-overlay'
-        );
-        if (button.parentElement !== host) {
-            host.appendChild(button);
-        }
-        return 'media-overlay';
+        // Body-level fixed positioning bypasses Instagram's clipping and
+        // stacking contexts, but remains visually glued to the media.
+        button.classList.add('jkl-media-download-overlay');
+        if(button.parentElement!==document.body) document.body.appendChild(button);
+        const left=anchor.left+'px',top=anchor.top+'px';
+        if(button.style.left!==left) button.style.left=left;
+        if(button.style.top!==top) button.style.top=top;
+        return 'viewport-pinned-media';
     }
 
     function updateSingleDownloadPanel() {
@@ -17071,43 +17032,31 @@
     }
 
     function refreshCurrentDownloadButton() {
-        const target = currentSingleDownloadTarget();
-        const existing = document.getElementById(
-            'jkl-current-download'
-        );
-        if (!target) {
+        const target=currentSingleDownloadTarget();
+        const existing=document.getElementById('jkl-current-download');
+        if(!target){
             existing?.remove();
-            singleDownloadState.lastOverlayDiagnostic = '';
+            singleDownloadState.lastOverlayDiagnostic='';
             return;
         }
-
-        const root = currentMediaRoot();
-        const media = largestCurrentMedia(root);
-        if (!currentMediaOverlayHost(media,root)) {
+        const root=currentMediaRoot();
+        const media=largestCurrentMedia(root);
+        if(!currentMediaOverlayHost(media,root)){
             existing?.remove();
-            // Explain an absent overlay once per target/reason; otherwise
-            // the DOM observer could flood the 50k-entry session log.
-            const reason = !media
-                ? 'no_visible_media (possible interstitial)'
-                : 'no_compatible_media_host';
-            const diagnostic = target.key + ':' + reason;
-            if (singleDownloadState.lastOverlayDiagnostic !== diagnostic) {
-                singleDownloadState.lastOverlayDiagnostic = diagnostic;
-                log(
-                    'Single media overlay unavailable: ' + reason +
-                    '; OPEN MEDIA SOLO in the panel remains usable. ' +
-                    'target=' + target.key + '.',
-                    'warn'
-                );
+            const diagnostic=target.key+':no_safe_media_region';
+            if(singleDownloadState.lastOverlayDiagnostic!==diagnostic){
+                singleDownloadState.lastOverlayDiagnostic=diagnostic;
+                log('Single media floating button unavailable: no safe '+
+                    'visible region for '+target.key+'.','warn');
             }
             return;
         }
-        singleDownloadState.lastOverlayDiagnostic = '';
-
+        singleDownloadState.lastOverlayDiagnostic='';
         const button=ensureCurrentDownloadButton();
         applySingleDownloadTarget(button,target);
-        button.dataset.placement =
-            placeCurrentDownloadButton(button,root);
+        button.dataset.placement=placeCurrentDownloadButton(button,root);
+        button.disabled=state.running || state.downloading ||
+            state.feedbackRequired || state.rateLimited || state.apiUnhealthy;
     }
 
     function refreshSingleDownloadUi() {
@@ -17168,6 +17117,16 @@
         window.addEventListener(
             'hashchange',
             scheduleSingleDownloadUi
+        );
+        window.addEventListener(
+            'scroll',
+            scheduleSingleDownloadUi,
+            {capture:true,passive:true}
+        );
+        window.addEventListener(
+            'resize',
+            scheduleSingleDownloadUi,
+            {passive:true}
         );
         // Instagram uses pushState for in-app navigation, which does not
         // dispatch popstate. Recheck only the URL once a second; never
@@ -17754,7 +17713,7 @@
                 color:#fff;
                 box-shadow:0 2px 10px rgba(0,0,0,.35);
                 backdrop-filter:blur(4px);
-                opacity:.18;
+                opacity:.82;
                 transition:opacity .15s ease, transform .15s ease;
                 cursor:pointer;
             }
@@ -17767,8 +17726,8 @@
             }
 
             #jkl-current-download.jkl-media-download-overlay {
-                position:absolute;
-                z-index:31;
+                position:fixed;
+                z-index:2147483645;
                 top:10px;
                 right:10px;
                 width:36px;
