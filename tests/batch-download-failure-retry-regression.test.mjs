@@ -27,7 +27,7 @@ const executed = new Function('ctx', `
         APP, DOWNLOAD_MODE, DOWNLOAD_MODE_LABEL, state,
         existingReason, authorizeDownloadScope, unverifiedArchiveHistory,
         status, log, disable, updateStats, sleep, rand, downloadAttempt,
-        archiveDownloadPath, recordDownloaded, flushLedger, performance
+        archiveDownloadPath, mediaArchiveCategory, recordDownloaded, flushLedger, performance
     } = ctx;
     ${names.map(production).join('\n')}
     return {downloadMissing, resetDownloadProgress};
@@ -68,6 +68,7 @@ const ctx = {
     rand: () => 0,
     performance,
     archiveDownloadPath: m => 'synthetic/POSTS/' + m.filename,
+    mediaArchiveCategory: () => 'POSTS',
     recordDownloaded: m => ledger.push(m.id),
     flushLedger: () => {flushCount++;},
     downloadAttempt: async m => {
