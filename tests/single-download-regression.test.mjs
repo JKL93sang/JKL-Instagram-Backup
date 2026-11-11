@@ -507,7 +507,7 @@ const fakeDocument={
     },
     documentElement:{clientWidth:1920,clientHeight:1080}
 };
-const helpers=new Function(
+const pinHelpers=new Function(
     'window','document','location','getComputedStyle','ui',
     chooseMediaCode+'\n'+hostCode+'\n'+placementCode+
     '\nreturn {largestCurrentMedia,currentMediaOverlayHost,placeCurrentDownloadButton};'
@@ -527,11 +527,11 @@ const primary=fakeMedia(mediaRect(550,110,680,760));
 const small=fakeMedia(mediaRect(1710,100,200,200));
 const offscreen=fakeMedia(mediaRect(2400,100,600,700));
 const root={querySelectorAll:()=>[offscreen,small,primary]};
-assert.equal(helpers.largestCurrentMedia(root),primary);
-assert.equal(helpers.largestCurrentMedia({
+assert.equal(pinHelpers.largestCurrentMedia(root),primary);
+assert.equal(pinHelpers.largestCurrentMedia({
     querySelectorAll:()=>[offscreen]
 }),null);
-assert.deepEqual(helpers.currentMediaOverlayHost(primary,root),
+assert.deepEqual(pinHelpers.currentMediaOverlayHost(primary,root),
     {left:1182,top:122});
 const button={
     parentElement:null,
@@ -539,15 +539,15 @@ const button={
     classList:{add:cls=>added.add(cls)},
     remove(){this.removed=true;}
 };
-assert.equal(helpers.placeCurrentDownloadButton(button,root),
+assert.equal(pinHelpers.placeCurrentDownloadButton(button,root),
     'viewport-pinned-media');
 assert.equal(button.parentElement,fakeDocument.body);
 assert.equal(button.style.left,'1182px');
 assert.equal(button.style.top,'122px');
 assert.ok(added.has('jkl-media-download-overlay'));
 const offscreenRoot={querySelectorAll:()=>[offscreen]};
-assert.equal(helpers.currentMediaOverlayHost(offscreen,offscreenRoot),null);
-assert.equal(helpers.placeCurrentDownloadButton(button,offscreenRoot),
+assert.equal(pinHelpers.currentMediaOverlayHost(offscreen,offscreenRoot),null);
+assert.equal(pinHelpers.placeCurrentDownloadButton(button,offscreenRoot),
     'unavailable');
 assert.equal(button.removed,true);
 console.log('Viewport-pinned local overlay guards passed.');
