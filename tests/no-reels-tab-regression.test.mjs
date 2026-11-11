@@ -112,13 +112,13 @@ assert.deepEqual(remaining, [['REELS tab', 'reels']],
         roots:{REEL:new Set()},
         shadow:{reelIds:new Set()},
     };
-    const api=new Function('state','scanSelected','scanSelection',
+    const api=new Function('state','scanSelected','scanSelection','profileSurfaceOperationalSkip',
         extract('reelsSurfaceSkipped')+
         extract('requiredCoverage')+
         extract('incompleteCoverage')+
         '\nreturn {reelsSurfaceSkipped,incompleteCoverage};'
     )(state,k=>['post','reel','tagged'].includes(k),
-        ()=>({post:true,reel:true,tagged:true}));
+        ()=>({post:true,reel:true,tagged:true}),()=>false);
     assert.equal(api.reelsSurfaceSkipped(),true);
     assert.ok(!api.incompleteCoverage().includes('REELS tab'),
         'missing native tab must not block already-verified exposed surfaces');
@@ -174,7 +174,7 @@ assert.deepEqual(remaining, [['REELS tab', 'reels']],
     const plan={post:true,reel:true,tagged:true};
     const scanDownloadFingerprint=()=>[...state.queue.keys()].join(',');
     const DOWNLOAD_MODE={COMPLETE:'complete'};
-    const auth=new Function('state','scanSelected','scanSelection',
+    const auth=new Function('state','scanSelected','scanSelection','profileSurfaceOperationalSkip',
         'scanDownloadFingerprint','DOWNLOAD_MODE','verifiedPartialDownloadIntegrity',
         extract('reelsSurfaceSkipped')+
         extract('requiredCoverage')+
@@ -182,7 +182,7 @@ assert.deepEqual(remaining, [['REELS tab', 'reels']],
         extract('completedScanIntegrity')+
         extract('authorizeDownloadScope')+
         '\nreturn authorizeDownloadScope;'
-    )(state,k=>plan[k]===true,()=>plan,scanDownloadFingerprint,
+    )(state,k=>plan[k]===true,()=>plan,()=>false,scanDownloadFingerprint,
         DOWNLOAD_MODE,()=>({ok:false,reason:'not expected'}));
     const ready=auth('complete');
     assert.equal(ready.ok,true,
