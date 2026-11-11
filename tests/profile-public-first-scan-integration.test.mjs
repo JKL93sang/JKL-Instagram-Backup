@@ -20,6 +20,7 @@ const methods = [
     'reconcileEmptyReelsCoverage',
     'reelsSurfaceSkipped', 'requiredCoverage', 'incompleteCoverage',
     'reconcilePassiveProfilePostRoots',
+    'profileSourceDiagnosticSnapshot',
     'scanAll',
 ].map(extract).join('\n');
 
