@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.97
-// @description  TEST v1.5.97: 2000 visible logs, full-session TXT export; preserve v1.5.96 scan and download safety.
+// @version      1.5.98
+// @description  TEST v1.5.98: offline PROFILE root evidence diagnostics; full-session TXT logs and safe downloads.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.97', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.98', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -201,6 +201,9 @@
             filesAfter: 0,
         },
 
+        // Read-only PROFILE provenance snapshots; never grant coverage.
+        profileMainGridRootIds: new Set(),
+        profileDomObservedRootIds: new Set(),
         rootCatalog: new Map(),
         highlightCatalog: new Map(), // Instagram reel ID -> stable archive folder
         highlightRenameNotices: new Set(),
@@ -9553,6 +9556,14 @@
                     );
             }
 
+            // Freeze main-grid root IDs BEFORE independent REELS scanning.
+            // Links seen in DOM are candidates, not authentication proof.
+            state.profileDomObservedRootIds = new Set(
+                [...seenDom.keys()].filter(id => /^\d+$/.test(String(id)))
+            );
+            state.profileMainGridRootIds = new Set([
+                ...state.roots.POST, ...state.roots.REEL
+            ]);
             state.coverage.profileGrid =
                 navigationEnded &&
                 domHydration.failed === 0;
@@ -12613,6 +12624,8 @@
 
         state.queue.clear();
         state.rootCatalog.clear();
+        state.profileMainGridRootIds.clear();
+        state.profileDomObservedRootIds.clear();
 
         for (const s of Object.values(state.roots)) {
             s.clear();
@@ -12811,6 +12824,24 @@
             reconcileProfileGridCoverage();
             reconcileEmptyReelsCoverage();
             reconcilePassiveProfilePostRoots();
+            const profileEvidence = profileSourceDiagnosticSnapshot();
+            const c = profileEvidence.counts;
+            log(
+                'PROFILE SOURCE AUDIT (diagnostic only): ' +
+                'expected=' + (profileEvidence.expectedAuthenticated ?? '-') +
+                ', main=' + c.mainGridSnapshot +
+                ', main_gap=' + (c.gapMainVsCounter ?? '-') +
+                ', public=' + c.public +
+                ', native=' + c.native +
+                ', public_native_union=' + c.publicNativeUnion +
+                ', public_native_gap=' + (c.gapPublicNativeVsCounter ?? '-') +
+                ', dom_candidates=' + c.domCandidates +
+                ', main_outside_public_native=' + c.mainOutsidePublicNative +
+                ', independent_reels=' + c.independentNativeReels +
+                ', main_reels_overlap=' + c.mainAlsoInIndependentReels +
+                '. DOM/reels never grant PROFILE completeness.',
+                c.gapMainVsCounter ? 'warn' : 'info'
+            );
             updateStats();
 
             logScanProfilerSummary(
@@ -14429,6 +14460,78 @@
         await downloadMissing();
     }
 
+    function profileSourceDiagnosticSnapshot() {
+        // Read-only evidence. Main PROFILE is captured before visiting
+        // independent REELS; DOM links remain candidates, never proof.
+        const key = String(state.username || '').toLowerCase();
+        const publicRoots = state.shadow?.rootIds instanceof Set
+            ? state.shadow.rootIds : new Set();
+        const nativeMap = net.gridByUser?.get(key);
+        const nativeRoots = nativeMap instanceof Map
+            ? new Set(nativeMap.keys()) : new Set();
+        const domCandidates = state.profileDomObservedRootIds instanceof Set
+            ? state.profileDomObservedRootIds : new Set();
+        const mainRoots = state.profileMainGridRootIds instanceof Set
+            ? state.profileMainGridRootIds : new Set();
+        const reelMap = net.reelsByUserId?.get(String(state.userId || ''));
+        const reelRoots = reelMap instanceof Map
+            ? new Set(reelMap.keys()) : new Set();
+        const valid = id => /^\d+$/.test(String(id));
+        const list = xs => [...xs].map(String).filter(valid).sort();
+        const pub = new Set(list(publicRoots));
+        const nat = new Set(list(nativeRoots));
+        const dom = new Set(list(domCandidates));
+        const main = new Set(list(mainRoots));
+        const reels = new Set(list(reelRoots));
+        const publicNative = new Set([...pub, ...nat]);
+        const withDom = new Set([...publicNative, ...dom]);
+        const expected = Number(state.profileInfo?.media_count);
+        const expectedVerified = Number.isSafeInteger(expected) &&
+            expected >= 0 && expected === Number(state.expected);
+        const expectedCount = expectedVerified ? expected : null;
+        const overlap = (a,b) => [...a].filter(id => b.has(id)).length;
+        const nativeAudit = net.gridNativeAuditByUser?.get(key);
+        const nativePage = net.gridPageInfo?.get(key);
+        return {
+            kind:'PROFILE_SOURCE_DIAGNOSTICS_ONLY',
+            account:key,
+            userId:String(state.userId || ''),
+            expectedAuthenticated:expectedCount,
+            publicServerEnded:state.shadow?.pageInfoEnded === true &&
+                state.coverage?.publicShadow === true,
+            nativeServerEnded:nativePage?.has_next_page === false &&
+                nativeAudit?.lastHasNext === 'false',
+            counts:{
+                public:pub.size,
+                native:nat.size,
+                domCandidates:dom.size,
+                mainGridSnapshot:main.size,
+                independentNativeReels:reels.size,
+                publicNativeUnion:publicNative.size,
+                publicNativeOverlap:overlap(pub,nat),
+                mainOutsidePublicNative:
+                    [...main].filter(id=>!publicNative.has(id)).length,
+                mainAlsoSeenInDom:overlap(main,dom),
+                mainAlsoInIndependentReels:overlap(main,reels),
+                observedUnionIncludingDomCandidates:withDom.size,
+                gapMainVsCounter:expectedCount == null
+                    ? null : Math.max(0,expectedCount-main.size),
+                gapPublicNativeVsCounter:expectedCount == null
+                    ? null : Math.max(0,expectedCount-publicNative.size),
+            },
+            rootIds:{
+                public:list(pub),
+                native:list(nat),
+                domCandidates:list(dom),
+                mainGridSnapshot:list(main),
+                independentNativeReels:list(reels),
+            },
+            warning:'Diagnostic only: DOM candidates, independent REELS ' +
+                'and Instagram counters do not establish missing PROFILE ' +
+                'identities or authorize more downloads.',
+        };
+    }
+
     function exportManifest() {
         if (
             !state.userId
@@ -14497,6 +14600,7 @@
                 globalMediaCount: state.expected || null,
                 accessibleOwnedRoots: ownedCount(),
                 globalGap: globalGap(),
+                profileSourceDiagnostics: profileSourceDiagnosticSnapshot(),
                 publicShadow: { ...state.shadow },
                 connectedHidden: {
                     ...state.hidden,
