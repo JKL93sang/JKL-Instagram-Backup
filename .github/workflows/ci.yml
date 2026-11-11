@@ -57,6 +57,9 @@ jobs:
       - name: Single download click and media-info integrity execution tests
         run: node tests/single-download-execution-regression.test.mjs
 
+      - name: Log session history and TXT export executable regression tests
+        run: node tests/log-session-export-regression.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
