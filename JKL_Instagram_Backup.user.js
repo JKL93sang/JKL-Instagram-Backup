@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.96
-// @description  TEST v1.5.96: fail-closed standalone media identity and complete carousel downloads; preserve safe scan guards.
+// @version      1.5.97
+// @description  TEST v1.5.97: 2000 visible logs, full-session TXT export; preserve v1.5.96 scan and download safety.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,12 +31,12 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.96', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.97', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
         REEL_SCROLL_MIN: 350, REEL_SCROLL_MAX: 1600, REEL_SCROLL_POLL: 120,
-        PAGE_MIN: 650, PAGE_MAX: 1250, SHADOW_PAGE_MIN: 250, SHADOW_PAGE_MAX: 450, SHADOW_MAX_PAGES: 200, DOWNLOAD_DELAY: 0, DOWNLOAD_WORKERS: 1, DOWNLOAD_RETRIES: 3, LEDGER_FLUSH_EVERY: 25, DL_DIAG_SAMPLES: 20, MAX_LOG: 300,
+        PAGE_MIN: 650, PAGE_MAX: 1250, SHADOW_PAGE_MIN: 250, SHADOW_PAGE_MAX: 450, SHADOW_MAX_PAGES: 200, DOWNLOAD_DELAY: 0, DOWNLOAD_WORKERS: 1, DOWNLOAD_RETRIES: 3, LEDGER_FLUSH_EVERY: 25, DL_DIAG_SAMPLES: 20, MAX_LOG: 2000, MAX_LOG_ARCHIVE: 50000,
         HYDRATE_MIN: 180, HYDRATE_MAX: 320, HYDRATE_RETRIES: 3, HYDRATE_WORKERS: 4, HYDRATE_LARGE_THRESHOLD: 250, HYDRATE_LARGE_WORKERS: 2, HYDRATE_BULK_THRESHOLD: 100, HYDRATE_BULK_SIZE: 20, HYDRATE_SINGLE_FALLBACK_CAP: 100,
         PROFILE_FALLBACK_DOC: '8363144743749214', TAGGED_FALLBACK_DOC: '28390247837269928',
         HIGHLIGHT_TRAY_FALLBACK_DOC: '26970053832668570',
@@ -342,6 +342,16 @@
     };
 
     let ui = {};
+
+    // DOM log rendering has a bounded cost; the export keeps a separate,
+    // much larger chronological record for the current page session.
+    // The archive never persists credentials or performs network requests.
+    const logArchive = {
+        startedAt: new Date(),
+        entries: [],
+        dropped: 0,
+        accounts: new Set(),
+    };
 
     const UI_STATE_KEY = 'JKL_IG_BACKUP_UI_V1';
 
@@ -1643,6 +1653,21 @@
         const line =
             `[${new Date().toLocaleTimeString()}] ${msg}`;
 
+        // Record before testing for a mounted UI; early boot logs and
+        // lines already evicted from the DOM must remain exportable.
+        if (state.username) {
+            logArchive.accounts.add(String(state.username));
+        }
+        logArchive.entries.push(line);
+        if (logArchive.entries.length > APP.MAX_LOG_ARCHIVE) {
+            const remove = Math.min(
+                1000,
+                logArchive.entries.length - APP.MAX_LOG_ARCHIVE
+            );
+            logArchive.entries.splice(0, remove);
+            logArchive.dropped += remove;
+        }
+
         if (
             state.settings.debug ||
             level !== 'info'
@@ -1674,6 +1699,97 @@
 
             ui.log.scrollTop =
                 ui.log.scrollHeight;
+        }
+        if (ui.logCounter) {
+            ui.logCounter.textContent =
+                Math.min(APP.MAX_LOG, logArchive.entries.length) +
+                ' visible / ' + logArchive.entries.length +
+                ' archivées' +
+                (logArchive.dropped
+                    ? ' (' + logArchive.dropped + ' anciennes supprimées)'
+                    : '');
+        }
+    }
+
+    function logExportFilename(username, at = new Date()) {
+        const account = sanitize(cleanUser(username) || 'instagram');
+        const pad = n => String(n).padStart(2, '0');
+        const stamp =
+            at.getFullYear() + '-' +
+            pad(at.getMonth() + 1) + '-' +
+            pad(at.getDate()) + '_' +
+            pad(at.getHours()) + '-' +
+            pad(at.getMinutes()) + '-' +
+            pad(at.getSeconds());
+        return account + ' - Instagram Backup Logs - ' + stamp + '.txt';
+    }
+
+    function buildLogExport(username, at = new Date()) {
+        const account = cleanUser(username) || 'instagram';
+        const saved = logArchive.entries;
+        const heading = [
+            'JKL Instagram Backup — Journal de session',
+            'Compte actif : @' + account,
+            'Comptes rencontrés : ' +
+                ([...logArchive.accounts].map(x => '@' + x).join(', ') || '—'),
+            'Version : ' + APP.VERSION,
+            'Session ouverte : ' +
+                logArchive.startedAt.toLocaleString('fr-FR'),
+            'Export créé : ' + at.toLocaleString('fr-FR'),
+            'Entrées conservées : ' + saved.length,
+            'Anciennes entrées supprimées : ' + logArchive.dropped,
+            'Capacité affichée : ' + APP.MAX_LOG,
+            'Capacité exportable : ' + APP.MAX_LOG_ARCHIVE,
+            'Portée : page Firefox actuelle uniquement ; aucune ' +
+                'reconstitution des lignes perdues avant cette version.',
+            logArchive.dropped
+                ? 'ATTENTION : historique partiel (limite de mémoire atteinte).'
+                : 'Historique intégral de cette session en mémoire.',
+            '',
+            '--- DÉBUT DES LOGS ---',
+        ];
+        return heading.concat(saved, ['--- FIN DES LOGS ---', ''])
+            .join('\\r\\n');
+    }
+
+    function exportLogs() {
+        if (!logArchive.entries.length) {
+            status('Aucune ligne de journal à exporter.', 'warn');
+            return;
+        }
+
+        const at = new Date();
+        const username = cleanUser(
+            state.username || ui.username?.value || currentProfile()
+        ) || 'instagram';
+        let url = '';
+        try {
+            const text = buildLogExport(username, at);
+            const blob = new Blob(
+                ['\\uFEFF', text],
+                { type: 'text/plain;charset=utf-8' }
+            );
+            url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = logExportFilename(username, at);
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            const createdUrl = url;
+            setTimeout(() => URL.revokeObjectURL(createdUrl), 5000);
+            status(
+                'Export TXT demandé : ' + logArchive.entries.length +
+                ' lignes pour @' + username + '.',
+                'ok'
+            );
+        }
+        catch (e) {
+            if (url) URL.revokeObjectURL(url);
+            status(
+                'Export des logs impossible : ' + (e?.message || e),
+                'error'
+            );
         }
     }
 
@@ -17792,6 +17908,21 @@
                 <details class="log-tools">
                     <summary>LOGS</summary>
 
+                    <div class="tools" style="margin:6px 0">
+                        <button
+                            class="action"
+                            type="button"
+                            id="jkl-export-logs"
+                            title="Exporter tout le journal de cette session, même les lignes masquées par la limite d'affichage"
+                        >
+                            EXPORT LOGS (.TXT)
+                        </button>
+                        <span
+                            id="jkl-log-counter"
+                            style="font-size:10px;color:#aaa"
+                        >0 visible / 0 archivées</span>
+                    </div>
+
                     <div
                         id="jkl-log"
                         class="log"
@@ -17981,6 +18112,12 @@
                     '#jkl-log'
                 ),
 
+            exportLogs:
+                b.querySelector('#jkl-export-logs'),
+
+            logCounter:
+                b.querySelector('#jkl-log-counter'),
+
             folder:
                 b.querySelector(
                     '#jkl-folder-input'
@@ -18112,6 +18249,9 @@
 
         ui.exportManifest.onclick =
             exportManifest;
+
+        ui.exportLogs.onclick =
+            exportLogs;
 
         ui.resetLedger.onclick =
             resetLedger;
