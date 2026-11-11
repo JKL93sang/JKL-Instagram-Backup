@@ -57,6 +57,9 @@ jobs:
       - name: Batch download truthful failure summary and retry regression tests
         run: node tests/batch-download-failure-retry-regression.test.mjs
 
+      - name: Session GM_download receipts versus independently indexed folder regression
+        run: node tests/session-receipts-vs-disk-index-regression.test.mjs
+
       - name: Single download click and media-info integrity execution tests
         run: node tests/single-download-execution-regression.test.mjs
 
