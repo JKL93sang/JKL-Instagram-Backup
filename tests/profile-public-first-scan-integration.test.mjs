@@ -72,6 +72,7 @@ function scenario({
         'scanAvatar', 'hydrateOwnedRootsDeep', 'logScanProfilerSummary',
         'ownedCount', 'globalGap', 'scanDownloadFingerprint',
         'capturePartialDownloadGrants', 'pathNorm', 'findAnchor', 'location',
+        'profileSurfaceOperationalSkip',
         methods + '\nreturn { scanAll };'
     )(
         state, net, { username: { value:'jennnii97' } },
@@ -174,6 +175,7 @@ function scenario({
         p => p.replace(/\/+$/, ''),
         () => !noTab,
         { pathname:'/jennnii97/' },
+        () => false, // This fixture has no unresolved public/native union.
     );
     return {
         state, logs, statuses, phases, run: api.scanAll,
