@@ -24,6 +24,7 @@ const state = {
     ledgerDirty: 0, queue: new Map(),
     diskCanonical: new Set(), diskCanonicalMeta: new Map(),
     diskLocations: new Map(), diskPaths: new Map(), sessionPaths: new Map(),
+    sessionCategories: new Map(),
     diskHidden: new Set(), diskStoryHighlight: new Set(), legacy: new Map(),
     settings: { force: false }, diskActive: false,
 };
@@ -158,6 +159,7 @@ assert.equal(testApi.existingReason(first), null,
     'a file in the obsolete shared folder must be eligible for repair');
 // Once the repair has succeeded, avoid another transfer in the same session
 // although the last physical directory scan still saw the obsolete path.
+state.sessionCategories.set(first.id, new Set(['HIGHLIGHTS']));
 state.sessionPaths.set(first.id, new Set([pathFirst]));
 assert.equal(testApi.existingReason(first), 'SESSION',
     'a successfully repaired highlight must not be downloaded twice');
