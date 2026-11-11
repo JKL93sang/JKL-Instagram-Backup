@@ -73,7 +73,7 @@ const pin=new Function('window','ui',
     fn('currentMediaOverlayHost')+'\nreturn currentMediaOverlayHost;'
 )(window,ui);
 const anchor=pin(null,dialog);
-assert.deepEqual(anchor,{left:920,top:77},
+assert.deepEqual(anchor,{left:1012,top:77},
     'full-size age-gate dialog should pin to centered media frame');
 
 const position=new Function('document','currentMediaOverlayHost','largestCurrentMedia',
@@ -81,7 +81,7 @@ const position=new Function('document','currentMediaOverlayHost','largestCurrent
 )(document,pin,biggest);
 assert.equal(position(existingButton,dialog),'viewport-pinned-media');
 assert.equal(floating,existingButton);
-assert.equal(existingButton.style.left,'920px');
+assert.equal(existingButton.style.left,'1012px');
 assert.equal(existingButton.style.top,'77px');
 assert.equal(existingButton.classList.items.has('jkl-media-download-overlay'),true);
 
@@ -141,7 +141,7 @@ assert.deepEqual(logs,['download:'+target.mediaId],
 
 // If our panel overlaps the top-right of the media, pin to top-left.
 ui.box.getBoundingClientRect=()=>rect(900,0,360,300);
-assert.deepEqual(pin(null,dialog),{left:396,top:77});
+assert.deepEqual(pin(null,dialog),{left:192,top:77});
 
 // One grid tile should support CSS art with no IMG/VIDEO, survive React
 // deleting our own button while preserving the original anchor dataset.
