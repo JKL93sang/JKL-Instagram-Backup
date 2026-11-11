@@ -242,6 +242,6 @@ assert.equal(failedTest.saved.length, 65);
 assert.equal(failed.state.downloadProgress.succeeded, 64);
 assert.equal(failed.state.downloadProgress.failed, 1);
 assert.ok(failedTest.messages.some(x =>
-    x.level === 'warn' && x.message.includes('64/65 physical writes succeeded')
+    x.level === 'warn' && x.message.includes('64/65 GM_download success callbacks (disk not independently verified)')
 ));
 console.log('Unified subscriber evidence grant, mode safety and download tests passed.');
