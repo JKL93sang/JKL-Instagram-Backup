@@ -484,89 +484,70 @@ console.log(
 );
 
 
-/* v1.5.58: media-local overlay guards */
-const chooseMediaCode = extractFunction('largestCurrentMedia');
-const hostCode = extractFunction('currentMediaOverlayHost');
-const placementCode = extractFunction('placeCurrentDownloadButton');
-const currentTargetCode = extractFunction('currentSingleDownloadTarget');
-const refreshCode = extractFunction('refreshCurrentDownloadButton');
-assert.ok(currentTargetCode.includes('root?.matches?.'), 'unrelated profile links must not be global targets');
+/* v1.5.101: viewport-pinned media-local overlay guards */
+const chooseMediaCode=extractFunction('largestCurrentMedia');
+const hostCode=extractFunction('currentMediaOverlayHost');
+const placementCode=extractFunction('placeCurrentDownloadButton');
+const currentTargetCode=extractFunction('currentSingleDownloadTarget');
+const refreshCode=extractFunction('refreshCurrentDownloadButton');
+assert.ok(currentTargetCode.includes('root?.matches?.'));
 assert.ok(placementCode.includes('currentMediaOverlayHost'));
-assert.ok(!placementCode.includes('document.body.appendChild'), 'viewport fallback returned');
-assert.ok(refreshCode.includes('existing?.remove()'), 'missing-media button must be removable');
+assert.ok(placementCode.includes('document.body.appendChild'),
+    'floating control must escape React clipping and stacking');
+assert.ok(refreshCode.includes('existing?.remove()'));
 assert.ok(source.includes('#jkl-current-download.jkl-media-download-overlay'));
 assert.ok(!source.includes('jkl-action-download'));
-assert.ok(!source.includes('fixed-fallback'));
-const mediaRect = (left,top,width,height)=>({
+const mediaRect=(left,top,width,height)=>({
     left,top,width,height,right:left+width,bottom:top+height
 });
-const fakeDocument = {
-    body:{},documentElement:{clientWidth:1920,clientHeight:1080}
+const added=new Set();
+const fakeDocument={
+    body:{
+        appendChild(button){button.parentElement=this;}
+    },
+    documentElement:{clientWidth:1920,clientHeight:1080}
 };
-const placementHelpers = new Function(
-    'window','document','location','getComputedStyle',
+const helpers=new Function(
+    'window','document','location','getComputedStyle','ui',
     chooseMediaCode+'\n'+hostCode+'\n'+placementCode+
     '\nreturn {largestCurrentMedia,currentMediaOverlayHost,placeCurrentDownloadButton};'
 )(
     {innerWidth:1920,innerHeight:1080},
-    fakeDocument,
-    {pathname:'/p/demo/'},
-    ()=>({display:'block',visibility:'visible',position:'static'})
+    fakeDocument,{pathname:'/p/demo/'},
+    ()=>({display:'block',visibility:'visible'}),
+    {box:null}
 );
-const fakeMedia = rect=>({
-    tagName:'IMG',parentElement:null,
+const fakeMedia=rect=>({
+    tagName:'IMG',
     getClientRects:()=>[rect],
     getBoundingClientRect:()=>rect,
     closest:()=>null
 });
-const primaryMedia = fakeMedia(mediaRect(550,110,680,760));
-const smallMedia = fakeMedia(mediaRect(1710,100,200,200));
-const offscreenMedia = fakeMedia(mediaRect(2400,100,600,700));
-const fakeRoot = {
-    querySelectorAll:()=>[offscreenMedia,smallMedia,primaryMedia]
-};
-assert.equal(placementHelpers.largestCurrentMedia(fakeRoot),primaryMedia);
-assert.equal(
-    placementHelpers.largestCurrentMedia({
-        querySelectorAll:()=>[offscreenMedia]
-    }),
-    null
-);
-const visibleHost = {
-    parentElement:fakeDocument.body,
-    style:{},
-    matches:()=>false,
-    getBoundingClientRect:()=>mediaRect(548,108,684,764),
-    appendChild(button){button.parentElement=this;}
-};
-primaryMedia.parentElement = visibleHost;
-assert.equal(
-    placementHelpers.currentMediaOverlayHost(primaryMedia,fakeRoot),
-    visibleHost
-);
-const added = new Set();
-const fakeButton = {
+const primary=fakeMedia(mediaRect(550,110,680,760));
+const small=fakeMedia(mediaRect(1710,100,200,200));
+const offscreen=fakeMedia(mediaRect(2400,100,600,700));
+const root={querySelectorAll:()=>[offscreen,small,primary]};
+assert.equal(helpers.largestCurrentMedia(root),primary);
+assert.equal(helpers.largestCurrentMedia({
+    querySelectorAll:()=>[offscreen]
+}),null);
+assert.deepEqual(helpers.currentMediaOverlayHost(primary,root),
+    {left:1182,top:122});
+const button={
     parentElement:null,
+    style:{},
     classList:{add:cls=>added.add(cls)},
     remove(){this.removed=true;}
 };
-assert.equal(
-    placementHelpers.placeCurrentDownloadButton(fakeButton,fakeRoot),
-    'media-overlay'
-);
-assert.equal(fakeButton.parentElement,visibleHost);
-assert.equal(visibleHost.style.position,'relative');
+assert.equal(helpers.placeCurrentDownloadButton(button,root),
+    'viewport-pinned-media');
+assert.equal(button.parentElement,fakeDocument.body);
+assert.equal(button.style.left,'1182px');
+assert.equal(button.style.top,'122px');
 assert.ok(added.has('jkl-media-download-overlay'));
-const unboundedMedia = fakeMedia(mediaRect(550,110,680,760));
-unboundedMedia.parentElement = fakeDocument.body;
-assert.equal(
-    placementHelpers.currentMediaOverlayHost(unboundedMedia,fakeRoot),
-    null
-);
-assert.equal(
-    placementHelpers.placeCurrentDownloadButton(
-        fakeButton,{querySelectorAll:()=>[unboundedMedia]}
-    ),
-    'unavailable'
-);
-assert.equal(fakeButton.removed,true);
+const offscreenRoot={querySelectorAll:()=>[offscreen]};
+assert.equal(helpers.currentMediaOverlayHost(offscreen,offscreenRoot),null);
+assert.equal(helpers.placeCurrentDownloadButton(button,offscreenRoot),
+    'unavailable');
+assert.equal(button.removed,true);
+console.log('Viewport-pinned local overlay guards passed.');
