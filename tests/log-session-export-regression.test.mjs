@@ -47,7 +47,7 @@ const document={
         throw Error('unknown DOM node '+kind);
     },
 };
-const URL={
+const fakeURL={
     createObjectURL(blob){storedBlob=blob;return 'blob:mock-logs';},
     revokeObjectURL(url){revoked=url;},
 };
@@ -68,7 +68,7 @@ const api=new Function('APP','state','ui','logArchive','document','URL',
     'Blob','setTimeout','sanitize','cleanUser','currentProfile',
     moduleSource+
     '\nreturn {log,logExportFilename,buildLogExport,exportLogs};'
-)(APP,state,ui,logArchive,document,URL,Blob,setTimeout,sanitize,
+)(APP,state,ui,logArchive,document,fakeURL,Blob,setTimeout,sanitize,
   cleanUser,()=>state.username);
 
 assert.equal(api.logExportFilename(
