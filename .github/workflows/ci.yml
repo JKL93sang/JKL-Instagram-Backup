@@ -63,6 +63,9 @@ jobs:
       - name: PROFILE source provenance and counter gap regression tests
         run: node tests/profile-source-audit-regression.test.mjs
 
+      - name: Instagram username-prefixed media URL and scoped DOM integration tests
+        run: node tests/profile-prefixed-permalink-regression.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
