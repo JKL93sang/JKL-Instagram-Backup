@@ -190,6 +190,69 @@ reject(mkUnion,p=>{p.expected=26},'public_native_union_counter_mismatch');
 reject(mkUnion,p=>{p.shadowPageInfoEnd=false},'public_timeline_end_unproven');
 reject(mkUnion,p=>{p.hiddenCandidates=1},'connected_surfaces_not_equivalent');
 
+/*
+ * Regression from 2026-11-11 @petit._tigre read-only manifest and TXT:
+ * public=89, native=105, overlap=79, union=115, main=115/117;
+ * owned main=63 POST + 52 REEL; independent REELS=361 (309 off-grid).
+ * Synthetic IDs/categories below match these cardinalities only:
+ * they do NOT reproduce the actual private/public root-ID lists or
+ * establish what the two unidentified PROFILE posts might be.
+ */
+{
+    const publicIds = Array.from({length:89},(_,i)=>String(1000+i));
+    const nativeExtra = Array.from({length:26},(_,i)=>String(5000+i));
+    const nativeIds = [...publicIds.slice(0,79),...nativeExtra];
+    const publicPostIds = new Set(publicIds.slice(0,46));
+    const publicReelIds = new Set(publicIds.slice(46));
+    const ownedPosts = new Set([...publicPostIds,...nativeExtra.slice(0,17)]);
+    const mainReels = new Set([...publicReelIds,...nativeExtra.slice(17)]);
+    const independentReels = new Set([
+        ...mainReels,
+        ...Array.from({length:309},(_,i)=>String(8000+i)),
+    ]);
+    assert.equal(publicIds.length,89);
+    assert.equal(nativeIds.length,105);
+    assert.equal(new Set([...publicIds,...nativeIds]).size,115);
+    assert.equal(ownedPosts.size,63);
+    assert.equal(mainReels.size,52);
+    assert.equal(independentReels.size,361);
+    assert.equal(ownedPosts.size+independentReels.size,424);
+    const sample = {
+        ...mk(117),
+        expected:117,
+        publicRootIds:new Set(publicIds),
+        publicPostIds,publicReelIds,
+        nativeRootIds:new Set(nativeIds),
+        nativeContinuationPages:8,
+        nativePageInfoEnd:true,
+        nativeLastHasNextFalse:true,
+        ownedPostIds:ownedPosts,
+        ownedReelIds:independentReels,
+    };
+    const result=assess(sample);
+    assert.deepEqual(result,{
+        verified:false,
+        reason:'public_native_union_counter_mismatch',
+        missing:2,
+    }, 'two server-ended timelines and an independently completed 361-REEL tab must NOT become a 117/117 main-grid proof');
+    // 309 REELS observed outside main never increase the expected main union.
+    sample.ownedReelIds.add('999999');
+    assert.equal(assess(sample).reason,'public_native_union_counter_mismatch');
+    // Adding unverified native roots without reconciling their OWNED identity
+    // must fail before claiming completion.
+    sample.nativeRootIds.add('999998');
+    sample.nativeRootIds.add('999997');
+    assert.equal(assess(sample).reason,'authenticated_native_roots_not_reconciled');
+    // Only synthetic counterfactual: two genuinely verified extra main roots
+    // could satisfy the proof. Never infer these IDs from real manifest data.
+    sample.ownedPostIds.add('999998');
+    sample.ownedPostIds.add('999997');
+    const hypothetical=assess(sample);
+    assert.equal(hypothetical.verified,true);
+    assert.equal(hypothetical.reason,'public_native_union_cross_surface_proof');
+    assert.equal(hypothetical.unionCount,117);
+}
+
 const bridge=extract('reconcileProfileGridCoverage');
 const profile=extract('scanMainGrid');
 const shadow=extract('scanPublicShadow');
