@@ -14,6 +14,7 @@ const state = {
     diskLocations:new Map(),
     diskPaths:new Map(),
     sessionPaths:new Map(),
+    sessionCategories:new Map(),
     highlightRenameNotices: new Set(),
     diskHidden:new Set(),
     diskStoryHighlight:new Set(),
