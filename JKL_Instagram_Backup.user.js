@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.99
-// @description  TEST v1.5.99: recognize username-prefixed Instagram post/reel URLs and preserve strict scan guards.
+// @version      1.5.100
+// @description  TEST v1.5.100: reliable solo download action in panel even when Instagram age overlays hide media.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.99', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.100', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -363,6 +363,9 @@
         observer: null,
         timer: 0,
         eventsInstalled: false,
+        lastOverlayDiagnostic: '',
+        lastLocation: '',
+        locationTimer: 0,
     };
 
     function cleanUser(v) {
@@ -17022,6 +17025,51 @@
         return 'media-overlay';
     }
 
+    function updateSingleDownloadPanel() {
+        // The persistent panel action never depends on Instagram's current
+        // image/video DOM. Age/sensitive-content interstitials may hide
+        // those elements while the permalink still identifies the media.
+        if (!ui.singleCurrent) return;
+        const target = currentSingleDownloadTarget();
+        const disabled = !target || state.running || state.downloading ||
+            state.feedbackRequired || state.rateLimited || state.apiUnhealthy;
+        if (ui.singleCurrent.disabled !== disabled) {
+            ui.singleCurrent.disabled = disabled;
+        }
+        const label = !target
+            ? 'Ouvre un POST, un REEL ou une STORY'
+            : (state.running || state.downloading)
+                ? 'Opération en cours — téléchargement unitaire indisponible'
+                : (state.feedbackRequired || state.rateLimited ||
+                    state.apiUnhealthy)
+                    ? 'Session Instagram bloquée — téléchargement indisponible'
+                    : 'Média ciblé : ' +
+                        (target.username ? '@' + target.username + ' · ' : '') +
+                        (target.route || target.kind).toUpperCase() +
+                        ' · ' + (target.shortcode || target.mediaId);
+        if (ui.singleTarget && ui.singleTarget.textContent !== label) {
+            ui.singleTarget.textContent = label;
+        }
+        // No automatic media-info calls: only an explicit button click
+        // can start a single-media transfer.
+    }
+
+    function handlePanelSingleDownload() {
+        const target = currentSingleDownloadTarget();
+        if (!target) {
+            log('Single download panel: no opened-media permalink or unambiguous dialog target.', 'warn');
+            status('Ouvre un média individuel avant le téléchargement solo.', 'warn');
+            return;
+        }
+        log(
+            'Single download panel click: kind=' + target.kind +
+            ', route=' + (target.route || '-') +
+            ', shortcode=' + (target.shortcode || '-') +
+            ', id=' + target.mediaId + '.'
+        );
+        void downloadSingleTarget(target, ui.singleCurrent);
+    }
+
     function refreshCurrentDownloadButton() {
         const target = currentSingleDownloadTarget();
         const existing = document.getElementById(
@@ -17029,19 +17077,32 @@
         );
         if (!target) {
             existing?.remove();
+            singleDownloadState.lastOverlayDiagnostic = '';
             return;
         }
 
         const root = currentMediaRoot();
-        if (
-            !currentMediaOverlayHost(
-                largestCurrentMedia(root),
-                root
-            )
-        ) {
+        const media = largestCurrentMedia(root);
+        if (!currentMediaOverlayHost(media,root)) {
             existing?.remove();
+            // Explain an absent overlay once per target/reason; otherwise
+            // the DOM observer could flood the 50k-entry session log.
+            const reason = !media
+                ? 'no_visible_media (possible interstitial)'
+                : 'no_compatible_media_host';
+            const diagnostic = target.key + ':' + reason;
+            if (singleDownloadState.lastOverlayDiagnostic !== diagnostic) {
+                singleDownloadState.lastOverlayDiagnostic = diagnostic;
+                log(
+                    'Single media overlay unavailable: ' + reason +
+                    '; OPEN MEDIA SOLO in the panel remains usable. ' +
+                    'target=' + target.key + '.',
+                    'warn'
+                );
+            }
             return;
         }
+        singleDownloadState.lastOverlayDiagnostic = '';
 
         const button=ensureCurrentDownloadButton();
         applySingleDownloadTarget(button,target);
@@ -17062,6 +17123,7 @@
         }
 
         refreshCurrentDownloadButton();
+        updateSingleDownloadPanel();
     }
 
     function scheduleSingleDownloadUi() {
@@ -17103,6 +17165,20 @@
             'popstate',
             scheduleSingleDownloadUi
         );
+        window.addEventListener(
+            'hashchange',
+            scheduleSingleDownloadUi
+        );
+        // Instagram uses pushState for in-app navigation, which does not
+        // dispatch popstate. Recheck only the URL once a second; never
+        // poll media-info or create Instagram network traffic.
+        singleDownloadState.lastLocation = location.href;
+        singleDownloadState.locationTimer = setInterval(() => {
+            if (location.href !== singleDownloadState.lastLocation) {
+                singleDownloadState.lastLocation = location.href;
+                scheduleSingleDownloadUi();
+            }
+        },1000);
     }
 
     function createUi() {
@@ -17861,6 +17937,22 @@
                     </button>
                 </div>
 
+                <div class="tools" style="margin:7px 0 3px">
+                    <button
+                        class="action"
+                        type="button"
+                        id="jkl-single-current"
+                        title="Télécharger uniquement le média ouvert, sans scan global"
+                        disabled
+                    >
+                        DOWNLOAD OPEN MEDIA (SOLO)
+                    </button>
+                </div>
+                <div
+                    id="jkl-single-target"
+                    style="color:#aaa;font-size:10px;overflow-wrap:anywhere;margin-bottom:6px"
+                >Ouvre un POST, un REEL ou une STORY</div>
+
                 <div
                     id="jkl-status"
                     class="status"
@@ -18114,6 +18206,12 @@
                     '#jkl-scan'
                 ),
 
+            singleCurrent:
+                b.querySelector('#jkl-single-current'),
+
+            singleTarget:
+                b.querySelector('#jkl-single-target'),
+
             download:
                 b.querySelector(
                     '#jkl-download'
@@ -18338,6 +18436,8 @@
 
         ui.scan.onclick =
             scanAll;
+
+        ui.singleCurrent.onclick = handlePanelSingleDownload;
 
         ui.download.onclick =
             () => downloadMissing(DOWNLOAD_MODE.COMPLETE);
