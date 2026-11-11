@@ -100,7 +100,8 @@ assert.match(downloadFilename,
 assert.ok(storedBlob instanceof Blob,'Blob export, not remote request');
 assert.equal(storedBlob.type,'text/plain;charset=utf-8');
 const exported=await storedBlob.text();
-assert.equal(exported.charCodeAt(0),0xfeff,'UTF-8 BOM for Windows editors');
+assert.deepEqual([...new Uint8Array(await storedBlob.arrayBuffer()).slice(0,3)],
+    [0xef,0xbb,0xbf],'UTF-8 BOM bytes for Windows editors');
 assert.ok(exported.includes('\r\n'),'real CRLF separators required');
 assert.ok(!exported.includes('\\r\\n'),'literal backslashes are invalid');
 assert.ok(exported.includes('Initial scan before UI mounted'));
