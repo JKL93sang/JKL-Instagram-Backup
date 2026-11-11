@@ -127,8 +127,8 @@ const fallback=new Function(
 fallback();fallback();
 assert.equal(removed,2);
 assert.equal(logs.length,priorLogs+1,'overlay suppression logs only once');
-assert.match(logs.at(-1)[0],/no_visible_media/);
-assert.match(logs.at(-1)[0],/panel remains usable/);
+assert.match(logs.at(-1)[0],/no safe visible region/);
+assert.match(logs.at(-1)[0],/floating button unavailable/);
 
 // Assert the persistent action is wired in the real HTML + click hookup.
 assert.match(source,/id="jkl-single-current"/);
