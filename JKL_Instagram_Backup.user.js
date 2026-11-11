@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.101
-// @description  TEST v1.5.101: viewport-pinned solo control on media, age-gate fallback and native tile reattachment.
+// @version      1.5.102
+// @description  TEST v1.5.102: validated SOLO surfaces; folder index separate from GM_download session receipts.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.101', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.102', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -280,6 +280,7 @@
         diskLocations: new Map(),
         diskPaths: new Map(), // verified relative paths from SCAN LOCAL FOLDER
         sessionPaths: new Map(), // paths requested by successful downloads
+        sessionCategories: new Map(), // GM_download callbacks, NOT indexed file evidence
         diskIndexStats: {
             selectedFiles: 0,
             canonicalFiles: 0,
@@ -13082,6 +13083,7 @@
         state.diskLocations.clear();
         state.diskPaths.clear();
         state.sessionPaths.clear();
+        state.sessionCategories.clear();
         state.highlightRenameNotices.clear();
         state.diskHidden.clear();
         state.diskStoryHighlight.clear();
@@ -13317,6 +13319,13 @@
 
         const id =
             String(m.id);
+        const category = mediaArchiveCategory(m);
+        // A GM_download onload is a receipt, not a re-index of saved files.
+        // A HIGHLIGHT additionally requires an exact accepted reel directory.
+        const sessionAccepted = state.sessionCategories?.get(id)?.has(category) === true &&
+            (m.type !== 'HIGHLIGHT' ||
+                [...(state.sessionPaths.get(id) || [])]
+                    .some(path => matchesHighlightArchivePath(m,path)));
 
         if (state.diskActive) {
             if (state.diskLocations.get(id)?.has(mediaArchiveCategory(m))) {
@@ -13337,6 +13346,8 @@
                 ) return 'SESSION';
             }
 
+            if (sessionAccepted) return 'SESSION';
+
             // Legacy matches have no reliable visibility information.
             // Never mistake an old POSTS/HIDDEN copy for a FAN CLUB file.
             if (
@@ -13349,27 +13360,9 @@
             return null;
         }
 
-        /*
-         * Without an explicit local-folder index, only files written during
-         * this page session are physically verified. The persisted ledger and
-         * imported manifest are historical hints, not proof that a file still
-         * exists on disk. downloadMissing() blocks on such unverified history
-         * instead of silently skipping media.
-         */
-        if (
-            state.diskCanonical.has(id) &&
-            state.diskLocations.get(id)?.has(mediaArchiveCategory(m))
-        ) {
-            if (m.type === 'HIGHLIGHT') {
-                const paths = state.sessionPaths.get(id) || new Set();
-                if (![...paths].some(p => matchesHighlightArchivePath(m, p))) {
-                    return null;
-                }
-            }
-            return 'SESSION';
-        }
-
-        return null;
+        // A successful session callback avoids duplicate transfers only
+        // during this page session; it is NOT a read-back of the file.
+        return sessionAccepted ? 'SESSION' : null;
     }
 
     function unverifiedArchiveHistory(mediaRecords = state.queue.values()) {
@@ -13392,13 +13385,9 @@
             const id =
                 String(m.id);
 
-            /*
-             * A successful download in this page session is already verified.
-             */
-            if (
-                state.diskCanonical
-                    .has(id)
-            ) {
+            // Only a real folder index or an accepted same-category
+            // session receipt can account for this historical ledger item.
+            if (existingReason(m) === 'SESSION') {
                 continue;
             }
 
@@ -13513,45 +13502,15 @@
 
                 recordDownloaded(m, receipt.requestedPath);
 
-                state
-                    .diskCanonical
-                    .add(
-                        String(m.id)
-                    );
-                const locations = state.diskLocations.get(String(m.id)) || new Set();
-                locations.add(mediaArchiveCategory(m));
-                state.diskLocations.set(String(m.id), locations);
-                const sessionPaths = state.sessionPaths.get(String(m.id)) || new Set();
+                // Never modify the folder-indexed Sets or metadata from
+                // an onload callback; Firefox may save at a different path.
+                const mediaId = String(m.id);
+                const accepted = state.sessionCategories.get(mediaId) || new Set();
+                accepted.add(mediaArchiveCategory(m));
+                state.sessionCategories.set(mediaId,accepted);
+                const sessionPaths = state.sessionPaths.get(mediaId) || new Set();
                 sessionPaths.add(receipt.requestedPath);
-                state.sessionPaths.set(String(m.id), sessionPaths);
-
-                if (state.diskActive) {
-                    state.diskCanonicalMeta
-                        .set(
-                            String(m.id),
-                            {
-                                type:
-                                    String(
-                                        m.type ||
-                                        ''
-                                    )
-                                        .toUpperCase(),
-                                ext:
-                                    String(
-                                        m.ext ||
-                                        ''
-                                    )
-                                        .toLowerCase(),
-                                name:
-                                    String(
-                                        m.filename ||
-                                        ''
-                                    ),
-                                folder: mediaArchiveCategory(m),
-                                requestedPath: receipt.requestedPath,
-                            }
-                        );
-                }
+                state.sessionPaths.set(mediaId,sessionPaths);
 
                 state.downloaded++;
 
@@ -14308,20 +14267,21 @@
                     pending
                 );
 
-            if (
-                !pending.length
-            ) {
-                const verified = state.diskActive
-                    ? state.diskCanonical.size
-                    : state.queue.size;
+            if (!pending.length) {
+                const diskMatched = mediaScope.filter(m =>
+                    existingReason(m) === 'DISK').length;
+                const acceptedSession = mediaScope.filter(m =>
+                    existingReason(m) === 'SESSION').length;
+                const legacyMatched = mediaScope.filter(m =>
+                    existingReason(m) === 'LEGACY').length;
 
-                const message = isPartial
-                    ? `${DOWNLOAD_MODE_LABEL[mode]} subset already saved: ` +
-                      `${mediaScope.length} media inspected ` +
-                      `(PARTIAL; scan still INCOMPLETE).`
-                    : `Archive already complete for this scan — ` +
-                      `${state.queue.size}/${state.queue.size} scan media verified` +
-                      `${state.diskActive ? ` on disk (${verified} indexed).` : '.'}`;
+                const message =
+                    `No media pending in ${DOWNLOAD_MODE_LABEL[mode]}: ` +
+                    `${mediaScope.length} scanned, ${diskMatched} folder-indexed, ` +
+                    `${acceptedSession} GM_download session receipts, ` +
+                    `${legacyMatched} legacy filename matches. ` +
+                    `Session receipts are not disk verification.` +
+                    (isPartial ? ' PROFILE scan remains INCOMPLETE.' : '');
 
                 log(message);
                 status(message, 'ok');
@@ -14426,7 +14386,7 @@
             const summary =
                 `${DOWNLOAD_MODE_LABEL[mode]} finished: ` +
                 `${completed} media jobs processed, ` +
-                `${p.succeeded}/${downloadPlan.total} physical writes succeeded, ` +
+                `${p.succeeded}/${downloadPlan.total} GM_download success callbacks (disk not independently verified), ` +
                 `${p.failed} failed, ${p.blocked} blocked; ` +
                 `${batchElapsed.toFixed(2)} s, ${average.toFixed(2)} s/job.` +
                 (isPartial ? ' Overall PROFILE scan remains INCOMPLETE.' : '');
