@@ -6917,7 +6917,7 @@
         for (
             const a
             of document.querySelectorAll(
-                'a[href*="/p/"],a[href*="/reel/"],a[href*="/tv/"]'
+                'a[href*="/p/"],a[href*="/reel/"],a[href*="/reels/"],a[href*="/tv/"]'
             )
         ) {
             const info =
@@ -7012,7 +7012,7 @@
             // routes or profile tabs as single-media links.
             const m =
                 u.pathname.match(
-                    /^\/(?:([A-Za-z0-9._]{1,30})\/)?(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/
+                    /^\/(?:([A-Za-z0-9._]{1,30})\/)?(p|reels?|tv)\/([A-Za-z0-9_-]+)\/?$/
                 );
 
             if (!m) {
@@ -7040,7 +7040,7 @@
             }
 
             return {
-                route: m[2],
+                route: m[2] === 'reels' ? 'reel' : m[2],
                 username: m[1] ? cleanUser(m[1]) : '',
                 rawToken,
                 shortcode,
@@ -15901,7 +15901,7 @@
         for (
             const anchor
             of root.querySelectorAll(
-                'a[href*="/p/"],a[href*="/reel/"],a[href*="/tv/"]'
+                'a[href*="/p/"],a[href*="/reel/"],a[href*="/reels/"],a[href*="/tv/"]'
             )
         ) {
             const target =
@@ -16714,79 +16714,47 @@
         `;
     }
     function addSingleDownloadButtonToAnchor(anchor) {
-        if (
-            !anchor ||
-            anchor.dataset.jklSingleDownload === '1'
-        ) {
-            return;
-        }
-    
-        const target =
-            singleDownloadTargetFromUrl(
-                anchor.href ||
-                anchor.getAttribute(
-                    'href'
-                )
-            );
-    
-        if (
-            !target ||
-            target.kind !== 'media'
-        ) {
-            return;
-        }
-    
-        if (
-            !anchor.querySelector(
-                'img,video'
-            )
-        ) {
-            return;
-        }
-    
-        const host =
-            anchor.parentElement;
-    
-        if (!host) {
-            return;
-        }
-    
-        anchor.dataset.jklSingleDownload =
-            '1';
-    
-        host.dataset.jklSingleHost =
-            '1';
-    
-        if (
-            getComputedStyle(host).position ===
-            'static'
-        ) {
-            host.style.position =
-                'relative';
-        }
-    
-        const button =
-            document.createElement(
-                'button'
-            );
-    
-        button.type =
-            'button';
-    
-        button.className =
-            'jkl-single-download';
-    
-        applySingleDownloadTarget(
-            button,
-            target
+        if (!anchor?.isConnected) return;
+        const target=singleDownloadTargetFromUrl(
+            anchor.href || anchor.getAttribute('href')
         );
-    
-        button.innerHTML =
-            singleDownloadIconHtml();
-    
-        host.appendChild(
-            button
-        );
+        if(!target || target.kind!=='media') return;
+
+        // Opened-media view has a separate body-level fixed button.
+        // Don't duplicate controls inside its modal.
+        if(anchor.closest?.('div[role="dialog"]') &&
+            singleDownloadTargetFromUrl(location.href)?.kind==='media') return;
+
+        const rect=anchor.getBoundingClientRect();
+        // Instagram tiles can use CSS art rather than nested IMG/VIDEO.
+        // Require a real in-viewport tile so profile links are ignored.
+        if(rect.width<96 || rect.height<96 ||
+            rect.right<=0 || rect.bottom<=0 ||
+            rect.left>=window.innerWidth || rect.top>=window.innerHeight) return;
+        const host=anchor.parentElement;
+        if(!host || host===document.body) return;
+        const existing=[...host.children].find(el=>
+            el.classList?.contains('jkl-single-download'));
+        if(existing){
+            // Do not trust an old data-attribute after React removed the
+            // button; only a currently connected, matching button counts.
+            if(existing.isConnected &&
+                existing.dataset.jklAnchorId===target.mediaId) return;
+            if(existing.isConnected) return; // ambiguous shared host
+            existing.remove();
+        }
+        if(getComputedStyle(host).position==='static') {
+            host.style.position='relative';
+        }
+        host.dataset.jklSingleHost='1';
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='jkl-single-download';
+        button.dataset.jklAnchorId=target.mediaId;
+        button.innerHTML=singleDownloadIconHtml();
+        applySingleDownloadTarget(button,target);
+        host.appendChild(button);
+        anchor.dataset.jklSingleDownload='1';
     }
     function currentMediaRoot() {
         const viewportW=window.innerWidth || 1;
@@ -17063,7 +17031,7 @@
         for (
             const anchor
             of document.querySelectorAll(
-                'a[href*="/p/"],a[href*="/reel/"],a[href*="/tv/"]'
+                'a[href*="/p/"],a[href*="/reel/"],a[href*="/reels/"],a[href*="/tv/"]'
             )
         ) {
             addSingleDownloadButtonToAnchor(
