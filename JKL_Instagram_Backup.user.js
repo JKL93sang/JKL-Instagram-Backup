@@ -12624,8 +12624,9 @@
 
         state.queue.clear();
         state.rootCatalog.clear();
-        state.profileMainGridRootIds.clear();
-        state.profileDomObservedRootIds.clear();
+        // Fresh per-scan snapshots; resilient to older in-memory test fixtures.
+        state.profileMainGridRootIds = new Set();
+        state.profileDomObservedRootIds = new Set();
 
         for (const s of Object.values(state.roots)) {
             s.clear();
