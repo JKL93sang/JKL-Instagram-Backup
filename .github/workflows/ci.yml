@@ -66,6 +66,9 @@ jobs:
       - name: Instagram username-prefixed media URL and scoped DOM integration tests
         run: node tests/profile-prefixed-permalink-regression.test.mjs
 
+      - name: Always-accessible solo download panel and age-gate fallback integration tests
+        run: node tests/single-panel-action-regression.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
