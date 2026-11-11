@@ -69,6 +69,9 @@ jobs:
       - name: Always-accessible solo download panel and age-gate fallback integration tests
         run: node tests/single-panel-action-regression.test.mjs
 
+      - name: Viewport-pinned SOLO floating button and React remount regression tests
+        run: node tests/single-media-floating-regression.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
