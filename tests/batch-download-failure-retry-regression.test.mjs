@@ -54,8 +54,8 @@ const state = {
 
 const ctx = {
     APP: {DOWNLOAD_RETRIES: 3, DOWNLOAD_WORKERS: 1, DOWNLOAD_DELAY: 0},
-    DOWNLOAD_MODE: {COMPLETE: 'COMPLETE'},
-    DOWNLOAD_MODE_LABEL: {COMPLETE: 'Full archive'},
+    DOWNLOAD_MODE: {COMPLETE: 'complete'},
+    DOWNLOAD_MODE_LABEL: {complete: 'Download batch'},
     state,
     existingReason: m => state.diskCanonical.has(String(m.id)) ? 'disk' : '',
     authorizeDownloadScope: () => ({ok: true, media: items}),
