@@ -60,6 +60,9 @@ jobs:
       - name: Log session history and TXT export executable regression tests
         run: node tests/log-session-export-regression.test.mjs
 
+      - name: PROFILE source provenance and counter gap regression tests
+        run: node tests/profile-source-audit-regression.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
