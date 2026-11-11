@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.98
-// @description  TEST v1.5.98: offline PROFILE root evidence diagnostics; full-session TXT logs and safe downloads.
+// @version      1.5.99
+// @description  TEST v1.5.99: recognize username-prefixed Instagram post/reel URLs and preserve strict scan guards.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.98', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.99', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -6926,6 +6926,13 @@
             if (!info) {
                 continue;
             }
+            // An account-prefixed DOM link for a different user is not
+            // evidence of a root belonging to the scanned PROFILE.
+            if (info.username &&
+                info.username.toLowerCase() !==
+                    String(state.username || '').toLowerCase()) {
+                continue;
+            }
 
             /*
              * Key DOM observations by numeric media identity, not by the raw
@@ -6995,9 +7002,14 @@
                     location.origin
                 );
 
+            // Instagram exposes both /reel/<shortcode>/ and
+            // /<username>/reel/<shortcode>/; the latter previously
+            // produced null (including for the age-gated user example).
+            // Match complete paths only; do not treat arbitrary nested
+            // routes or profile tabs as single-media links.
             const m =
                 u.pathname.match(
-                    /^\/(p|reel|tv)\/([A-Za-z0-9_-]+)\/?/
+                    /^\/(?:([A-Za-z0-9._]{1,30})\/)?(p|reel|tv)\/([A-Za-z0-9_-]+)\/?$/
                 );
 
             if (!m) {
@@ -7005,7 +7017,7 @@
             }
 
             const rawToken =
-                String(m[2] || '');
+                String(m[3] || '');
 
             const shortcode =
                 canonicalShortcode(
@@ -7025,7 +7037,8 @@
             }
 
             return {
-                route: m[1],
+                route: m[2],
+                username: m[1] ? cleanUser(m[1]) : '',
                 rawToken,
                 shortcode,
                 mediaId,
@@ -15859,7 +15872,7 @@
                 kind: 'media',
                 route:
                     media.route,
-                username: '',
+                username: media.username || '',
                 mediaId:
                     media.mediaId,
                 shortcode:
