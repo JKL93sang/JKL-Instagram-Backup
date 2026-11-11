@@ -6316,12 +6316,19 @@
 
         let existing = 0;
         let pending = 0;
+        let indexedMatched = 0;
+        let sessionMatched = 0;
+        let legacyMatched = 0;
         let hiddenTotal = 0;
         let hiddenExisting = 0;
 
         for (const m of state.queue.values()) {
-            if (existingReason(m)) {
+            const reason = existingReason(m);
+            if (reason) {
                 existing++;
+                if (reason === 'DISK') indexedMatched++;
+                else if (reason === 'SESSION') sessionMatched++;
+                else if (reason === 'LEGACY') legacyMatched++;
             }
             else {
                 pending++;
@@ -6329,10 +6336,7 @@
 
             if (isHiddenMedia(m)) {
                 hiddenTotal++;
-
-                if (existingReason(m)) {
-                    hiddenExisting++;
-                }
+                if (reason) hiddenExisting++;
             }
         }
 
@@ -6736,6 +6740,11 @@
                     <span>Missing <b>${pending}</b></span>
                     <span>HIDDEN <b>${hiddenExisting}/${hiddenTotal}</b></span>
                     <span>Downloaded <b>${state.downloaded}</b></span>
+                </div>
+                <div class="jkl-card-line">
+                    <span>Indexed matches <b>${indexedMatched}</b></span>
+                    <span>Session callbacks <b>${sessionMatched}</b></span>
+                    <span>Legacy matches <b>${legacyMatched}</b></span>
                 </div>
             </div>
         `;
