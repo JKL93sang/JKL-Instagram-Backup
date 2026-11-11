@@ -193,5 +193,5 @@ assert.match(src,/window\.addEventListener\(\s*'scroll'/);
 assert.match(src,/window\.addEventListener\(\s*'resize'/);
 assert.match(src,/\.jkl-single-download \{[\s\S]*?opacity:\.82;/);
 assert.match(src,/\(p\|reels\?\|tv\)/);
-assert.equal(src.match(/@version\s+([0-9.]+)/)?.[1],'1.5.101');
+assert.equal(src.match(/@version\s+([0-9.]+)/)?.[1],'1.5.102');
 console.log('Age gate no IMG: pinned SOLO button visible, real click delegated, scan disabled, panel overlap avoided, React tile replacement and /reels/ supported — PASS.');
