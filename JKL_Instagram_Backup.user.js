@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.95
-// @description  TEST v1.5.95: fail-closed standalone media identity and complete carousel downloads; preserve safe scan guards.
+// @version      1.5.96
+// @description  TEST v1.5.96: fail-closed standalone media identity and complete carousel downloads; preserve safe scan guards.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.95', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.96', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -1331,10 +1331,81 @@
             state.shadow.reelIds.size === 0;
     }
 
+    // Operational result only: preserve coverage.profileGrid=false when
+    // Instagram never exposes the native main-grid server end. An exposed
+    // archive can nevertheless be finished if every discovered file is
+    // independently source-verified, the anonymous/public and browser-native
+    // root union matches the authenticated main-grid counter, and every
+    // other requested surface has completed. Never call this a full archive.
+    function profileSurfaceOperationalSkip() {
+        if (!scanSelected('post') || !scanSelected('reel') ||
+            state.coverage.profileGrid === true ||
+            !profilePublicGapAvoidsSyntheticRelay() ||
+            !state.exclusive?.known ||
+            state.exclusive.hasExclusiveFeedContent === true ||
+            state.cancelled || state.feedbackRequired ||
+            state.rateLimited || state.apiUnhealthy ||
+            !state.scanPlan || !state.userId || !state.username ||
+            !(state.queue instanceof Map) || !state.queue.size ||
+            !requiredCoverage().every(([,key]) =>
+                key === 'profileGrid' || state.coverage[key] === true)
+        ) return false;
+
+        // Subscriber/hidden media need their own complete archive proof;
+        // never let an exposed/public skip silently expand their scope.
+        if (!state.hidden || state.hidden.candidates !== 0 ||
+            state.hidden.recovered !== 0 ||
+            state.hidden.previewOnly !== 0 ||
+            state.hidden.failed !== 0) return false;
+
+        const expected = Number(state.expected);
+        const authenticatedCount = Number(state.profileInfo?.media_count);
+        if (!Number.isSafeInteger(expected) || expected < 1 ||
+            expected !== authenticatedCount) return false;
+
+        const key = String(state.username).toLowerCase();
+        const native = net.gridByUser?.get(key);
+        const audit = net.gridNativeAuditByUser?.get(key);
+        const session = state.nativeProfileEvidenceSession;
+        const observedAt = net.gridCaptureSeenAtByUser?.get(key);
+        const publicRoots = state.shadow?.rootIds;
+        const recorded = ownedIds();
+        if (!(native instanceof Map) || !native.size ||
+            !(publicRoots instanceof Set) || !publicRoots.size ||
+            !audit || (audit.initial || 0) + (audit.continuation || 0) < 1 ||
+            !session || session.key !== key ||
+            session.userId !== String(state.userId) ||
+            !Number.isFinite(session.acceptedAt) ||
+            !Number.isFinite(observedAt) ||
+            (observedAt !== session.acceptedCapturedAt &&
+                observedAt < session.acceptedAt)) return false;
+
+        const union = new Set(publicRoots);
+        let overlap = 0;
+        for (const id of native.keys()) {
+            if (!/^\d+$/.test(id)) return false;
+            if (publicRoots.has(id)) overlap++;
+            union.add(id);
+        }
+        if (!overlap || union.size !== expected ||
+            [...union].some(id => !/^\d+$/.test(id) ||
+                !recorded.has(id))) return false;
+
+        // The existing strict per-file proof is stronger than a counter.
+        // Any queue entry lacking its own authorized source, root, or
+        // hydration must retain the old INCOMPLETE+PARTIAL behaviour.
+        const verified = verifiedAccessibleMedia();
+        const authorizedIds = new Set(verified.map(m => String(m.id)));
+        return verified.length === state.queue.size &&
+            authorizedIds.size === state.queue.size &&
+            [...state.queue.keys()].every(id => authorizedIds.has(String(id)));
+    }
+
     function incompleteCoverage() {
         return requiredCoverage()
             .filter(([, key]) => !state.coverage[key] &&
-                !(key === 'reels' && reelsSurfaceSkipped()))
+                !(key === 'reels' && reelsSurfaceSkipped()) &&
+                !(key === 'profileGrid' && profileSurfaceOperationalSkip()))
             .map(([label]) => label);
     }
 
@@ -6087,8 +6158,9 @@
         const completed =
             guards.filter(
                 key =>
-                    state.coverage[key] ===
-                    true
+                    state.coverage[key] === true ||
+                    (key === 'reels' && reelsSurfaceSkipped()) ||
+                    (key === 'profileGrid' && profileSurfaceOperationalSkip())
             )
                 .length;
 
@@ -6301,7 +6373,9 @@
             !state.userId
                 ? 'NOT SCANNED'
                 : state.scanOutcome === 'EXPOSED_COMPLETE'
-                    ? 'EXPOSED OK · REELS SKIPPED'
+                    ? (profileSurfaceOperationalSkip()
+                        ? 'EXPOSED OK · PROFILE UNPROVEN'
+                        : 'EXPOSED OK · REELS SKIPPED')
                     : missingCoverage.length
                         ? 'INCOMPLETE'
                         : 'COVERAGE OK';
@@ -11707,10 +11781,10 @@
         }
 
         if (state.scanOutcome === 'EXPOSED_COMPLETE' &&
-            !reelsSurfaceSkipped()) {
+            !reelsSurfaceSkipped() && !profileSurfaceOperationalSkip()) {
             return {
                 ok: false,
-                reason: 'Reels no-tab skip lost its verified conditions',
+                reason: 'Exposed-source operational skip lost its verified conditions',
             };
         }
 
@@ -12641,16 +12715,19 @@
             ) {
                 state.scanComplete = true;
                 const reelsSkipped = reelsSurfaceSkipped();
-                state.scanOutcome = reelsSkipped
+                const profileSkipped = profileSurfaceOperationalSkip();
+                state.scanOutcome = reelsSkipped || profileSkipped
                     ? 'EXPOSED_COMPLETE' : 'COMPLETE';
                 state.scanUserId = String(state.userId || '');
                 state.scanQueueSize = state.queue.size;
                 state.scanQueueFingerprint = scanDownloadFingerprint();
 
                 status(
-                    reelsSkipped
-                        ? `Exposed sources complete: ${state.queue.size} unique media. REELS tab absent; skipped (no zero-clips proof).`
-                        : `Accessible scan complete: ${state.queue.size} unique media.`,
+                    profileSkipped
+                        ? `Verified exposed archive ready: ${state.queue.size} media. PROFILE server-end unproven; no claim of exhaustive profile.`
+                        : reelsSkipped
+                            ? `Exposed sources complete: ${state.queue.size} unique media. REELS tab absent; skipped (no zero-clips proof).`
+                            : `Accessible scan complete: ${state.queue.size} unique media.`,
                     'ok'
                 );
 
@@ -12685,9 +12762,11 @@
                 }
 
                 log(
-                    reelsSkipped
-                        ? '=== SCAN FINISHED — EXPOSED SOURCES COMPLETE (REELS SKIPPED) ==='
-                        : '=== SCAN FINISHED — COMPLETE ===',
+                    profileSkipped
+                        ? '=== SCAN FINISHED — VERIFIED EXPOSED ARCHIVE (PROFILE SERVER-END UNPROVEN) ==='
+                        : reelsSkipped
+                            ? '=== SCAN FINISHED — EXPOSED SOURCES COMPLETE (REELS SKIPPED) ==='
+                            : '=== SCAN FINISHED — COMPLETE ===',
                     'ok'
                 );
             }
