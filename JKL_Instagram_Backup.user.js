@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.102
-// @description  TEST v1.5.102: validated SOLO surfaces; folder index separate from GM_download session receipts.
+// @version      1.5.103
+// @description  TEST v1.5.103: verified target-scoped DOM media-info supplements exhausted PUBLIC/native PROFILE roots.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.102', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.103', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -204,6 +204,7 @@
         // Read-only PROFILE provenance snapshots; never grant coverage.
         profileMainGridRootIds: new Set(),
         profileDomObservedRootIds: new Set(),
+        verifiedProfileDomApiRootIds: new Set(), // strict same-owner POST media-info, never DOM alone
         rootCatalog: new Map(),
         highlightCatalog: new Map(), // Instagram reel ID -> stable archive folder
         highlightRenameNotices: new Set(),
@@ -1273,6 +1274,7 @@
         state.verifiedSubscriberRootIds.clear();
         state.verifiedPassiveReelRootIds.clear();
         state.verifiedPassiveProfilePostRootIds?.clear?.();
+        state.verifiedProfileDomApiRootIds?.clear?.();
         state.highlightCatalog.clear();
         state.highlightRenameNotices.clear();
         clearPartialDownloadGrants();
@@ -7189,6 +7191,35 @@
         });
     }
 
+    // An observed /p/ permalink by itself is NOT server-side identity
+    // evidence. Only a same-account, same-ID, same-shortcode media-info
+    // response with a fully resolved set of child units may fill a gap
+    // between two exhausted PROFILE timelines and the official counter.
+    function verifiedTargetScopedProfileDomMediaInfo(info, item, userId) {
+        const id = String(info?.mediaId || '');
+        const code = String(info?.shortcode || '');
+        const ownerId = normalizePk(item?.user || item?.owner || {});
+        if (info?.route !== 'p' || !/^\d+$/.test(id) ||
+            !/^\d+$/.test(String(userId || '')) ||
+            ownerId !== String(userId) ||
+            normalizePk(item) !== id ||
+            !code || canonicalShortcode(item?.code || item?.shortcode || '') !== code ||
+            shortcodeId(code) !== id ||
+            rootKind(item) !== 'POST') return false;
+        try {
+            // Reuse the same all-or-nothing strict carousel validation
+            // as SOLO: no missing media, duplicated children, or preview
+            // in place of an actual file URL.
+            const units = standaloneUnits(item, '', id);
+            return units.length > 0 &&
+                units.every(unit => /^\d+$/.test(String(unit.id || '')) &&
+                    !!unit.url && unit.type === 'POST');
+        }
+        catch {
+            return false;
+        }
+    }
+
     async function hydratePermalinkRoots(
         list,
         sourceHint =
@@ -7247,6 +7278,20 @@
                             `${sourceHint} ${index + 1}/${list.length}`
                         );
 
+                        const strictDom = sourceHint === 'PROFILE_GRID_DOM';
+                        const domApiProven = strictDom &&
+                            verifiedTargetScopedProfileDomMediaInfo(
+                                info, item, state.userId
+                            );
+                        // Do not admit cross-account or incorrectly decoded
+                        // visible links into the OWNED scan. Media-info must
+                        // corroborate the exact profile and parent shortcode.
+                        if (strictDom && !domApiProven) {
+                            throw new Error(
+                                'PROFILE DOM permalink not confirmed by same-owner, same-ID complete media-info'
+                            );
+                        }
+
                         const forced =
                             info.route === 'reel'
                                 ? 'REEL'
@@ -7257,6 +7302,19 @@
                             forced,
                             sourceHint
                         );
+
+                        if (domApiProven) {
+                            const rec = state.rootCatalog.get(id);
+                            if (rec?.type === 'POST' &&
+                                rec.structureComplete === true &&
+                                rec.forceHydrate !== true &&
+                                Number.isSafeInteger(rec.expectedUnits) &&
+                                rec.expectedUnits > 0 &&
+                                queuedUnitsForRoot(id) === rec.expectedUnits &&
+                                state.roots.POST.has(id)) {
+                                state.verifiedProfileDomApiRootIds.add(id);
+                            }
+                        }
 
                         resolved++;
                     }
@@ -12261,6 +12319,54 @@
         };
     }
 
+    // Conservatively reconcile a small gap AFTER BOTH target-scoped
+    // PUBLIC and native timelines have proven server pagination end.
+    // A visible DOM link cannot prove the end. A fresh, exact-owner,
+    // exact-shortcode, full-child media-info response can account for
+    // an otherwise missing individual POST identity. Never fill gaps
+    // from independent REELS, unverified DOM links, or counter alone.
+    function assessProfileDomApiSupplementProof(p = {}) {
+        const fail = reason => ({verified:false,reason,missing:p?.base?.missing || 0});
+        if (p?.base?.verified !== false ||
+            p.base.reason !== 'public_native_union_counter_mismatch' ||
+            !Number.isSafeInteger(p.base.missing) ||
+            p.base.missing < 1) return fail('not_a_verified_native_public_gap');
+        const expected=Number(p.expected);
+        const pub=p.publicRootIds, native=p.nativeRootIds,
+            main=p.mainRootIds, dom=p.domObservedRootIds,
+            api=p.verifiedDomApiRootIds, posts=p.ownedPostIds,
+            reels=p.ownedReelIds;
+        if (!Number.isSafeInteger(expected) || expected < 1 ||
+            ![pub,native,main,dom,api,posts,reels]
+                .every(value => value instanceof Set))
+            return fail('missing_identity_scoped_root_sets');
+        const union=new Set([...pub,...native]);
+        if (union.size >= expected ||
+            expected - union.size !== p.base.missing ||
+            main.size !== expected || dom.size !== expected ||
+            [...main].some(id => !dom.has(id)) ||
+            [...dom].some(id => !main.has(id)) ||
+            [...union].some(id => !main.has(id)))
+            return fail('profile_dom_main_count_or_membership_mismatch');
+        const missing=[...main].filter(id => !union.has(id));
+        if (missing.length !== p.base.missing ||
+            missing.some(id => !/^\d+$/.test(String(id)) ||
+                !api.has(id) || !posts.has(id) || reels.has(id)))
+            return fail('profile_dom_media_info_not_independently_proven');
+        // Independent completed REELS may contain more posts than the
+        // main grid; never use them as a source of missing PROFILE IDs.
+        return {
+            verified:true,
+            reason:'public_native_dom_api_exact_counter_proof',
+            missing:0,
+            publicCount:pub.size,
+            nativeCount:native.size,
+            overlap:pub.size+native.size-union.size,
+            unionCount:main.size,
+            domApiSupplementCount:missing.length,
+        };
+    }
+
     // Public profiles have an authenticated user counter AND an
     // identity-verified anonymous main-grid connection. Use those real
     // independent surfaces first. No native client traffic is required
@@ -12516,7 +12622,7 @@
             !scanSelected('post')
         ) return;
 
-        const result = assessProfileGridCrossSurfaceProof({
+        let result = assessProfileGridCrossSurfaceProof({
             selectedPost: scanSelected('post'),
             selectedReel: scanSelected('reel'),
             publicProfile: state.profileInfo?.is_private === false,
@@ -12560,6 +12666,34 @@
             ownedPostIds: state.roots.POST,
             ownedReelIds: state.roots.REEL,
         });
+
+        if (!result.verified &&
+            result.reason === 'public_native_union_counter_mismatch') {
+            const supplement = assessProfileDomApiSupplementProof({
+                base: result,
+                expected: state.expected,
+                publicRootIds: state.shadow.rootIds,
+                nativeRootIds: new Set(
+                    net.gridByUser.get(state.username.toLowerCase())?.keys() || []
+                ),
+                mainRootIds: state.profileMainGridRootIds,
+                domObservedRootIds: state.profileDomObservedRootIds,
+                verifiedDomApiRootIds: state.verifiedProfileDomApiRootIds,
+                ownedPostIds: state.roots.POST,
+                ownedReelIds: state.roots.REEL,
+            });
+            if (supplement.verified) {
+                result = supplement;
+                log('PROFILE precise gap corroborated by ' +
+                    supplement.domApiSupplementCount +
+                    ' same-owner DOM media-info POST roots. Both public ' +
+                    'and native server-ended timelines were already proven. ' +
+                    'No synthetic PROFILE Relay or counter-only shortcut.');
+            } else {
+                log('PROFILE strict DOM media-info supplement unavailable: ' +
+                    supplement.reason + '.');
+            }
+        }
 
         if (result.verified) {
             state.coverage.profileGrid = true;
@@ -12653,6 +12787,7 @@
         // Fresh per-scan snapshots; resilient to older in-memory test fixtures.
         state.profileMainGridRootIds = new Set();
         state.profileDomObservedRootIds = new Set();
+        state.verifiedProfileDomApiRootIds = new Set();
 
         for (const s of Object.values(state.roots)) {
             s.clear();
