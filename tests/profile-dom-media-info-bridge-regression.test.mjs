@@ -237,12 +237,12 @@ for(const [name,mutate] of [
         verifiedProfileDomApiRootIds:new Set(),
     };
     const logs=[],called=[];
-    const hydrate=new Function('state','APP','sleep',
+    const hydrate=new Function('state','APP','rand','sleep',
         'fetchOwnedMediaInfo','shortcodeId',
         'verifiedTargetScopedProfileDomMediaInfo','addMedia',
         'queuedUnitsForRoot','updateStats','log',
         extract('hydratePermalinkRoots')+'\nreturn hydratePermalinkRoots;'
-    )(state,{HYDRATE_WORKERS:1},async()=>{},
+    )(state,{HYDRATE_WORKERS:1},()=>0,async()=>{},
       async id=>{
           called.push(id);
           const v=domRows.find(x=>x.id===id);
