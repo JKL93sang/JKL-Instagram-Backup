@@ -7220,6 +7220,34 @@
         }
     }
 
+    // Diagnostics only: the strict verifier still decides whether the
+    // root can enter OWNED. Never log media URLs or response payloads.
+    function profileDomMediaInfoFailureCode(info,item,userId) {
+        const id=String(info?.mediaId || '');
+        if (info?.route !== 'p') return 'non_post_route';
+        if (!/^\d+$/.test(id)) return 'invalid_requested_root';
+        if (!/^\d+$/.test(String(userId || ''))) return 'missing_target_account';
+        const ownerId=normalizePk(item?.user || item?.owner || {});
+        if (!ownerId) return 'returned_owner_missing';
+        if (ownerId !== String(userId)) return 'returned_owner_mismatch';
+        if (normalizePk(item) !== id) return 'returned_root_mismatch';
+        const code=String(info?.shortcode || '');
+        if (!code || shortcodeId(code) !== id) return 'requested_shortcode_mismatch';
+        if (canonicalShortcode(item?.code || item?.shortcode || '') !== code)
+            return 'returned_shortcode_mismatch';
+        if (rootKind(item) !== 'POST') return 'not_post_type';
+        try {
+            const units=standaloneUnits(item,'',id);
+            return units.length && units.every(unit =>
+                /^\d+$/.test(String(unit.id || '')) &&
+                !!unit.url && unit.type==='POST')
+                ? 'strict_catalog_not_verified'
+                : 'incomplete_media_units';
+        } catch {
+            return 'incomplete_media_units';
+        }
+    }
+
     async function hydratePermalinkRoots(
         list,
         sourceHint =
@@ -7289,7 +7317,8 @@
                         // corroborate the exact profile and parent shortcode.
                         if (strictDom && !domApiProven) {
                             throw new Error(
-                                'PROFILE DOM permalink not confirmed by same-owner, same-ID complete media-info'
+                                'PROFILE DOM permalink not confirmed by same-owner, same-ID complete media-info (' +
+                                profileDomMediaInfoFailureCode(info,item,state.userId) + ')'
                             );
                         }
 
