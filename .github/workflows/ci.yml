@@ -141,6 +141,9 @@ jobs:
       - name: PROFILE cross-surface pagination proof regression tests
         run: node tests/profile-cross-surface-proof-regression.test.mjs
 
+      - name: Target-profile DOM per-root media-info identity and strict hybrid completion regression
+        run: node tests/profile-dom-media-info-bridge-regression.test.mjs
+
       - name: Subscriber-authorized partial backup safety regression tests
         run: node tests/subscriber-verified-partial-regression.test.mjs
 
