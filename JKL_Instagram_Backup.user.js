@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.105
-// @description  Stable v1.5.105: verified complete PROFILE proofs, reliable SOLO, safe local archive indexing and partial backups.
+// @version      1.5.106
+// @description  TEST v1.5.106: story-view SOLO placement, bounded TAGGED recovery and private PROFILE diagnostics.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/main/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/private-profile-story-solo-v1.5.106/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/private-profile-story-solo-v1.5.106/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/private-profile-story-solo-v1.5.106/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,10 +31,10 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.105', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.106', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
-        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
+        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
         REEL_SCROLL_MIN: 350, REEL_SCROLL_MAX: 1600, REEL_SCROLL_POLL: 120,
         PAGE_MIN: 650, PAGE_MAX: 1250, SHADOW_PAGE_MIN: 250, SHADOW_PAGE_MAX: 450, SHADOW_MAX_PAGES: 200, DOWNLOAD_DELAY: 0, DOWNLOAD_WORKERS: 1, DOWNLOAD_RETRIES: 3, LEDGER_FLUSH_EVERY: 25, DL_DIAG_SAMPLES: 20, MAX_LOG: 2000, MAX_LOG_ARCHIVE: 50000,
         HYDRATE_MIN: 180, HYDRATE_MAX: 320, HYDRATE_RETRIES: 3, HYDRATE_WORKERS: 4, HYDRATE_LARGE_THRESHOLD: 250, HYDRATE_LARGE_WORKERS: 2, HYDRATE_BULK_THRESHOLD: 100, HYDRATE_BULK_SIZE: 20, HYDRATE_SINGLE_FALLBACK_CAP: 100,
@@ -17020,6 +17020,69 @@
         return {left:Math.round(left),top:Math.round(top)};
     }
 
+    // A /stories/<username>/<media-id>/ URL is an exact media target,
+    // even when Instagram's Story player has no <main>, <section> or
+    // article element. Keep the SOLO button fixed to the portrait viewer
+    // rather than silently hiding it for lack of an ordinary POST root.
+    // No inferred media ID, no scraping request and no click until the
+    // user explicitly presses the button.
+    function storyFloatingAnchor(target) {
+        const route = storyPermalinkInfo(location.href);
+        if (!target || target.kind !== 'story' || !route ||
+            route.mediaId !== String(target.mediaId) ||
+            route.username.toLowerCase() !==
+                String(target.username || '').toLowerCase()) return null;
+
+        const vw = Number(window.innerWidth || 0);
+        const vh = Number(window.innerHeight || 0);
+        if (vw < 180 || vh < 180) return null;
+
+        // Prefer the actual visible central story image/video; do not
+        // mistake a small avatar, an invisible preload or our own panel
+        // for the playing story.
+        const visible = [...document.querySelectorAll('video,img')]
+            .filter(el => {
+                if (el.closest?.('#jkl-igb,[aria-hidden="true"]')) return false;
+                const r = el.getBoundingClientRect?.();
+                if (!r || r.width < 140 || r.height < 180 ||
+                    r.right <= 0 || r.bottom <= 0 ||
+                    r.left >= vw || r.top >= vh) return false;
+                const center = (r.left + r.right) / 2;
+                return Math.abs(center - vw / 2) <= vw * .38;
+            })
+            .map(el => {
+                const r = el.getBoundingClientRect();
+                const width = Math.max(0,Math.min(vw,r.right) - Math.max(0,r.left));
+                const height = Math.max(0,Math.min(vh,r.bottom) - Math.max(0,r.top));
+                return {r,score:width*height*
+                    (el.tagName?.toLowerCase() === 'video' ? 1.15 : 1)};
+            })
+            .sort((a,b) => b.score - a.score)[0]?.r || null;
+
+        // Instagram may mount the Story shell before its IMG/VIDEO.
+        // The exact media ID is already verified from the URL, so place
+        // the control over the center viewer until the content mounts.
+        const viewerWidth = Math.min(480,vw*.72);
+        const rightEdge = visible
+            ? Math.min(vw - 8,visible.right)
+            : (vw + viewerWidth) / 2;
+        const topEdge = visible
+            ? visible.top
+            : Math.max(0,vh*.04);
+        let left = Math.max(8,Math.min(vw-48,rightEdge-48));
+        const top = Math.max(48,Math.min(vh-48,topEdge+56));
+
+        const panel = ui.box?.getBoundingClientRect?.();
+        if (panel && left+38>panel.left && left<panel.right &&
+            top+38>panel.top && top<panel.bottom) {
+            const leftEdge = visible
+                ? visible.left
+                : (vw-viewerWidth)/2;
+            left = Math.max(8,Math.min(vw-48,leftEdge+12));
+        }
+        return {left:Math.round(left),top:Math.round(top)};
+    }
+
     function ensureCurrentDownloadButton() {
         let button =
             document.getElementById(
@@ -17055,8 +17118,9 @@
         return button;
     }
 
-    function placeCurrentDownloadButton(button,root) {
-        const anchor=currentMediaOverlayHost(largestCurrentMedia(root),root);
+    function placeCurrentDownloadButton(button,root,anchorOverride=null) {
+        const anchor=anchorOverride ||
+            currentMediaOverlayHost(largestCurrentMedia(root),root);
         if(!anchor){
             button.remove();
             return 'unavailable';
@@ -17126,7 +17190,10 @@
         }
         const root=currentMediaRoot();
         const media=largestCurrentMedia(root);
-        if(!currentMediaOverlayHost(media,root)){
+        const anchor=target.kind==='story'
+            ? storyFloatingAnchor(target)
+            : currentMediaOverlayHost(media,root);
+        if(!anchor){
             existing?.remove();
             const diagnostic=target.key+':no_safe_media_region';
             if(singleDownloadState.lastOverlayDiagnostic!==diagnostic){
@@ -17139,7 +17206,9 @@
         singleDownloadState.lastOverlayDiagnostic='';
         const button=ensureCurrentDownloadButton();
         applySingleDownloadTarget(button,target);
-        button.dataset.placement=placeCurrentDownloadButton(button,root);
+        button.dataset.placement=target.kind==='story'
+            ? (placeCurrentDownloadButton(button,root,anchor), 'viewport-pinned-story')
+            : placeCurrentDownloadButton(button,root,anchor);
         button.disabled=state.running || state.downloading ||
             state.feedbackRequired || state.rateLimited || state.apiUnhealthy;
     }
