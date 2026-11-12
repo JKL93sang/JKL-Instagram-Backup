@@ -69,9 +69,9 @@ function scenario(){
     // Real 2026-11-12 cardinalities, synthetic IDs only for the
     // pre-existing 115 roots. The two DOM-only root IDs are exact.
     const pub=Array.from({length:89},(_,i)=>String(11000+i));
-    const native=[...pub.slice(0,67),
+    const native=[...pub.slice(0,79),
         ...Array.from({length:26},(_,i)=>String(22000+i))];
-    const nativeExtras=native.slice(67);
+    const nativeExtras=native.slice(79);
     const extra=domRows.map(x=>x.id);
     const all=new Set([...pub,...native,...extra]);
     const pubPosts=new Set(pub.slice(0,46));
@@ -123,8 +123,8 @@ assert.deepEqual(base,{verified:false,reason:'public_native_union_counter_mismat
     missing:2},'PUBLIC and native alone must reject 115/117');
 assert.deepEqual(result,{
     verified:true,reason:'public_native_dom_api_exact_counter_proof',
-    missing:0,publicCount:89,nativeCount:93,
-    overlap:67,unionCount:117,domApiSupplementCount:2,
+    missing:0,publicCount:89,nativeCount:105,
+    overlap:79,unionCount:117,domApiSupplementCount:2,
 });
 // Real v1.5.103 Firefox export had only 108 DOM permalinks while
 // main=117: the other 9 roots were *already* in independently completed
