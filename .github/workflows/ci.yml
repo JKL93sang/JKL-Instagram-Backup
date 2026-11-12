@@ -78,6 +78,9 @@ jobs:
       - name: Viewport-pinned SOLO floating button and React remount regression tests
         run: node tests/single-media-floating-regression.test.mjs
 
+      - name: Story direct-permalink SOLO viewport and private-account safety regression
+        run: node tests/story-floating-private-scan-regression.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
