@@ -1,0 +1,30 @@
+# v1.5.106 TEST — Story SOLO placement and private-account source gaps
+
+**Date:** 2026-11-13 (Europe/Paris)
+**Status:** experimental PR #19, not merged, production `main` remains stable v1.5.105.
+
+## Grounded data from the actual v1.5.105 Firefox logs and JSON export
+
+The user supplied the 93-line `b_kkaaa - Instagram Backup Logs - 2026-11-13_00-38-29.txt` and matching `b_kkaaa - Instagram Backup Manifest.json`. The JSON was parsed directly (not inferred from the logs).
+
+- Authenticated target `@b_kkaaa` has `is_private=YES` and declared `media_count=122`. This can be a known/popular account despite being private; the script does not bypass private access.
+- Public/anonymous timeline N/A by design; verified native initial PROFILE request never captured (`initial=0`), five follow-up observed pages end with `has_next=false`, but the first-page contract remains missing. Only 49 native parent IDs are proven, 106 DOM candidates are observed, 105 end up in main-grid roots, and **17 of 122 parent publications remain unverified**. A further two REELS exist only in the separately paginated REELS tab, yielding **107 OWNED parent roots**. That independently completed REELS source is not evidence of the 17 missing main PROFILE posts.
+- The one visible DOM permalink `CzmMNy7MwNb` (root ID `3235327106903901019`) failed **strict same-owner/same-root/same-shortcode/full-media-info** proof. The raw link is in the DOM candidate set but absent from the main-grid accepted root set. The existing fail-closed policy is **correct**.
+- The native TAGGED GraphQL feed ended on page seven, returning 77 tagged roots, but only 71 were fully resolved. **Six unresolved**: one incomplete carousel child count, five incomplete media/video units. Previous bounded per-scan `TAGGED_HYDRATION_LIMIT=8` was exhausted (`hydration=7/8`).
+- REELS 7 target-scoped roots and a genuine page-info end, HIGHLIGHTS 11 collections / 566 unique media queued, current STORY one fully resolved media, AVATAR one, OWNED root hydration 107/107.
+- `records=821` current media units, `ledger=836` historic batch entries; current and historical sets differ (`records−ledger=8`, `ledger−records=23`). An indexed archive of **884 physical names, 839 canonical IDs, eight legacy groups** was selected. These facts are **not** evidence that 15 or 17 historical media have been physically lost.
+- Final scan correctly reports `PROFILE=false`, `TAGGED=false`, `SCAN FINISHED — INCOMPLETE`, with **624 individually eligible media** for a verified partial backup. It is **not** a complete archive and eligibility does not itself mean the corresponding file was downloaded.
+
+## Actual code changes
+
+1. **Story viewer SOLO overlay:** Existing `storyPermalinkInfo()` already recognizes an exact Story media target from `/stories/<username>/<numeric media ID>/`, and the persistent panel can identify it. However, `refreshCurrentDownloadButton()` only used `currentMediaRoot()` and `currentMediaOverlayHost()`, which may return no visible region when Instagram renders a Story player as a collection of `div` elements rather than standard `main`, `section` or `article` elements. The **new `storyFloatingAnchor(target)`** independently positions the floating control beside the largest visible centered Story video/image, or beside a conservative centered portrait frame before the media mounts, **but only when the exact media ID and username agree with the current Story permalink**. No new Instagram API requests, guessed Story IDs, automatic downloads, or access bypass.
+2. **Native UI protections retained:** existing global click delegation, per-media `GM_download` integrity controls, scan/download mutex, rate limit/feedback breakers, and body-level fixed z-index are unchanged.
+3. **TAGGED legitimate bounded recovery:** increases the per-scan optional media-info hydration budget to `16`. It does not remove fail-closed behavior for an incomplete carousel or a video whose URL is still missing. No REST fallback, invented root/child ID or unlimited retry.
+4. **PROFILE strict failure diagnostics:** adds `profileDomMediaInfoFailureCode()` to identify *why* a visible target-bound post response failed strict proof (`returned_owner_missing`, `returned_owner_mismatch`, `returned_root_mismatch`, `requested_shortcode_mismatch`, `returned_shortcode_mismatch`, `not_post_type`, `incomplete_media_units`), without logging URLs/JSON. It **never** grants completion and does not modify the existing strict verifier. A non-corroborated private post remains excluded.
+
+## Verification and next user action
+
+- New executable test `tests/story-floating-private-scan-regression.test.mjs` executes the actual Story URL parser, actual Story anchor selection, actual floating placement/refresh code, with a real-shaped synthetic Story ID and no Instagram network requests. Covers correct exact username/ID, no main/section/img/video, visible video anchor, no media ID guessing in ambiguous highlight reel, scan mutex and feedback lock.
+- Existing tests for Reel overlays, panel actions, PROFILE evidence and privacy must still pass. [Userscript CI #43331840890 — SUCCESS](https://github.com/JKL93sang/JKL-Instagram-Backup/actions/runs/43331840890).
+- **Live validation pending:** install the `v1.5.106 TEST` branch, disable the stable script while testing (keep exactly one enabled), open an **ordinary current Story with its numeric ID in the address bar**, and confirm the floating button is present near the media. A Highlight player route such as `/stories/highlights/<reel ID>/` **does not identify the currently displayed Story media**, so the script cannot safely attach an individual download to that URL without a separately verified current media ID. Do not claim Highlights are fixed by this ordinary-Story patch.
+- No full PROFILE re-scan needed for this button check. A subsequent private-PROFILE scan may still say `INCOMPLETE` if the native initial request or the 17 missing parent identities are not genuinely recovered; that is correct.
