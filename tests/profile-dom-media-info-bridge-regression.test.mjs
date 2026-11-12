@@ -167,4 +167,106 @@ assert.ok(scan.includes('state.verifiedProfileDomApiRootIds = new Set()'));
 assert.ok(src.includes('verifiedProfileDomApiRootIds?.clear?.()'));
 assert.ok(!reconcile.includes('await fetch('));
 assert.ok(!reconcile.includes('webRelayGql('));
+
+// Real PROFILE reconciliation function, not only the pure helper.
+function integratedScan({mutate}={}){
+    const x=scenario();
+    const state={
+        username,userId:uid,expected:117,
+        coverage:{profileGrid:false,publicShadow:true,connectedHidden:true,
+            ownedHydration:true,reels:true},
+        profileInfo:{pk:uid,media_count:117,is_private:false},
+        exclusive:{known:true,hasExclusiveFeedContent:false},
+        shadow:{applicable:true,profileId:uid,pageInfoEnded:true,
+            rootIds:x.strict.publicRootIds,postIds:x.strict.publicPostIds,
+            reelIds:x.strict.publicReelIds},
+        hidden:{candidates:0,recovered:0,previewOnly:0,failed:0},
+        roots:{POST:x.strict.ownedPostIds,REEL:x.strict.ownedReelIds},
+        profileMainGridRootIds:x.mainRootIds,
+        profileDomObservedRootIds:x.domObservedRootIds,
+        verifiedProfileDomApiRootIds:x.verifiedDomApiRootIds,
+    };
+    const net={
+        gridByUser:new Map([[username,new Map(
+            [...x.strict.nativeRootIds].map(id=>[id,{pk:id}]))]]),
+        gridNativeAuditByUser:new Map([[username,{
+            continuation:8,lastHasNext:'false'}]]),
+        gridPageInfo:new Map([[username,{has_next_page:false}]]),
+    };
+    mutate?.({state,net,x});
+    const logs=[];
+    const run=new Function('state','net','scanSelected',
+        'assessProfileGridCrossSurfaceProof',
+        'assessProfileDomApiSupplementProof','log',
+        extract('reconcileProfileGridCoverage')+
+        '\nreturn reconcileProfileGridCoverage;'
+    )(state,net,()=>true,methods.assessProfileGridCrossSurfaceProof,
+        methods.assessProfileDomApiSupplementProof,(...a)=>logs.push(a));
+    run();
+    return {state,logs};
+}
+const actual=integratedScan();
+assert.equal(actual.state.coverage.profileGrid,true,
+    'verified DOM media-info supplement must close precisely this two-root gap');
+assert.ok(actual.logs.some(([line])=>
+    line.includes('proof=public_native_dom_api_exact_counter_proof')));
+assert.ok(actual.logs.some(([line])=>
+    line.includes('2 same-owner DOM media-info POST roots')));
+for(const [name,mutate] of [
+    ['single verified DOM media-info',({state})=>
+        state.verifiedProfileDomApiRootIds.delete(domRows[0].id)],
+    ['wrong counter',({state})=>{state.profileInfo.media_count=118;}],
+    ['no native end',({net})=>
+        net.gridPageInfo.get(username).has_next_page=true],
+    ['hidden preview',({state})=>{state.hidden.previewOnly=1;}],
+    ['unrelated main tile',({state})=>
+        state.profileMainGridRootIds.add('999999')],
+]){
+    const x=integratedScan({mutate});
+    assert.equal(x.state.coverage.profileGrid,false,
+        'integrated completion must fail closed: '+name);
+}
+
+// Execute real hydratePermalinkRoots() through its normal media-info,
+// structure and set-update path (no browser network).
+{
+    const state={
+        userId:uid,cancelled:false,feedbackRequired:false,
+        rateLimited:false,apiUnhealthy:false,
+        rootCatalog:new Map(),roots:{POST:new Set()},
+        verifiedProfileDomApiRootIds:new Set(),
+    };
+    const logs=[],called=[];
+    const hydrate=new Function('state','APP','sleep',
+        'fetchOwnedMediaInfo','shortcodeId',
+        'verifiedTargetScopedProfileDomMediaInfo','addMedia',
+        'queuedUnitsForRoot','updateStats','log',
+        extract('hydratePermalinkRoots')+'\nreturn hydratePermalinkRoots;'
+    )(state,{HYDRATE_WORKERS:1},async()=>{},
+      async id=>{
+          called.push(id);
+          const v=domRows.find(x=>x.id===id);
+          return mkItem(id,v.code,v.children);
+      },
+      code=>domRows.find(x=>x.code===code)?.id||'',
+      methods.verifiedTargetScopedProfileDomMediaInfo,
+      (item,forced,source)=>{
+          assert.equal(source,'PROFILE_GRID_DOM');
+          const n=item.carousel_media.length;
+          state.roots.POST.add(item.pk);
+          state.rootCatalog.set(item.pk,{type:'POST',
+              structureComplete:true,forceHydrate:false,expectedUnits:n});
+      },
+      id=>domRows.find(x=>x.id===id)?.children||0,
+      ()=>{},(...v)=>logs.push(v));
+    const list=domRows.map(x=>({
+        mediaId:x.id,shortcode:x.code,route:'p',
+    }));
+    const result=await hydrate(list,'PROFILE_GRID_DOM');
+    assert.deepEqual(result,{attempted:2,resolved:2,failed:0});
+    assert.deepEqual(called,domRows.map(x=>x.id));
+    assert.deepEqual([...state.verifiedProfileDomApiRootIds],
+        domRows.map(x=>x.id));
+}
+
 console.log('v1.5.103 PROFILE strict DOM media-info bridge / source-end + 17 fail-closed cases: PASS');
