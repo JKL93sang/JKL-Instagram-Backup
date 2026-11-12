@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.103
-// @description  TEST v1.5.103: verified target-scoped DOM media-info supplements exhausted PUBLIC/native PROFILE roots.
+// @version      1.5.104
+// @description  TEST v1.5.104: safe gap-specific DOM media-info complement; partial DOM rendering no longer blocks proven PROFILE.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.103', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.104', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
@@ -12344,15 +12344,18 @@
         const union=new Set([...pub,...native]);
         if (union.size >= expected ||
             expected - union.size !== p.base.missing ||
-            main.size !== expected || dom.size !== expected ||
-            [...main].some(id => !dom.has(id)) ||
+            main.size !== expected ||
+            // Instagram virtualizes PROFILE tiles. The DOM need not
+            // retain every PUBLIC/native-proven parent at scan end.
+            // It must never contain an unrelated root, though.
             [...dom].some(id => !main.has(id)) ||
             [...union].some(id => !main.has(id)))
             return fail('profile_dom_main_count_or_membership_mismatch');
         const missing=[...main].filter(id => !union.has(id));
         if (missing.length !== p.base.missing ||
             missing.some(id => !/^\d+$/.test(String(id)) ||
-                !api.has(id) || !posts.has(id) || reels.has(id)))
+                !dom.has(id) || !api.has(id) ||
+                !posts.has(id) || reels.has(id)))
             return fail('profile_dom_media_info_not_independently_proven');
         // Independent completed REELS may contain more posts than the
         // main grid; never use them as a source of missing PROFILE IDs.
@@ -12692,7 +12695,16 @@
                     'No synthetic PROFILE Relay or counter-only shortcut.');
             } else {
                 log('PROFILE strict DOM media-info supplement unavailable: ' +
-                    supplement.reason + '.');
+                    supplement.reason +
+                    ' (main=' + state.profileMainGridRootIds.size +
+                    ', observed_dom=' + state.profileDomObservedRootIds.size +
+                    ', verified_dom_api=' + state.verifiedProfileDomApiRootIds.size +
+                    ', public_native_union=' +
+                    new Set([
+                        ...state.shadow.rootIds,
+                        ...(net.gridByUser.get(state.username.toLowerCase())?.keys() || [])
+                    ]).size +
+                    ').');
             }
         }
 
