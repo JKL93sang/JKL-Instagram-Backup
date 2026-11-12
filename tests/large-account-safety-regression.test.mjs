@@ -392,9 +392,9 @@ const fallbackSource =
 
 assert.ok(
     fallbackSource.includes(
-        'page <= APP.PROFILE_MAX_SCROLLS'
+        'page <= maxPages'
     ),
-    'PROFILE fallback no longer respects safety cap'
+    'PROFILE fallback must use bounded maxPages for full and observed-tail modes'
 );
 
 assert.ok(

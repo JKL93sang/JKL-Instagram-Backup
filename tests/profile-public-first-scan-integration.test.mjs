@@ -16,8 +16,11 @@ const methods = [
     'assessProfileGridCrossSurfaceProof',
     'reconcileProfileGridCoverage',
     'explicitEmptyReelsProof',
+    'classifyReelsEvidence',
     'reconcileEmptyReelsCoverage',
-    'requiredCoverage', 'incompleteCoverage',
+    'reelsSurfaceSkipped', 'requiredCoverage', 'incompleteCoverage',
+    'reconcilePassiveProfilePostRoots',
+    'profileSourceDiagnosticSnapshot',
     'scanAll',
 ].map(extract).join('\n');
 
@@ -25,6 +28,8 @@ function scenario({
     clips = 0, privateProfile = false, publicEnd = true,
     publicCount = 1, hasClips = false, identityMatches = true,
     noTab = true, hiddenCandidates = 0,
+    ssrHasAnyClips = null, ssrClipsCount = null,
+    ssrConsistent = true, latestReelMedia = undefined,
 } = {}) {
     const userId = '45790055326';
     const postId = '800123';
@@ -61,11 +66,14 @@ function scenario({
         'resetDownloadProgress', 'resetCoverage',
         'updateStats', 'performance', 'scanProfilerPhase',
         'resolveProfile', 'refreshProfileInfo', 'prepareProfileNativeEvidenceForScan',
+        'prepareReelsNativeEvidenceForScan',
+        'prepareTaggedNativeEvidenceForScan',
         'scanPublicShadow', 'scanMainGrid', 'scanConnectedHiddenCandidates',
         'scanReels', 'scanTagged', 'scanHighlights', 'scanStory',
         'scanAvatar', 'hydrateOwnedRootsDeep', 'logScanProfilerSummary',
         'ownedCount', 'globalGap', 'scanDownloadFingerprint',
         'capturePartialDownloadGrants', 'pathNorm', 'findAnchor', 'location',
+        'profileSurfaceOperationalSkip',
         methods + '\nreturn { scanAll };'
     )(
         state, net, { username: { value:'jennnii97' } },
@@ -84,6 +92,7 @@ function scenario({
                 applicable: false, profileId: '', pageInfoEnded: false,
                 rootIds: new Set(), postIds: new Set(),
                 reelIds: new Set(),
+                reelsEvidence: null,
             };
             state.hidden = {
                 candidates: 0, recovered: 0, previewOnly: 0, failed: 0,
@@ -108,6 +117,7 @@ function scenario({
                 is_private: privateProfile,
                 total_clips_count: clips,
                 has_clips: hasClips,
+                ...(latestReelMedia !== undefined ? { latest_reel_media:latestReelMedia } : {}),
             };
             state.expected = 1;
             state.exclusive.known = true;
@@ -115,11 +125,24 @@ function scenario({
             return true;
         },
         () => ({ retained:false }),
+        () => ({ retained:false }),
+        () => ({ retained:false }),
         async () => {
             state.shadow.applicable = !privateProfile;
             state.coverage.publicShadow = privateProfile || publicEnd;
             state.shadow.pageInfoEnded = !privateProfile && publicEnd;
             state.shadow.profileId = !privateProfile ? state.userId : '';
+            state.shadow.reelsEvidence =
+                !privateProfile && (ssrHasAnyClips !== null || ssrClipsCount !== null)
+                    ? Object.freeze({
+                        profileId:state.userId,
+                        username:state.username.toLowerCase(),
+                        hasAnyClips:ssrHasAnyClips,
+                        totalClipsCount:ssrClipsCount,
+                        latestReelPresent:false,
+                        consistent:ssrConsistent,
+                        source:'xig_user_by_username/public-profile-SSR',
+                    }) : null;
             if (!privateProfile) {
                 for (let i = 0; i < publicCount; i++) {
                     const id = String(Number(postId) + i);
@@ -153,6 +176,7 @@ function scenario({
         p => p.replace(/\/+$/, ''),
         () => !noTab,
         { pathname:'/jennnii97/' },
+        () => false, // This fixture has no unresolved public/native union.
     );
     return {
         state, logs, statuses, phases, run: api.scanAll,
@@ -179,11 +203,87 @@ function scenario({
 {
     const x = scenario({clips:null});
     await x.run();
-    assert.equal(x.state.scanOutcome, 'INCOMPLETE');
+    assert.equal(x.state.scanOutcome, 'EXPOSED_COMPLETE',
+        'no tab and no observed clips: process all accessible media');
     assert.equal(x.state.coverage.profileGrid, true);
-    assert.equal(x.state.coverage.reels, false);
+    assert.equal(x.state.coverage.reels, false,
+        'the skipped tab is not relabeled as a proven-empty Reel feed');
+    assert.equal(x.state.reelsDiagnosis.kind, 'NOT_EXPOSED');
     assert.equal(x.nativeCalls, 0, 'good PROFILE proof survives missing Reel metadata');
-    assert.equal(x.partialGrants, 1);
+    assert.equal(x.partialGrants, 0, 'normal batch is available, no partial grant needed');
+    assert.ok(x.logs.some(l=>l.msg.includes('REELS SKIPPED')));
+}
+{
+    const x = scenario({clips:null,latestReelMedia:0});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'EXPOSED_COMPLETE',
+        'missing tab is skipped for the exposed archive, not proof of zero clips');
+    assert.equal(x.state.coverage.reels, false);
+    assert.ok(x.logs.some(l => l.msg.includes('REELS evidence=NOT_EXPOSED')));
+    assert.equal(x.state.reelsDiagnosis.kind, 'NOT_EXPOSED');
+}
+{
+    const x = scenario({clips:null,ssrClipsCount:null,noTab:true});
+    await x.run();
+    assert.equal(x.state.scanOutcome,'EXPOSED_COMPLETE',
+        'no-tab target in the real user log finishes exposed surfaces');
+    assert.equal(x.state.scanComplete,true);
+    assert.equal(x.state.coverage.reels,false);
+    assert.ok(x.statuses.some(v=>v.msg.includes('REELS tab absent')));
+    assert.ok(!x.logs.some(v=>v.msg.includes('SCAN FINISHED — INCOMPLETE')));
+}
+{
+    const x = scenario({clips:null,latestReelMedia:0,ssrHasAnyClips:false});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'COMPLETE',
+        'REST placeholder cannot contradict explicit SSR absence');
+}
+{
+    const x = scenario({clips:null,latestReelMedia:{pk:'123'},ssrHasAnyClips:false});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'COMPLETE',
+        'latest_reel_media describes Stories and does not contradict SSR zero clips');
+}
+{
+    const x = scenario({clips:null,ssrHasAnyClips:false});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'COMPLETE',
+        'target SSR has_any_clips=false proves empty reels despite absent API clips count');
+    assert.equal(x.state.coverage.profileGrid, true);
+    assert.equal(x.state.coverage.reels, true);
+    assert.equal(x.nativeCalls, 0);
+    assert.ok(x.logs.some(l => l.msg.includes('source=public_ssr_has_any_clips_false')));
+}
+{
+    const x = scenario({clips:null,ssrClipsCount:0});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'COMPLETE');
+    assert.ok(x.logs.some(l => l.msg.includes('source=public_ssr_total_clips_count')));
+}
+{
+    const x = scenario({clips:null,ssrHasAnyClips:true});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'INCOMPLETE',
+        'SSR says clips exist, no tab cannot be assumed empty');
+    assert.equal(x.state.coverage.reels, false);
+}
+{
+    const x = scenario({clips:1,ssrHasAnyClips:false});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'INCOMPLETE',
+        'authenticated positive count overrules SSR zero flag');
+}
+{
+    const x = scenario({clips:null,ssrHasAnyClips:false,ssrConsistent:false});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'INCOMPLETE',
+        'conflicting SSR data cannot prove zero');
+}
+{
+    const x = scenario({clips:null,ssrHasAnyClips:false,noTab:false});
+    await x.run();
+    assert.equal(x.state.scanOutcome, 'INCOMPLETE',
+        'verified SSR absence never bypasses an available REELS tab');
 }
 {
     const x = scenario({clips:1});

@@ -22,14 +22,19 @@ function scenario({ hasLink = false, navOK = false } = {}) {
         userId: '45790055326',
         coverage: { reels: true },
         roots: { REEL: new Set() },
+        verifiedPassiveReelRootIds: new Set(),
+    };
+    const net = {
+        reelsByUserId: new Map(),
+        reelNativeAuditByUserId: new Map(),
     };
     const location = { pathname:'/jennnii97/' };
     const runner = new Function(
-        'state', 'location', 'window', 'log', 'status',
+        'state', 'net', 'location', 'window', 'log', 'status',
         'pathNorm', 'findAnchor', 'go', 'scanReelsNativeCompletion', 'updateStats',
         extract('scanReels') + '\nreturn scanReels;'
     )(
-        state, location, { scrollY: 0 },
+        state, net, location, { scrollY: 0 },
         (msg, level) => logs.push({ msg, level }),
         () => {},
         x => String(x).endsWith('/') ? String(x).slice(0, -1) : String(x),
@@ -50,10 +55,11 @@ function scenario({ hasLink = false, navOK = false } = {}) {
 const noTab = scenario({ hasLink: false });
 assert.equal(await noTab.runner(), false);
 assert.equal(noTab.counts.navigation, 0, 'no navigation attempt without link');
-assert.equal(noTab.counts.nativeCompletion, 0, 'no unsupported completion request');
+assert.equal(noTab.counts.nativeCompletion, 0, 'no unsupported native completion request');
 assert.equal(noTab.state.coverage.reels, false,
     'absence of a tab is not proof of zero reels');
-assert.ok(noTab.logs.some(x => x.msg.includes('REELS stays INCOMPLETE')));
+assert.ok(noTab.logs.some(x => x.msg.includes('No new REELS request')),
+    'feedback_required endpoint must not be called when native tab is absent');
 
 const failedClick = scenario({ hasLink: true, navOK: false });
 assert.equal(await failedClick.runner(), false);
@@ -93,7 +99,109 @@ const remaining = requiredCoverage().filter(([, key]) => key === 'reels');
 assert.deepEqual(remaining, [['REELS tab', 'reels']],
     'REELS must remain separately required for full archive completion');
 
+
+// A missing navigation tab is an operational SKIP for the exposed archive,
+// not fabricated proof that the user's complete Reels feed contains zero.
+{
+    const state={
+        userId:'45790055326',
+        profileInfo:{pk:'45790055326'},
+        coverage:{profileGrid:true,publicShadow:true,connectedHidden:true,
+            ownedHydration:true,reels:false,tagged:true},
+        reelsDiagnosis:{kind:'NOT_EXPOSED'},
+        roots:{REEL:new Set()},
+        shadow:{reelIds:new Set()},
+    };
+    const api=new Function('state','scanSelected','scanSelection','profileSurfaceOperationalSkip',
+        extract('reelsSurfaceSkipped')+
+        extract('requiredCoverage')+
+        extract('incompleteCoverage')+
+        '\nreturn {reelsSurfaceSkipped,incompleteCoverage};'
+    )(state,k=>['post','reel','tagged'].includes(k),
+        ()=>({post:true,reel:true,tagged:true}),()=>false);
+    assert.equal(api.reelsSurfaceSkipped(),true);
+    assert.ok(!api.incompleteCoverage().includes('REELS tab'),
+        'missing native tab must not block already-verified exposed surfaces');
+    assert.deepEqual(api.incompleteCoverage(),[]);
+
+    state.coverage.tagged=false;
+    assert.deepEqual(api.incompleteCoverage(),['TAGGED'],
+        'an actual TAGGED failure remains blocking even when Reels skipped');
+    state.coverage.tagged=true;
+    for(const [label,mutate,restore] of [
+        ['wrong profile identity',()=>{
+            state.profileInfo.pk='987654321';
+        },()=>{
+            state.profileInfo.pk='45790055326';
+        }],
+        ['observed reel',()=>state.roots.REEL.add('42'),
+            ()=>state.roots.REEL.clear()],
+        ['positive clips metadata / tab',()=>{state.reelsDiagnosis.kind='UNVERIFIED';},
+            ()=>{state.reelsDiagnosis.kind='NOT_EXPOSED';}],
+        ['unknown public profile',()=>{state.coverage.profileGrid=false;},
+            ()=>{state.coverage.profileGrid=true;}],
+        ['unresolved hidden evidence',()=>{state.coverage.connectedHidden=false;},
+            ()=>{state.coverage.connectedHidden=true;}],
+        ['hydration incomplete',()=>{state.coverage.ownedHydration=false;},
+            ()=>{state.coverage.ownedHydration=true;}],
+    ]) {
+        mutate();
+        assert.equal(api.reelsSurfaceSkipped(),false,label);
+        assert.ok(api.incompleteCoverage().includes('REELS tab'),label);
+        restore();
+    }
+}
+
+// Download authorization remains real, not just a cosmetic "complete" UI.
+// An exposed-only complete scan may download its verified inventory, but
+// any later missing guard, identity drift or queue mutation revokes it.
+{
+    const userId='45790055326';
+    const state={
+        userId,username:'jennnii97',
+        profileInfo:{pk:userId,is_private:false},
+        exclusive:{known:true,hasExclusiveFeedContent:false},
+        shadow:{profileId:userId,pageInfoEnded:true,reelIds:new Set()},
+        coverage:{profileGrid:true,publicShadow:true,connectedHidden:true,
+            ownedHydration:true,reels:false,tagged:true},
+        reelsDiagnosis:{kind:'NOT_EXPOSED'},
+        roots:{REEL:new Set()},
+        scanComplete:true,scanOutcome:'EXPOSED_COMPLETE',scanUserId:userId,
+        queue:new Map([['1',{id:'1',url:'https://example.test/1.jpg'}],
+            ['2',{id:'2',url:'https://example.test/2.jpg'}]]),
+        scanQueueSize:2,scanQueueFingerprint:'1,2',
+    };
+    const plan={post:true,reel:true,tagged:true};
+    const scanDownloadFingerprint=()=>[...state.queue.keys()].join(',');
+    const DOWNLOAD_MODE={COMPLETE:'complete'};
+    const auth=new Function('state','scanSelected','scanSelection','profileSurfaceOperationalSkip',
+        'scanDownloadFingerprint','DOWNLOAD_MODE','verifiedPartialDownloadIntegrity',
+        extract('reelsSurfaceSkipped')+
+        extract('requiredCoverage')+
+        extract('incompleteCoverage')+
+        extract('completedScanIntegrity')+
+        extract('authorizeDownloadScope')+
+        '\nreturn authorizeDownloadScope;'
+    )(state,k=>plan[k]===true,()=>plan,()=>false,scanDownloadFingerprint,
+        DOWNLOAD_MODE,()=>({ok:false,reason:'not expected'}));
+    const ready=auth('complete');
+    assert.equal(ready.ok,true,
+        'no-tab with 2 verified files unlocks the standard download batch');
+    assert.equal(ready.media.length,2);
+    state.profileInfo.pk='999';
+    assert.equal(auth('complete').ok,false,'cross-user metadata revokes exposed batch');
+    state.profileInfo.pk=userId;
+    state.reelsDiagnosis.kind='UNVERIFIED';
+    assert.equal(auth('complete').ok,false,'new positive Reel evidence revokes skip');
+    state.reelsDiagnosis.kind='NOT_EXPOSED';
+    state.queue.set('3',{id:'3',url:'https://example.test/3.jpg'});
+    assert.equal(auth('complete').ok,false,'changed queue revokes file authorization');
+}
 assert.ok(source.includes("'PolarisProfileReelsTabContentQuery'"));
 assert.ok(!source.includes('async function scanReelsFallback('));
 assert.ok(source.includes('=== SCAN STOPPED — INSTAGRAM API UNHEALTHY ==='));
-console.log('No-REELS-tab safe skip and completeness guard regression tests passed.');
+assert.ok(!source.includes('https://www.instagram.com/api/v1/clips/user/'),
+    'desktop userscript must not issue private-mobile clips requests');
+assert.ok(!source.includes('scanReelsAuthenticatedWithoutTab'),
+    'blocked fallback helper must not accidentally be reachable');
+console.log('No-tab operational skip, positive-evidence guard, no mobile POST and independent PROFILE coverage tests passed.');

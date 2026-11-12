@@ -190,6 +190,125 @@ reject(mkUnion,p=>{p.expected=26},'public_native_union_counter_mismatch');
 reject(mkUnion,p=>{p.shadowPageInfoEnd=false},'public_timeline_end_unproven');
 reject(mkUnion,p=>{p.hiddenCandidates=1},'connected_surfaces_not_equivalent');
 
+/*
+ * Regression from 2026-11-11 @petit._tigre read-only manifest and TXT:
+ * public=89, native=105, overlap=79, union=115, main=115/117;
+ * owned main=63 POST + 52 REEL; independent REELS=361 (309 off-grid).
+ * Synthetic IDs/categories below match these cardinalities only:
+ * they do NOT reproduce the actual private/public root-ID lists or
+ * establish what the two unidentified PROFILE posts might be.
+ */
+{
+    const publicIds = Array.from({length:89},(_,i)=>String(1000+i));
+    const nativeExtra = Array.from({length:26},(_,i)=>String(5000+i));
+    const nativeIds = [...publicIds.slice(0,79),...nativeExtra];
+    const publicPostIds = new Set(publicIds.slice(0,46));
+    const publicReelIds = new Set(publicIds.slice(46));
+    const ownedPosts = new Set([...publicPostIds,...nativeExtra.slice(0,17)]);
+    const mainReels = new Set([...publicReelIds,...nativeExtra.slice(17)]);
+    const independentReels = new Set([
+        ...mainReels,
+        ...Array.from({length:309},(_,i)=>String(8000+i)),
+    ]);
+    assert.equal(publicIds.length,89);
+    assert.equal(nativeIds.length,105);
+    assert.equal(new Set([...publicIds,...nativeIds]).size,115);
+    assert.equal(ownedPosts.size,63);
+    assert.equal(mainReels.size,52);
+    assert.equal(independentReels.size,361);
+    assert.equal(ownedPosts.size+independentReels.size,424);
+    const sample = {
+        ...mk(117),
+        expected:117,
+        publicRootIds:new Set(publicIds),
+        publicPostIds,publicReelIds,
+        nativeRootIds:new Set(nativeIds),
+        nativeContinuationPages:8,
+        nativePageInfoEnd:true,
+        nativeLastHasNextFalse:true,
+        ownedPostIds:ownedPosts,
+        ownedReelIds:independentReels,
+    };
+    const result=assess(sample);
+    assert.deepEqual(result,{
+        verified:false,
+        reason:'public_native_union_counter_mismatch',
+        missing:2,
+    }, 'two server-ended timelines and an independently completed 361-REEL tab must NOT become a 117/117 main-grid proof');
+    // 309 REELS observed outside main never increase the expected main union.
+    sample.ownedReelIds.add('999999');
+    assert.equal(assess(sample).reason,'public_native_union_counter_mismatch');
+    // Adding unverified native roots without reconciling their OWNED identity
+    // must fail before claiming completion.
+    sample.nativeRootIds.add('999998');
+    sample.nativeRootIds.add('999997');
+    assert.equal(assess(sample).reason,'authenticated_native_roots_not_reconciled');
+    // Only synthetic counterfactual: two genuinely verified extra main roots
+    // could satisfy the proof. Never infer these IDs from real manifest data.
+    sample.ownedPostIds.add('999998');
+    sample.ownedPostIds.add('999997');
+    const hypothetical=assess(sample);
+    assert.equal(hypothetical.verified,true);
+    assert.equal(hypothetical.reason,'public_native_union_cross_surface_proof');
+    assert.equal(hypothetical.unionCount,117);
+}
+
+/*
+ * Regression from 2026-11-12 @petit._tigre v1.5.102 real TXT+manifest:
+ * public=89, native=93, overlap=67 => verified union=115 of 117.
+ * Exactly 2 additional main POST roots were visible as DOM permalinks
+ * and resolved through per-root media-info; main snapshot=117.
+ * Those two roots have 3 and 6 child photos respectively (9 unledgered
+ * files). The observer's DOM candidates are NOT native pagination proof,
+ * regardless of the successful per-root media-info or 780 indexed files.
+ * Synthetic IDs here encode only the observed counts, never a fake
+ * assertion about the real Instagram content or downloaded files.
+ */
+{
+    const pub=Array.from({length:89},(_,i)=>String(11000+i));
+    const nativeExtra=Array.from({length:26},(_,i)=>String(22000+i));
+    const native=[...pub.slice(0,67),...nativeExtra];
+    const domOnly=['33001','33002'];
+    const pubPosts=new Set(pub.slice(0,46));
+    const pubReels=new Set(pub.slice(46));
+    const ownedPosts=new Set([...pubPosts,...nativeExtra.slice(0,17),...domOnly]);
+    const mainReels=new Set([...pubReels,...nativeExtra.slice(17)]);
+    const independentReels=new Set([
+        ...mainReels,...Array.from({length:309},(_,i)=>String(44000+i))
+    ]);
+    const authenticated=new Set([...pub,...native]);
+    const observedMain=new Set([...authenticated,...domOnly]);
+    assert.equal(pub.length,89);
+    assert.equal(native.length,93);
+    assert.equal(new Set(pub.filter(x=>native.includes(x))).size,67);
+    assert.equal(authenticated.size,115);
+    assert.equal(observedMain.size,117);
+    assert.equal(ownedPosts.size,65);
+    assert.equal(mainReels.size,52);
+    assert.equal(independentReels.size,361);
+    assert.equal(ownedPosts.size+independentReels.size,426);
+    assert.equal(3+6,9,'the two DOM-only carousels contribute nine children');
+    const p={
+        ...mk(117),
+        expected:117,
+        publicRootIds:new Set(pub),
+        publicPostIds:pubPosts, publicReelIds:pubReels,
+        nativeRootIds:new Set(native),
+        nativeContinuationPages:8,
+        nativePageInfoEnd:true,nativeLastHasNextFalse:true,
+        ownedPostIds:ownedPosts,ownedReelIds:independentReels,
+    };
+    assert.deepEqual(assess(p),{
+        verified:false,
+        reason:'public_native_union_counter_mismatch',
+        missing:2,
+    },'a 117/117 DOM-main snapshot and 426 owned roots must NOT override 115/117 public/native evidence');
+    // Even if DOM root IDs are known and their per-root fetch yielded 9
+    // downloadable files, this does not promote them into nativeRootIds.
+    assert.ok(domOnly.every(id=>!p.nativeRootIds.has(id) &&
+        !p.publicRootIds.has(id) && p.ownedPostIds.has(id)));
+}
+
 const bridge=extract('reconcileProfileGridCoverage');
 const profile=extract('scanMainGrid');
 const shadow=extract('scanPublicShadow');

@@ -75,10 +75,11 @@ assert.equal(proof.reason, 'public_connected_cross_surface_proof');
 assert.equal(x.state.coverage.reels, false,
     'the REELS surface must not be automatically marked complete');
 const incompleteFn = new Function(
-    'state', 'requiredCoverage',
+    'state', 'requiredCoverage', 'reelsSurfaceSkipped',
     extract('incompleteCoverage') + '\nreturn incompleteCoverage;'
 )(
-    x.state, () => [['PROFILE grid','profileGrid'], ['REELS tab','reels']]
+    x.state, () => [['PROFILE grid','profileGrid'], ['REELS tab','reels']],
+    () => false // This fixture has no verified no-tab operational skip.
 );
 x.state.coverage.profileGrid = proof.verified;
 assert.deepEqual(incompleteFn(), ['REELS tab'],

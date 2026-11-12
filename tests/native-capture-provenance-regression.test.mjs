@@ -127,6 +127,8 @@ const makeFetch = new Function(
     'rateLimitCircuitBreak','feedbackCircuitBreak','apiUnhealthyError',
     'summarizeJsonEndpointResponse','summarizeGraphQlErrors',
     'throwIfInstagramStop','sleep','rand',
+    extract('instagramAuthChallengeIn')+'\n'+
+    extract('unsafePrivateRestMethod')+'\n'+
     fetchText+'\nreturn fetchJson;'
 );
 const fetchJson = makeFetch(
@@ -140,6 +142,18 @@ const fetchJson = makeFetch(
 assert.deepEqual(await fetchJson('https://www.instagram.com/api/graphql'),{ok:true});
 assert.equal(realCalls,1);
 assert.equal(wrappedCalls,0,'Own request must not be mistaken as native');
+await assert.rejects(
+    fetchJson('https://www.instagram.com/api/v1/clips/user/',
+        {method:'POST'},'unsupported private REST write',3),
+    e=>e.code==='IG_UNSUPPORTED_TRANSPORT',
+    'native Web transport must enforce same private REST write guard as GM'
+);
+assert.equal(realCalls,1,'blocked private REST write must not dispatch/retry');
+assert.deepEqual(
+    await fetchJson('https://www.instagram.com/api/graphql',{method:'POST'}),
+    {ok:true}
+);
+assert.equal(realCalls,2,'supported Web GraphQL POST must still dispatch');
 
 const fallback = extract('scanProfileGraphQLFallback');
 assert.ok(fallback.includes('native_continuation_unavailable'));

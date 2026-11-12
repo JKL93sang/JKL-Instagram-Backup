@@ -355,10 +355,15 @@ assert.ok(
  * may prove PROFILE completion. The old stale-page-info OR must never return.
  */
 assert.ok(
-    source.includes(
-        'navigationEnded =\n                    fallback.ended ===\n                    true;'
+    extractFunction('scanMainGrid').replace(/\s+/g,'')
+        .includes('navigationEnded=fallback.ended===true;'),
+    'When permitted, only the actual fallback server-end proves completion'
+);
+assert.ok(
+    extractFunction('scanMainGrid').includes(
+        'if (profilePublicGapAvoidsSyntheticRelay())'
     ),
-    'canonical fallback is not authoritative in scanMainGrid'
+    'A verified PUBLIC gap must skip synthetic continuation before dispatch'
 );
 
 assert.ok(

@@ -1,6 +1,30 @@
 # JKL Instagram Backup
 
-## Stable v1.5.78 — PROFILE/REELS proofs and highlight archive layout
+## Stable v1.5.105 — real-browser-validated PROFILE completion, SOLO and safe archive indexing
+
+**Official installation / update:** [Install JKL Instagram Backup v1.5.105](https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js).
+
+The script retains the same Tampermonkey `@name` and `@namespace`. Its `@source`, `@updateURL` and `@downloadURL` all point to the **official `main` branch**, not an experimental branch. If you previously installed a TEST build, disable the TEST copy and keep **only one active JKL Instagram Backup userscript**. Check that the enabled script reports `1.5.105` and both update/download URLs contain `/main/`.
+
+### Main changes since stable v1.5.78
+
+- **PROFILE completion without fabricated pagination:** A public or native PROFILE timeline must independently establish its real server-end and account identity. When the authenticated main grid still has a small gap, only **individually verified, same-account, same-ID, same-shortcode, complete POST media-info responses** may supplement that gap. Missing/contradictory evidence keeps the scan `INCOMPLETE`; independent REELS never fill a main PROFILE gap. A partially virtualized DOM cannot invalidate otherwise proven PUBLIC/native roots.
+- **Verified SOLO on individual media:** Single POST, multi-photo carousel, accessible REEL and STORY downloads have been checked in real Firefox use. Per-media floating/panel actions and normal folder naming are kept. Age-gated or inaccessible content is **not** bypassed.
+- **Folder index vs successful download callback:** `GM_download.onload` is a *session receipt*, **not evidence that a file exists in the chosen folder**. `Files`, `IDs` and indexed-disk matches are rebuilt from the files actually selected through `SCAN LOCAL FOLDER`. The historical batch ledger and SOLO receipts have different scopes; SOLO does not append to the batch ledger.
+- **Expanded diagnostics and archive interface:** Scrollable UI, displayed log capacity 2,000 and exportable archive up to 50,000 entries, source evidence in the JSON manifest, useful scan and download progress. Distinct POSTS / REELS / HIDDEN / FAN CLUB / HIGHLIGHTS folders and media identity rules remain protected.
+- **Safer incomplete archives:** Partial download controls require exact evidence for each eligible media unit; a counter, a DOM link or the presence/absence of an independent REELS tab never authorizes an unsupported `COMPLETE`.
+
+### Real-world verification and remaining limitation
+
+**Verified in Firefox on 12 November 2026:** `@petit._tigre` PROFILE main 117/117, 115 roots from completed PUBLIC/native timelines plus two independently verified POST carousels, REELS 361, OWNED hydration 426/426, **789 media units**, all selected coverage guards true and `SCAN FINISHED — COMPLETE`. Both extra carousels were successfully saved with SOLO; the user reported a local folder-index total of 789. Full automated GitHub Actions regression suite also passed on the release branch.
+
+**Not yet separately browser-accepted:** the exact new UI `Session callbacks` behavior for a genuinely missing **batch `DOWNLOAD MISSING`** file. Synthetic tests pass, but this one count/index distinction still deserves an ordinary small real-batch check when useful new media appears. It does **not** warrant re-downloading an existing archive. Scan `COMPLETE` confirms the *available source inventory* under its configured guards, **not cryptographic integrity of local file bytes**.
+
+Detailed notes: [v1.5.105 stable release notes](docs/RELEASE_1_5_105.md).
+
+---
+
+## Previous stable v1.5.78 — PROFILE/REELS proofs and highlight archive layout
 
 **Official stable installation and automatic updates:** [Install JKL Instagram Backup v1.5.78](https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js).
 

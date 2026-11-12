@@ -179,6 +179,8 @@ const helpers =
     new Function(
         'state',
         'scanSelection',
+        'reelsSurfaceSkipped',
+        'profileSurfaceOperationalSkip',
         `${ownedIdsSource}
 ${ownedCountSource}
 ${membershipSource}
@@ -191,7 +193,9 @@ return {
 };`
     )(
         state,
-        scanSelection
+        scanSelection,
+        () => false,
+        () => false
     );
 
 /*

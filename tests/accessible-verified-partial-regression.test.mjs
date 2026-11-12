@@ -160,6 +160,80 @@ assert.equal(f.authorizeDownloadScope(MODE.SUBSCRIBER).ok, false);
 assert.equal(f.authorizeDownloadScope('unknown').ok, false);
 assert.ok(f.logs.some(x => x[0].includes('ACCESSIBLE PARTIAL READY')));
 
+// Authenticated, fully hydrated REELS may be saved as verified accessible
+// partial media when the unrelated main PROFILE pagination is incomplete.
+// Neither a mere root observation nor a foreign root grants a download.
+{
+    const x = fixture();
+    x.state.coverage.profileGrid = false;
+    x.state.coverage.reels = true;
+    x.state.coverage.ownedHydration = true;
+    x.state.roots.REEL.add('observed-reel-root');
+    const reel = item('hydrated-reel-file', 'REEL',
+        'OWNED_DEEP_HYDRATION', 'observed-reel-root');
+    x.state.queue.set(reel.id, reel);
+    assert.ok(x.verifiedAccessibleMedia().some(m => m.id === reel.id),
+        'verified completed REELS with authenticated media-info are accessible');
+    assert.ok(!x.verifiedAccessibleMedia().some(m => m.id === 'reel-unverified'),
+        'mere native listing root must not be promoted to archived file');
+    x.capturePartialDownloadGrants();
+    x.state.running = false;
+    assert.equal(x.verifiedPartialDownloadIntegrity(MODE.ACCESSIBLE).ok, true);
+    x.state.coverage.reels = false;
+    assert.equal(x.verifiedPartialDownloadIntegrity(MODE.ACCESSIBLE).ok, false,
+        'loss of verified native Reels completion invalidates frozen grant');
+}
+for (const [label, mutate] of [
+    ['unfinished REELS surface', x => { x.state.coverage.reels = false; }],
+    ['unfinished API hydration', x => { x.state.coverage.ownedHydration = false; }],
+    ['wrong root', x => { x.state.roots.REEL.clear(); }],
+    ['unselected REELS', x => { x.state.scanPlan = { ...x.state.scanPlan, reel:false }; }],
+    ['not from media-info', x => {
+        x.state.queue.get('hydrated-reel-file').sources.delete('OWNED_DEEP_HYDRATION');
+    }],
+]) {
+    const x = fixture();
+    x.state.coverage.reels = true;
+    x.state.roots.REEL.add('observed-reel-root');
+    x.state.queue.set('hydrated-reel-file', item('hydrated-reel-file',
+        'REEL', 'OWNED_DEEP_HYDRATION', 'observed-reel-root'));
+    mutate(x);
+    assert.ok(!x.verifiedAccessibleMedia().some(m => m.id === 'hydrated-reel-file'),
+        label);
+}
+
+// Tagged media is eligible only when the selected Web TAGGED collection
+// is server-ended AND all returned units were archived with source provenance.
+{
+    const x = fixture();
+    x.state.scanPlan = { ...x.state.scanPlan, tagged:true };
+    x.state.coverage.tagged = true;
+    x.state.roots.TAGGED.add('verified-tag-root');
+    x.state.queue.set('tagged-verified', item('tagged-verified',
+        'TAGGED','TAGGED','verified-tag-root'));
+    assert.ok(x.verifiedAccessibleMedia().some(m => m.id === 'tagged-verified'));
+    assert.ok(!x.verifiedAccessibleMedia().some(m => m.id === 'tagged-unverified'));
+    x.capturePartialDownloadGrants();
+    const count = x.state.partialDownloadGrants.accessible.mediaCount;
+    assert.equal(count, 6,
+        'one POST, two highlights, one STORY, one AVATAR and one TAGGED');
+    x.state.running = false;
+    assert.equal(x.verifiedPartialDownloadIntegrity(MODE.ACCESSIBLE).ok, true);
+    x.state.roots.TAGGED.clear();
+    assert.equal(x.verifiedPartialDownloadIntegrity(MODE.ACCESSIBLE).ok, false,
+        'tampering tagged provenance after scan invalidates immutable grant');
+}
+{
+    const x = fixture();
+    x.state.scanPlan = { ...x.state.scanPlan, tagged:true };
+    x.state.coverage.tagged = false;
+    x.state.roots.TAGGED.add('verified-tag-root');
+    x.state.queue.set('tagged-verified', item('tagged-verified',
+        'TAGGED','TAGGED','verified-tag-root'));
+    assert.ok(!x.verifiedAccessibleMedia().some(m => m.id === 'tagged-verified'),
+        'a TAGGED GraphQL page with missing files must not grant partial authority');
+}
+
 function excludedWhen(label, mutate, id) {
     const x = fixture(); mutate(x);
     assert.ok(!x.verifiedAccessibleMedia().some(m => m.id === id), label);

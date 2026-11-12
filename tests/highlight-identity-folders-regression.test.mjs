@@ -24,6 +24,7 @@ const state = {
     ledgerDirty: 0, queue: new Map(),
     diskCanonical: new Set(), diskCanonicalMeta: new Map(),
     diskLocations: new Map(), diskPaths: new Map(), sessionPaths: new Map(),
+    sessionCategories: new Map(),
     diskHidden: new Set(), diskStoryHighlight: new Set(), legacy: new Map(),
     settings: { force: false }, diskActive: false,
 };
@@ -35,7 +36,8 @@ const helpers = [
     'highlightFallbackFolderTitle', 'mediaArchiveCategory',
     'archiveDownloadPath', 'highlightArchivePathIdentity',
     'matchesHighlightArchivePath', 'reconcileHighlightTitleHistory',
-    'reportHighlightFolderRenames', 'scanHighlights', 'indexFolder', 'existingReason',
+    'reportHighlightFolderRenames', 'discoveredMediaResolution',
+    'scanHighlights', 'indexFolder', 'existingReason',
     'downloadAttempt',
 ].map(extract).join('\n');
 
@@ -43,7 +45,7 @@ const testApi = new Function(
     'state', 'APP', 'getHighlightTrayWeb', 'highlightTrayConn',
     'edgeNode', 'setScanProgressPhase', 'log', 'status',
     'fetchWebStoryReel', 'throwIfInstagramStop', 'addMedia',
-    'updateStats', 'sleep', 'rand',
+    'normalizePk', 'updateStats', 'sleep', 'rand',
     'filename', 'canonicalShortcode', 'legacyMatch', 'GM_download',
     'loadDb', 'flushLedger',
     helpers + '\nreturn { highlightFolderName, buildHighlightCatalog, ' +
@@ -88,12 +90,13 @@ const testApi = new Function(
         const m = {
             id, type, highlightId: context.highlightId,
             highlightIds: new Set([context.highlightId]),
-            sources: new Set([tag]),
+            sources: new Set([tag]), rootIds: new Set([String(id)]),
             filename: username + ' - HIGHLIGHT - 2026_11_08 - ' + id + '.jpg',
             url: 'https://example.test/' + id,
         };
         state.queue.set(id, m);
     },
+    item => String(item?.pk || item?.id || '').split('_')[0],
     () => {}, async () => {}, () => 0,
     m => m.filename,
     x => x, () => false,
@@ -156,6 +159,7 @@ assert.equal(testApi.existingReason(first), null,
     'a file in the obsolete shared folder must be eligible for repair');
 // Once the repair has succeeded, avoid another transfer in the same session
 // although the last physical directory scan still saw the obsolete path.
+state.sessionCategories.set(first.id, new Set(['HIGHLIGHTS']));
 state.sessionPaths.set(first.id, new Set([pathFirst]));
 assert.equal(testApi.existingReason(first), 'SESSION',
     'a successfully repaired highlight must not be downloaded twice');

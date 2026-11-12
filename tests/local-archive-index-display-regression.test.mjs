@@ -14,6 +14,7 @@ const state = {
     diskLocations:new Map(),
     diskPaths:new Map(),
     sessionPaths:new Map(),
+    sessionCategories:new Map(),
     highlightRenameNotices: new Set(),
     diskHidden:new Set(),
     diskStoryHighlight:new Set(),
@@ -67,4 +68,9 @@ for(const key of ['selectedFiles','canonicalFiles','legacyFiles','unrecognizedFi
 }
 assert.ok(source.includes('Recognized files <b>'));
 assert.ok(source.includes('Unrecognized <b>'));
+assert.ok(source.includes('Indexed matches <b>${indexedMatched}</b>'),
+    'existing physical archive matches must be visible separately');
+assert.ok(source.includes('Session callbacks <b>${sessionMatched}</b>'),
+    'accepted downloads must not masquerade as folder-indexed media');
+assert.ok(source.includes('Legacy matches <b>${legacyMatched}</b>'));
 console.log('Local archive indexing UX: 5 files, 2 IDs, HIDDEN/legacy/unknown passed.');

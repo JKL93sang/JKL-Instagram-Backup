@@ -42,6 +42,7 @@ function fixture() {
         'pathNorm', 'findAnchor', 'log',
         extract('verifiedPublicGridPrimaryProof') +
         extract('explicitEmptyReelsProof') +
+        extract('classifyReelsEvidence') +
         extract('reconcileEmptyReelsCoverage') +
         '\nreturn { verifiedPublicGridPrimaryProof, ' +
         'explicitEmptyReelsProof, reconcileEmptyReelsCoverage };'
@@ -72,7 +73,7 @@ delete missingCount.state.profileInfo.total_clips_count;
 assert.equal(missingCount.explicitEmptyReelsProof().verified, false);
 missingCount.reconcileEmptyReelsCoverage();
 assert.equal(missingCount.state.coverage.reels, false);
-assert.ok(missingCount.logs.some(x => x[0].includes('Keeping REELS INCOMPLETE')));
+assert.ok(missingCount.logs.some(x => x[0].includes('No speculative REELS requests')));
 
 function reject(label, mutate) {
     const x = fixture();
@@ -87,7 +88,12 @@ reject('unverified string zero format', x => { x.state.profileInfo.total_clips_c
 reject('negative count', x => { x.state.profileInfo.total_clips_count = -1; });
 reject('profile has clips despite zero count', x => { x.state.profileInfo.has_clips = true; });
 reject('profile has any clips despite zero count', x => { x.state.profileInfo.has_any_clips = true; });
-reject('profile exposes latest reel despite zero count', x => { x.state.profileInfo.latest_reel_media = { pk: '123' }; });
+{
+    const x = fixture();
+    x.state.profileInfo.latest_reel_media = 1792002021;
+    assert.equal(x.explicitEmptyReelsProof().verified, true,
+        'latest_reel_media is a Story timestamp, not a short-video Reel');
+}
 reject('other profile ID', x => { x.state.profileInfo.pk = 'other'; });
 reject('unknown profile ID', x => { x.state.profileInfo.pk = ''; });
 reject('public server pagination unknown', x => { x.state.shadow.pageInfoEnded = false; });

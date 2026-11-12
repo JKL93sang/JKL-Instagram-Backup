@@ -23,6 +23,8 @@ function harness() {
         reelNativeAuditByUserId:new Map(),
         reelNativeInitialByUserId:new Map(),
         reelNativeContinuationByUserId:new Map(),
+        reelCaptureSeenAtByUserId:new Map(),
+        reelBootstrapConsumedByUserId:new Set(),
     };
     const calls = [];
     const events = [];
