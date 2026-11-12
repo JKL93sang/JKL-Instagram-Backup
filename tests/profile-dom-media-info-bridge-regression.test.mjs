@@ -126,6 +126,30 @@ assert.deepEqual(result,{
     missing:0,publicCount:89,nativeCount:93,
     overlap:67,unionCount:117,domApiSupplementCount:2,
 });
+// Real v1.5.103 Firefox export had only 108 DOM permalinks while
+// main=117: the other 9 roots were *already* in independently completed
+// PUBLIC/native timelines. DOM virtualization cannot invalidate those
+// roots. Both actual missing parents (3+6 children) WERE in the DOM.
+{
+    const x=scenario();
+    const nineProvenPublic=[...x.strict.publicRootIds].slice(0,9);
+    nineProvenPublic.forEach(id=>x.domObservedRootIds.delete(id));
+    assert.equal(x.domObservedRootIds.size,108);
+    assert.equal(x.mainRootIds.size,117);
+    assert.ok(domRows.every(({id})=>x.domObservedRootIds.has(id)));
+    const {base,result}=resultFor(x);
+    assert.equal(base.reason,'public_native_union_counter_mismatch');
+    assert.equal(result.verified,true,
+        '108 DOM observed plus 9 PUBLIC/native proven omissions must verify 117 main');
+    assert.equal(result.domApiSupplementCount,2);
+    // A missing identity is NOT interchangeable with a PUBLIC/native one:
+    // suppressing even one of the 2 DOM-only roots must still fail.
+    x.domObservedRootIds.delete(domRows[0].id);
+    assert.equal(resultFor(x).result.verified,false);
+    // An untrusted extra DOM identity never passes even when size matches.
+    x.domObservedRootIds.add('9999999999');
+    assert.equal(resultFor(x).result.verified,false);
+}
 const mutated=[
     ['only one individually verified DOM root',x=>x.verifiedDomApiRootIds.delete(domRows[0].id)],
     ['candidate missing from main',x=>x.mainRootIds.delete(domRows[0].id)],
@@ -269,4 +293,4 @@ for(const [name,mutate] of [
         domRows.map(x=>x.id));
 }
 
-console.log('v1.5.103 PROFILE strict DOM media-info bridge / source-end + 17 fail-closed cases: PASS');
+console.log('v1.5.104 virtualized 108-DOM/117-main strict POST bridge and fail-closed tests: PASS');
