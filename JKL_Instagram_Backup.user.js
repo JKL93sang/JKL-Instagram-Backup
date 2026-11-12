@@ -7278,7 +7278,8 @@
                             `${sourceHint} ${index + 1}/${list.length}`
                         );
 
-                        const strictDom = sourceHint === 'PROFILE_GRID_DOM';
+                        const strictDom = sourceHint === 'PROFILE_GRID_DOM' &&
+                            info.route === 'p';
                         const domApiProven = strictDom &&
                             verifiedTargetScopedProfileDomMediaInfo(
                                 info, item, state.userId
