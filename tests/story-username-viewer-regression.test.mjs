@@ -202,5 +202,5 @@ assert.equal(finalStatuses.at(-1)?.[1],'ok');
 
 assert.match(src,/resolveStoryViewerItem\(resolved\)/,
     'button click must resolve the viewer before invoking normal media-info downloader');
-assert.equal(src.match(/@version\s+([0-9.]+)/)?.[1],'1.5.114');
-console.log('v1.5.114: actual username-only Firefox URL, overlay, single/multiple Story click-time verification and safe refusal — PASS');
+assert.equal(src.match(/@version\s+([0-9.]+)/)?.[1],'1.5.115');
+console.log('v1.5.115: actual username-only Firefox URL, overlay, single/multiple Story click-time verification and safe refusal — PASS');
