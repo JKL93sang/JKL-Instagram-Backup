@@ -228,6 +228,11 @@ const storyPermalinkSource =
         'storyPermalinkInfo'
     );
 
+const storyViewerRouteSource =
+    extractFunction(
+        'storyViewerRouteInfo'
+    );
+
 const targetUrlSource =
     extractFunction(
         'singleDownloadTargetFromUrl'
@@ -261,6 +266,7 @@ const helpers =
 ${shortcodeIdSource}
 ${mediaPermalinkSource}
 ${storyPermalinkSource}
+${storyViewerRouteSource}
 ${targetUrlSource}
 return {
     mediaPermalinkInfo,
