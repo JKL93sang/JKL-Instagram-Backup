@@ -137,5 +137,5 @@ assert.match(source,/ui\.singleCurrent\.onclick\s*=\s*handlePanelSingleDownload/
 assert.match(source,/updateSingleDownloadPanel\(\);/);
 assert.match(source,/singleDownloadState\.lastLocation\s*=\s*location\.href/);
 assert.match(source,/location\.href !== singleDownloadState\.lastLocation/);
-assert.equal(source.match(/@version\s+([0-9.]+)/)?.[1],'1.5.112');
+assert.equal(source.match(/@version\s+([0-9.]+)/)?.[1],'1.5.113');
 console.log('Real panel solo click-to-media-info-to-download and age-gate overlay fallback, no transfer during scan, URL SPA updates — PASS.');
