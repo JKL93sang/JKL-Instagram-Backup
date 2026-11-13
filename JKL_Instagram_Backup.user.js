@@ -15170,6 +15170,21 @@
                 state.coverage?.publicShadow === true,
             nativeServerEnded:nativePage?.has_next_page === false &&
                 nativeAudit?.lastHasNext === 'false',
+            nativeRequestProvenance:{
+                observedInitial:Number(nativeAudit?.initial || 0),
+                observedContinuations:Number(nativeAudit?.continuation || 0),
+                firstPageContractRecorded:
+                    net.gridNativeInitialByUser?.has(key) === true,
+                continuationContractRecorded:
+                    net.gridNativeContinuationByUser?.has(key) === true,
+                lastHasNext:String(nativeAudit?.lastHasNext || 'unknown'),
+                // A terminal page reached without its initial contract
+                // is NOT proof that the beginning of the list was captured.
+                observedEndWithoutFirstPageContract:
+                    nativePage?.has_next_page === false &&
+                    !(Number(nativeAudit?.initial || 0) > 0 &&
+                      net.gridNativeInitialByUser?.has(key) === true),
+            },
             counts:{
                 public:pub.size,
                 native:nat.size,
