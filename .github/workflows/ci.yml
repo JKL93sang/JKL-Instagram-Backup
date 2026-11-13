@@ -87,6 +87,9 @@ jobs:
       - name: TAGGED authenticated accessible-carousel counter anomaly regression tests
         run: node tests/tagged-accessible-carousel-count-v1-5-110.test.mjs
 
+      - name: TAGGED prior verified PROFILE archive path and no false coverage
+        run: node tests/tagged-historical-archive-continuity-v1-5-111.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
