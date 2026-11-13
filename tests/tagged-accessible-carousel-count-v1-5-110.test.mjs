@@ -136,12 +136,18 @@ async function runTagged(left,right) {
         'TAGGED accessible carousel count hint mismatch: root=500, declared=4')));
     assert.ok(r.logs.some(s=>s.includes('count_hint_mismatches=1')));
     assert.ok(r.logs.some(s=>s.includes('resolved=1, unresolved=0')));
+    assert.deepEqual(r.state.taggedCountHintMismatches,[{
+        rootId:'500',shortcode:'CxExample',declared:4,accessible:3,
+        sameAuthenticatedChildren:true,historicalCompletenessUnknown:true,
+    }],'manifest must retain a compact, explainable anomaly record');
 }
 {
     const r=await runTagged(listing,sidecar(kids,4,{
         carousel_media_ids:['501','502','503','504']}));
     assert.equal(r.ok,false,'explicit fourth child inventory must block completion');
     assert.ok(r.logs.some(s=>s.includes('unresolved=1')));
+    assert.deepEqual(r.state.taggedCountHintMismatches,[],
+        'rejected count hints are not classified as verified accessible');
 }
 {
     // Missing from BOTH authenticated sources. A URL present in the
@@ -162,4 +168,7 @@ async function runTagged(left,right) {
     ],3,{user:{pk:'999'}}));
     assert.equal(r.ok,false,'different media owner may not use count override');
 }
+assert.ok(source.includes('taggedCountHintMismatches:'), 'manifest includes count warnings');
+assert.ok(source.includes('<span>TAGGED count hints</span>'),
+    'user sees count mismatch even when TAGGED accessible coverage passes');
 console.log('TAGGED authenticated accessible count hint reconciliation: PASS');
