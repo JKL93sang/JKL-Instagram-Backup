@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.110
-// @description  TEST v1.5.110: strict TAGGED accessible-carousel proof while retaining Story SOLO.
+// @version      1.5.111
+// @description  TEST v1.5.111: TAGGED count-proof diagnostics and historical archive-path continuity.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/tagged-accessible-carousel-proof-v1.5.110/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-accessible-carousel-proof-v1.5.110/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-accessible-carousel-proof-v1.5.110/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/tagged-evidence-and-archive-v1.5.111/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-evidence-and-archive-v1.5.111/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-evidence-and-archive-v1.5.111/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.110', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.111', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
@@ -6855,6 +6855,14 @@
                     <span>TAGGED count hints</span>
                     <b class="${state.taggedCountHintMismatches?.length ? 'warn' : ''}">${state.taggedCountHintMismatches?.length || 0}</b>
                 </div>
+                <div class="diag-row">
+                    <span>TAGGED rejected hints</span>
+                    <b class="${state.taggedCountHintFailures?.length ? 'warn' : ''}">${state.taggedCountHintFailures?.length || 0}</b>
+                </div>
+                <div class="diag-row">
+                    <span>TAGGED legacy POST paths</span>
+                    <b>${state.taggedHistoricalPostRestored || 0}</b>
+                </div>
 
                 <div class="diag-row">
                     <span>HIGHLIGHT files</span>
@@ -10493,12 +10501,18 @@
             ? x : normalizePk(x);
         const ids = arr => arr.map(idOf);
         const ai = ids(aa), bi = ids(bb);
+        const aSet = new Set(ai), bSet = new Set(bi);
         if (ai.some(id => !/^\d+$/.test(id)) ||
-            new Set(ai).size !== ai.length ||
+            bi.some(id => !/^\d+$/.test(id)) ||
+            aSet.size !== ai.length || bSet.size !== bi.length ||
             ai.length !== bi.length ||
-            ai.some((id,i) => id !== bi[i])) {
+            ai.some(id => !bSet.has(id))) {
             return fail('child_identity_mismatch');
         }
+        // API representations may legitimately return the same genuine
+        // children in a different order. Verify types by ID, not position.
+        const sameOrder = ai.every((id,i) => id === bi[i]);
+        const bById = new Map(bb.map(child => [idOf(child), child]));
         // Some Instagram response shapes expose an independent full ID
         // inventory. It must not contradict the displayed child arrays.
         for (const x of [a,b]) {
@@ -10506,7 +10520,8 @@
                 x.carousel_media_ids.length) {
                 const extraIds = ids(x.carousel_media_ids);
                 if (extraIds.length !== ai.length ||
-                    extraIds.some((id,i) => id !== ai[i])) {
+                    new Set(extraIds).size !== ai.length ||
+                    extraIds.some(id => !aSet.has(id))) {
                     return fail('independent_child_ids_conflict');
                 }
             }
@@ -10515,7 +10530,8 @@
                 const edgeIds = ids(x.edge_sidecar_to_children.edges
                     .map(e => e?.node));
                 if (edgeIds.length !== ai.length ||
-                    edgeIds.some((id,i) => id !== ai[i])) {
+                    new Set(edgeIds).size !== ai.length ||
+                    edgeIds.some(id => !aSet.has(id))) {
                     return fail('sidecar_children_conflict');
                 }
             }
@@ -10531,7 +10547,7 @@
             return fail('shortcode_mismatch');
         }
         for (let i = 0; i < aa.length; i++) {
-            const c = aa[i], d = bb[i];
+            const c = aa[i], d = bById.get(ai[i]);
             if ((c?.carousel_parent_id && idOf(c.carousel_parent_id) !== parent) ||
                 (d?.carousel_parent_id && idOf(d.carousel_parent_id) !== parent)) {
                 return fail('child_parent_mismatch');
@@ -10547,7 +10563,52 @@
             }
         }
         return {ok:true, reason:'verified_accessible_count_hint_mismatch',
-            rootId:parent, declared:count, accessible:ai.length};
+            rootId:parent, declared:count, accessible:ai.length, sameOrder};
+    }
+
+
+    // Preserve archive filenames when a currently TAGGED-only unit had a
+    // previously verified native PROFILE POST identity. This is historical
+    // folder continuity only: do NOT add PROFILE roots or fake live proof.
+    function restoreHistoricalTaggedPostArchive(root) {
+        if (!state.userId) return 0;
+        const prior = loadDb()?.profiles?.[state.userId]?.media || {};
+        const items = Array.isArray(root?.carousel_media) &&
+            root.carousel_media.length
+                ? root.carousel_media
+                : (root?.edge_sidecar_to_children?.edges || [])
+                    .map(e => e?.node).filter(Boolean);
+        const units = items.length ? items : [root];
+        let restored = 0;
+        for (const child of units) {
+            const id = normalizePk(child);
+            const rec = state.queue.get(id);
+            const previous = prior[id];
+            if (!rec || rec.type !== 'TAGGED' ||
+                !(rec.sources instanceof Set) || !rec.sources.has('TAGGED') ||
+                previous?.type !== 'POST' ||
+                !Array.isArray(previous.sources) ||
+                !previous.sources.includes('PROFILE_GRID_NATIVE') ||
+                !Number.isSafeInteger(Number(previous.timestamp)) ||
+                Number(previous.timestamp) <= 0 ||
+                !['jpg','mp4'].includes(String(rec.ext || '').toLowerCase()) ||
+                !String(previous.shortcode || '') ||
+                !String(rec.shortcode || '') ||
+                canonicalShortcode(previous.shortcode) !==
+                    canonicalShortcode(rec.shortcode)) continue;
+            const timestamp = Number(previous.timestamp);
+            const expectedFilename = filename({
+                ...rec,type:'POST',timestamp
+            });
+            if (String(previous.filename || '') !== expectedFilename) continue;
+
+            rec.type = 'POST';
+            rec.timestamp = timestamp;
+            rec.filename = expectedFilename;
+            rec.historicalPostArchiveContinuity = true;
+            restored++;
+        }
+        return restored;
     }
 
     // A server pagination end proves the LIST ended, not that each item
@@ -10619,6 +10680,8 @@
     async function scanTaggedGraphQL() {
         state.coverage.tagged = false;
         state.taggedCountHintMismatches = [];
+        state.taggedCountHintFailures = [];
+        state.taggedHistoricalPostRestored = 0;
 
         const initialDoc =
             net.taggedDocInitial ||
@@ -10792,6 +10855,16 @@
                 const rootId = normalizePk(media);
                 if (rootId) state.roots.TAGGED.add(rootId);
                 addMedia(media, 'TAGGED', 'TAGGED');
+                const historicalRestored = restoreHistoricalTaggedPostArchive(media);
+                if (historicalRestored) {
+                    state.taggedHistoricalPostRestored += historicalRestored;
+                    log(
+                        'TAGGED historical archive category preserved: root=' +
+                        rootId + ', files=' + historicalRestored +
+                        ' (previous native PROFILE POST evidence only; ' +
+                        'current PROFILE coverage unchanged).'
+                    );
+                }
                 let proof = discoveredMediaResolution(media, 'TAGGED');
                 let recovery = 'not_needed';
 
@@ -10819,12 +10892,93 @@
                             proof = {ok:false, reason:'media_info_identity_mismatch'};
                         } else {
                             addMedia(detailed, 'TAGGED', 'TAGGED');
+                            state.taggedHistoricalPostRestored +=
+                                restoreHistoricalTaggedPostArchive(detailed);
                             const countHintProof =
                                 taggedAccessibleCarouselProof(media, detailed);
                             const detailedProof = discoveredMediaResolution(
                                 detailed, 'TAGGED',
                                 {verifiedAccessibleCarousel: countHintProof.ok}
                             );
+                            if (!countHintProof.ok &&
+                                Number(media?.carousel_media_count || 0) > 1 &&
+                                proof.reason === 'carousel_item_count_gap') {
+                                const childrenOf = x =>
+                                    Array.isArray(x?.carousel_media) &&
+                                    x.carousel_media.length
+                                        ? x.carousel_media
+                                        : (x?.edge_sidecar_to_children?.edges || [])
+                                            .map(e => e?.node).filter(Boolean);
+                                const left = childrenOf(media);
+                                const right = childrenOf(detailed);
+                                const leftIds = left.map(normalizePk);
+                                const rightIds = right.map(normalizePk);
+                                const sameSet = leftIds.length === rightIds.length &&
+                                    new Set(leftIds).size === leftIds.length &&
+                                    new Set(rightIds).size === rightIds.length &&
+                                    leftIds.every(id => rightIds.includes(id));
+                                const mismatch = {
+                                    rootId,
+                                    reason: countHintProof.reason,
+                                    claimed: Number(media.carousel_media_count),
+                                    detailClaim:
+                                        detailed.carousel_media_count == null
+                                            ? null : Number(detailed.carousel_media_count),
+                                    listChildren: left.length,
+                                    detailChildren: right.length,
+                                    sameChildIds: sameSet,
+                                    sameChildOrder: leftIds.length === rightIds.length &&
+                                        leftIds.every((id,i) => id === rightIds[i]),
+                                    listMediaType: Number(media?.media_type || 0),
+                                    infoMediaType: Number(detailed?.media_type || 0),
+                                    listOwnerPresent: !!normalizePk(media?.user),
+                                    infoOwnerPresent: !!normalizePk(detailed?.user),
+                                    ownerMatch: !!normalizePk(media?.user) &&
+                                        normalizePk(media?.user) ===
+                                            normalizePk(detailed?.user),
+                                    sameShortcode: !!String(media?.code ||
+                                        media?.shortcode || '') &&
+                                        String(media?.code || media?.shortcode) ===
+                                            String(detailed?.code ||
+                                                detailed?.shortcode || ''),
+                                    listIndependentIds:
+                                        Array.isArray(media?.carousel_media_ids)
+                                            ? media.carousel_media_ids.length : null,
+                                    detailIndependentIds:
+                                        Array.isArray(detailed?.carousel_media_ids)
+                                            ? detailed.carousel_media_ids.length : null,
+                                    listSidecarNext:
+                                        media?.edge_sidecar_to_children?.page_info
+                                            ?.has_next_page === true,
+                                    detailSidecarNext:
+                                        detailed?.edge_sidecar_to_children?.page_info
+                                            ?.has_next_page === true,
+                                    listPending:
+                                        Number(media?.carousel_media_pending_post_count || 0),
+                                    detailPending:
+                                        Number(detailed?.carousel_media_pending_post_count || 0),
+                                };
+                                state.taggedCountHintFailures.push(mismatch);
+                                log(
+                                    'TAGGED count hint proof rejected: root=' +
+                                    rootId + ', reason=' + mismatch.reason +
+                                    ', list=' + mismatch.listChildren +
+                                    ', info=' + mismatch.detailChildren +
+                                    ', same_ids=' + mismatch.sameChildIds +
+                                    ', same_order=' + mismatch.sameChildOrder +
+                                    ', claims=' + mismatch.claimed +
+                                    '/' + (mismatch.detailClaim ?? '-') +
+                                    ', owner_match=' + mismatch.ownerMatch +
+                                    ', code_match=' + mismatch.sameShortcode +
+                                    ', types=' + mismatch.listMediaType +
+                                    '/' + mismatch.infoMediaType +
+                                    ', id_lists=' + (mismatch.listIndependentIds ?? '-') +
+                                    '/' + (mismatch.detailIndependentIds ?? '-') +
+                                    ', pending=' + mismatch.listPending +
+                                    '/' + mismatch.detailPending + '.',
+                                    'warn'
+                                );
+                            }
                             // A matching full authenticated child-ID inventory
                             // is proof only of CURRENTLY ACCESSIBLE media. A
                             // larger numeric hint must stay visible in logs;
@@ -10853,6 +11007,7 @@
                                             declared: countHintProof.declared,
                                             accessible: countHintProof.accessible,
                                             sameAuthenticatedChildren: true,
+                                            sameOrder: countHintProof.sameOrder,
                                             historicalCompletenessUnknown: true,
                                         });
                                         log(
@@ -10973,6 +11128,8 @@
             `resolved=${resolvedRoots}, unresolved=${unresolvedRoots}, ` +
             `hydration=${hydratedRoots}/${hydrationAttempts}, ` +
             `count_hint_mismatches=${verifiedCountHintMismatches}, ` +
+            `count_hint_rejected=${state.taggedCountHintFailures.length}, ` +
+            `historical_post_paths=${state.taggedHistoricalPostRestored}, ` +
             `end=${endReason}, ended=${state.coverage.tagged}, ` +
             `reasons=${[...unresolvedReasons].map(([key, count]) =>
                 key + ':' + count).join(',') || '-'}. ` +
@@ -14914,6 +15071,10 @@
                 },
                 taggedCountHintMismatches:
                     (state.taggedCountHintMismatches || []).map(x => ({...x})),
+                taggedCountHintFailures:
+                    (state.taggedCountHintFailures || []).map(x => ({...x})),
+                taggedHistoricalPostRestored:
+                    Number(state.taggedHistoricalPostRestored || 0),
                 hiddenArchive: {
                     media: hiddenMediaCount(),
                     filesOnDisk: state.diskHidden.size,
