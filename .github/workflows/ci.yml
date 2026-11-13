@@ -102,6 +102,9 @@ jobs:
       - name: Native PROFILE verified server end with count gap must never trigger replay
         run: node tests/profile-native-terminal-no-replay-v1-5-117.test.mjs
 
+      - name: Strict native and authenticated deep carousel child-only proof (no false full completion)
+        run: node tests/profile-carousel-verified-children-v1-5-118.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
