@@ -1,10 +1,24 @@
 # JKL Instagram Backup
 
-## Stable v1.5.105 — real-browser-validated PROFILE completion, SOLO and safe archive indexing
+## Stable v1.5.109 — Firefox-verified Story SOLO and safe partial archives
 
-**Official installation / update:** [Install JKL Instagram Backup v1.5.105](https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js).
+**Official stable installation:** [Install JKL Instagram Backup v1.5.109](https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js).
 
-The script retains the same Tampermonkey `@name` and `@namespace`. Its `@source`, `@updateURL` and `@downloadURL` all point to the **official `main` branch**, not an experimental branch. If you previously installed a TEST build, disable the TEST copy and keep **only one active JKL Instagram Backup userscript**. Check that the enabled script reports `1.5.105` and both update/download URLs contain `/main/`.
+- **Story SOLO:** Instagram may open the real Story viewer as `/stories/<username>/`, without a numeric media ID. The floating download button now appears there; on click, the script retrieves authenticated same-account Story data and identifies the actual visible item. It refuses ambiguous choices or a changed viewer rather than downloading a guessed Story.
+- **Real Firefox acceptance:** the user verified the floating button and successful one-click Story download on v1.5.107. Stable v1.5.109 ships the same verified Story logic with the official `main` update/download URLs. Full [Userscript CI #445](https://github.com/JKL93sang/JKL-Instagram-Backup/actions/runs/43357865982) passed.
+- **Known limitations remain visible:** a private account may have a main PROFILE proof gap (example: 110/122) and a TAGGED carousel with one unavailable child (76/77). Those scans remain `INCOMPLETE`. No source identities, media IDs or file presence are invented; historical ledger receipts do not prove physical file existence.
+- **No failed experiments:** the bounded PROFILE viewport sweep and carousel-fragment union tested in v1.5.108 produced no new media and were **not merged into stable**. See [evidence issue #22](https://github.com/JKL93sang/JKL-Instagram-Backup/issues/22).
+- **Updates and duplicates:** both `@updateURL` and `@downloadURL` point to `main`. Disable any older TEST-branch copy and keep **only one JKL Instagram Backup userscript enabled**. Do not reset the local media database or delete folders when upgrading.
+
+[Full v1.5.109 release notes](docs/RELEASE_V1_5_109.md) · [Merged release PR #21](https://github.com/JKL93sang/JKL-Instagram-Backup/pull/21) · [Previous stable v1.5.105 backup](https://github.com/JKL93sang/JKL-Instagram-Backup/tree/backup/main-v1.5.105-2026-11-13)
+
+---
+
+## Previous stable v1.5.105 — historical release notes
+
+**Historical v1.5.105 source:** [Review the preserved pre-release snapshot](https://github.com/JKL93sang/JKL-Instagram-Backup/tree/backup/main-v1.5.105-2026-11-13). **For installation use the current v1.5.109 stable link above**, not the historical version.
+
+Historical note: v1.5.105 already used the stable `@name` and `@namespace`. The current official `main` now reports **v1.5.109**. Do not run this historical code alongside the current stable script.
 
 ### Main changes since stable v1.5.78
 
@@ -26,9 +40,9 @@ Detailed notes: [v1.5.105 stable release notes](docs/RELEASE_1_5_105.md).
 
 ## Previous stable v1.5.78 — PROFILE/REELS proofs and highlight archive layout
 
-**Official stable installation and automatic updates:** [Install JKL Instagram Backup v1.5.78](https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js).
+**Historical note:** the official `main` installer now serves **v1.5.109**, not this old v1.5.78 snapshot.
 
-The userscript retains its existing Tampermonkey `@name` and `@namespace`. Both `@updateURL` and `@downloadURL` now point to the **official `main` branch**, not an experimental branch. Existing installations following `main` should be offered v1.5.78 at the next update check. If an older test installation still follows a branch, open the official URL once, verify the `main` URLs in Tampermonkey and leave only one enabled script.
+The userscript retains its existing Tampermonkey `@name` and `@namespace`. Both `@updateURL` and `@downloadURL` now point to the **official `main` branch**, not an experimental branch. Existing installations following `main` should now be offered **v1.5.109** at the next update check. If an older test installation still follows a branch, open the official URL once, verify the `main` URLs in Tampermonkey and leave only one enabled script.
 
 ### Changes from v1.5.70
 
@@ -56,11 +70,11 @@ This release combines the v1.5.68 verified subscriber-partial backup (successful
 
 Official stable script: https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
 
-Stable installs retain the same `@name` and `@namespace`, with both `@updateURL` and `@downloadURL` bound to `main`. Use **Tampermonkey → Check for userscript updates** or open the official URL. Older experimental branch installs may require a one-time channel transition; confirm exactly one enabled script with version **1.5.70**.
+Stable installs retain the same `@name` and `@namespace`, with both `@updateURL` and `@downloadURL` bound to `main`. Use **Tampermonkey → Check for userscript updates** or open the official URL. Older experimental branch installs may require a one-time channel transition; confirm exactly one enabled script with the **current stable v1.5.109**.
 
 A Tampermonkey userscript for backing up Instagram media that is **already accessible to the signed-in browser session**.
 
-Current public version: **1.5.78** (stable, `main`).
+Current public version: **1.5.109** (stable, `main`).
 
 ## Install or update
 
@@ -70,7 +84,7 @@ https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instag
 
 Existing stable users can also use **Tampermonkey → Check for userscript updates**. Both `@updateURL` and `@downloadURL` point to this `main` version.
 
-**If you installed the PR #8 experimental build (v1.5.62–1.5.64):** the stable script has a higher version number, and the test branch also exposes this release metadata. Open the official `main` Raw link once if Tampermonkey does not automatically switch channels. Confirm that exactly one enabled copy remains and that its version is 1.5.78.
+**If you installed the PR #8 experimental build (v1.5.62–1.5.64):** the stable script has a higher version number, and the test branch also exposes this release metadata. Open the official `main` Raw link once if Tampermonkey does not automatically switch channels. Confirm that exactly one enabled copy remains and that its version is **1.5.109**.
 
 ## Public PROFILE completeness
 
