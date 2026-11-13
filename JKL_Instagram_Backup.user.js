@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.105
-// @description  Stable v1.5.105: verified complete PROFILE proofs, reliable SOLO, safe local archive indexing and partial backups.
+// @version      1.5.109
+// @description  Stable v1.5.109: Firefox-verified Story SOLO, authenticated media identity, safe partial archive.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,10 +31,10 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.105', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.109', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
-        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 8,
+        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
         REEL_SCROLL_MIN: 350, REEL_SCROLL_MAX: 1600, REEL_SCROLL_POLL: 120,
         PAGE_MIN: 650, PAGE_MAX: 1250, SHADOW_PAGE_MIN: 250, SHADOW_PAGE_MAX: 450, SHADOW_MAX_PAGES: 200, DOWNLOAD_DELAY: 0, DOWNLOAD_WORKERS: 1, DOWNLOAD_RETRIES: 3, LEDGER_FLUSH_EVERY: 25, DL_DIAG_SAMPLES: 20, MAX_LOG: 2000, MAX_LOG_ARCHIVE: 50000,
         HYDRATE_MIN: 180, HYDRATE_MAX: 320, HYDRATE_RETRIES: 3, HYDRATE_WORKERS: 4, HYDRATE_LARGE_THRESHOLD: 250, HYDRATE_LARGE_WORKERS: 2, HYDRATE_BULK_THRESHOLD: 100, HYDRATE_BULK_SIZE: 20, HYDRATE_SINGLE_FALLBACK_CAP: 100,
@@ -7220,6 +7220,34 @@
         }
     }
 
+    // Diagnostics only: the strict verifier still decides whether the
+    // root can enter OWNED. Never log media URLs or response payloads.
+    function profileDomMediaInfoFailureCode(info,item,userId) {
+        const id=String(info?.mediaId || '');
+        if (info?.route !== 'p') return 'non_post_route';
+        if (!/^\d+$/.test(id)) return 'invalid_requested_root';
+        if (!/^\d+$/.test(String(userId || ''))) return 'missing_target_account';
+        const ownerId=normalizePk(item?.user || item?.owner || {});
+        if (!ownerId) return 'returned_owner_missing';
+        if (ownerId !== String(userId)) return 'returned_owner_mismatch';
+        if (normalizePk(item) !== id) return 'returned_root_mismatch';
+        const code=String(info?.shortcode || '');
+        if (!code || shortcodeId(code) !== id) return 'requested_shortcode_mismatch';
+        if (canonicalShortcode(item?.code || item?.shortcode || '') !== code)
+            return 'returned_shortcode_mismatch';
+        if (rootKind(item) !== 'POST') return 'not_post_type';
+        try {
+            const units=standaloneUnits(item,'',id);
+            return units.length && units.every(unit =>
+                /^\d+$/.test(String(unit.id || '')) &&
+                !!unit.url && unit.type==='POST')
+                ? 'strict_catalog_not_verified'
+                : 'incomplete_media_units';
+        } catch {
+            return 'incomplete_media_units';
+        }
+    }
+
     async function hydratePermalinkRoots(
         list,
         sourceHint =
@@ -7289,7 +7317,8 @@
                         // corroborate the exact profile and parent shortcode.
                         if (strictDom && !domApiProven) {
                             throw new Error(
-                                'PROFILE DOM permalink not confirmed by same-owner, same-ID complete media-info'
+                                'PROFILE DOM permalink not confirmed by same-owner, same-ID complete media-info (' +
+                                profileDomMediaInfoFailureCode(info,item,state.userId) + ')'
                             );
                         }
 
@@ -15981,6 +16010,21 @@
         }
     }
 
+
+    // Instagram may show /stories/<username>/ without the item's ID.
+    // This is only the VIEWER identity, NOT a verified media identity.
+    function storyViewerRouteInfo(value) {
+        try {
+            const u=new URL(String(value||''),location.origin);
+            const m=u.pathname.match(/^\/stories\/([A-Za-z0-9._]{1,30})\/?$/);
+            if(!m) return null;
+            const username=cleanUser(m[1]);
+            if(!username || username.toLowerCase()==='highlights') return null;
+            return {kind:'story-viewer',route:'story',username,
+                mediaId:'',shortcode:'',key:'story-viewer:'+username.toLowerCase()};
+        } catch {return null;}
+    }
+
     function singleDownloadTargetFromUrl(value) {
         const media =
             mediaPermalinkInfo(
@@ -16002,9 +16046,7 @@
             };
         }
     
-        return storyPermalinkInfo(
-            value
-        );
+        return storyPermalinkInfo(value) || storyViewerRouteInfo(value);
     }
 
     function singleDownloadTargetFromRoot(root) {
@@ -16124,9 +16166,11 @@
         }
     
         button.title =
-            target.kind === 'story'
-                ? 'Télécharger cette story uniquement'
-                : 'Télécharger cette publication uniquement';
+            target.kind === 'story-viewer'
+                ? 'Télécharger la story affichée uniquement'
+                : target.kind === 'story'
+                    ? 'Télécharger cette story uniquement'
+                    : 'Télécharger cette publication uniquement';
     
         button.setAttribute(
             'aria-label',
@@ -16170,18 +16214,18 @@
             );
     
         if (
-            /^\d+$/.test(mediaId) &&
-            (
-                kind === 'story' ||
-                kind === 'media'
-            )
+            (/^\d+$/.test(mediaId) &&
+                (kind === 'story' || kind === 'media')) ||
+            (kind === 'story-viewer' && !mediaId && username &&
+                storyViewerRouteInfo(location.href)?.username.toLowerCase() ===
+                    username.toLowerCase())
         ) {
             return {
                 kind,
                 route:
                     route ||
                     (
-                        kind === 'story'
+                        kind === 'story' || kind === 'story-viewer'
                             ? 'story'
                             : 'p'
                     ),
@@ -16189,10 +16233,14 @@
                 shortcode,
                 username,
                 key:
-                    `${kind}:${mediaId}`,
+                    kind === 'story-viewer'
+                        ? 'story-viewer:' + username.toLowerCase()
+                        : `${kind}:${mediaId}`,
             };
         }
     
+        // Never substitute a different Story after a stale viewer click.
+        if (kind === 'story-viewer') return null;
         return currentSingleDownloadTarget();
     }
 
@@ -16469,6 +16517,106 @@
             )
         );
     }
+
+    // Identity check for the visible Story occurs only on an explicit click.
+    // Never infer a media ID from /stories/<username>/ itself.
+    function storyAssetKey(value) {
+        try {
+            const u=new URL(String(value||''));
+            if(u.protocol!=='https:' ||
+                !/(^|\.)(cdninstagram\.com|fbcdn\.net|instagram\.com)$/i.test(u.hostname))
+                return '';
+            return u.pathname;
+        } catch { return ''; }
+    }
+
+    function storyVisibleAssetKey() {
+        const vw=Number(window.innerWidth||0),vh=Number(window.innerHeight||0);
+        return [...document.querySelectorAll('video,img')]
+            .filter(el=>{
+                if(el.closest?.('#jkl-igb,[aria-hidden="true"]')) return false;
+                const r=el.getBoundingClientRect?.();
+                return r && r.width>=140 && r.height>=180 &&
+                    r.right>0 && r.bottom>0 && r.left<vw && r.top<vh &&
+                    Math.abs((r.left+r.right)/2-vw/2)<=vw*.38;
+            })
+            .map(el=>{
+                const r=el.getBoundingClientRect();
+                return {el,score:Math.max(0,Math.min(vw,r.right)-Math.max(0,r.left))*
+                    Math.max(0,Math.min(vh,r.bottom)-Math.max(0,r.top))*
+                    (el.tagName?.toLowerCase()==='video'?1.15:1)};
+            })
+            .sort((a,b)=>b.score-a.score)
+            .map(x=>storyAssetKey(x.el.currentSrc||x.el.src||
+                x.el.getAttribute?.('src')||''))
+            .find(Boolean) || '';
+    }
+
+    function storyItemAssetKeys(item) {
+        const variants=[
+            item?.video_url,item?.display_url,item?.display_uri,item?.thumbnail_src,
+            ...(item?.video_versions||[]).map(x=>x?.url),
+            ...(item?.image_versions2?.candidates||[]).map(x=>x?.url),
+            ...(item?.display_resources||[]).map(x=>x?.src),
+            bestVideo(item),bestImage(item),
+        ];
+        return new Set(variants.map(storyAssetKey).filter(Boolean));
+    }
+
+    async function resolveStoryViewerItem(target) {
+        const before=storyViewerRouteInfo(location.href);
+        if(!before || target?.kind!=='story-viewer' ||
+            before.username.toLowerCase()!==String(target.username||'').toLowerCase())
+            throw new Error('SINGLE STORY: le lecteur ne correspond plus au compte demandé.');
+
+        const visibleBefore=storyVisibleAssetKey();
+        const username=before.username;
+        let userId=String(state.username.toLowerCase()===username.toLowerCase()
+            ? state.userId||'' : '');
+        if(!/^\d+$/.test(userId)) {
+            // Only one verified profile HTML request, on deliberate click.
+            const profile=await fetchProfilePageMetadata(username);
+            userId=String(profile?.pk||profile?.id||'').split('_')[0];
+            if(!/^\d+$/.test(userId))
+                throw new Error('SINGLE STORY: ID du compte non confirmé.');
+        }
+        const reels=await fetchWebStoryReel(userId,false,'SINGLE STORY viewer');
+        const reel=reels.find(x=>hiId(x?.id)===userId);
+        if(!reel || !Array.isArray(reel.items) || reel.items.length===0)
+            throw new Error('SINGLE STORY: aucune Story authentifiée pour ce compte.');
+
+        const items=reel.items.filter(x=>/^\d+$/.test(normalizePk(x)));
+        if(items.length!==reel.items.length)
+            throw new Error('SINGLE STORY: identité média absente dans la réponse.');
+        let selected;
+        if(items.length===1) {
+            selected=items[0];
+        } else {
+            const matches=visibleBefore
+                ? items.filter(x=>storyItemAssetKeys(x).has(visibleBefore))
+                : [];
+            if(matches.length!==1)
+                throw new Error('SINGLE STORY: plusieurs Stories, le média affiché est ambigu. Aucun téléchargement.');
+            selected=matches[0];
+        }
+
+        const after=storyViewerRouteInfo(location.href);
+        if(!after || after.username.toLowerCase()!==username.toLowerCase() ||
+            (items.length>1 && storyVisibleAssetKey()!==visibleBefore))
+            throw new Error('SINGLE STORY: le lecteur a changé pendant la vérification.');
+
+        const id=normalizePk(selected);
+        log('SINGLE STORY viewer verified: account='+username+
+            ', items='+items.length+', id='+id+'.');
+        // Keep full media-info, filenames and all-or-nothing downloader.
+        const item=await fetchStandaloneMediaInfo(id,'SINGLE STORY '+id);
+        const finalRoute=storyViewerRouteInfo(location.href);
+        if(!finalRoute || finalRoute.username.toLowerCase()!==username.toLowerCase() ||
+            (items.length>1 && storyVisibleAssetKey()!==visibleBefore))
+            throw new Error('SINGLE STORY: le lecteur a changé avant le téléchargement.');
+        return item;
+    }
+
     async function downloadSingleTarget(
         target,
         button = null
@@ -16498,7 +16646,7 @@
     
         if (
             !resolved ||
-            !/^\d+$/.test(id) ||
+            (!/^\d+$/.test(id) && resolved.kind!=='story-viewer') ||
             !key ||
             singleDownloadState.busy.has(
                 key
@@ -16540,12 +16688,11 @@
         }
     
         const label =
-            resolved.kind === 'story'
-                ? `story ${id}`
-                : (
-                    resolved.shortcode ||
-                    id
-                );
+            resolved.kind==='story-viewer'
+                ? 'story affichée @'+resolved.username
+                : resolved.kind==='story'
+                    ? `story ${id}`
+                    : (resolved.shortcode || id);
     
         log(
             `Single download requested: kind=${resolved.kind}, route=${resolved.route || '-'}, ` +
@@ -16577,13 +16724,17 @@
             );
     
             const item =
-                await fetchStandaloneMediaInfo(
-                    id,
-                    `SINGLE ${String(resolved.kind || 'media').toUpperCase()} ${label}`
-                );
-    
+                resolved.kind==='story-viewer'
+                    ? await resolveStoryViewerItem(resolved)
+                    : await fetchStandaloneMediaInfo(
+                        id,
+                        `SINGLE ${String(resolved.kind || 'media').toUpperCase()} ${label}`
+                    );
+            const actualId=resolved.kind==='story-viewer'
+                ? normalizePk(item) : id;
+
             const forcedType =
-                resolved.kind === 'story'
+                (resolved.kind === 'story' || resolved.kind === 'story-viewer')
                     ? 'STORY'
                     : resolved.route === 'reel'
                         ? 'REEL'
@@ -16593,7 +16744,7 @@
                 standaloneUnits(
                     item,
                     forcedType,
-                    id
+                    actualId
                 );
     
             if (!files.length) {
@@ -16889,7 +17040,7 @@
             .filter(visible);
         if(dialogs.length) return dialogs[dialogs.length-1];
 
-        if(storyPermalinkInfo(location.href)) {
+        if(storyPermalinkInfo(location.href) || storyViewerRouteInfo(location.href)) {
             const sections=[...document.querySelectorAll('section')]
                 .filter(visible);
             return sections.reverse().find(el=>el.querySelector('img,video')) ||
@@ -17020,6 +17171,68 @@
         return {left:Math.round(left),top:Math.round(top)};
     }
 
+    // The viewer may use /stories/<username>/ with NO numeric media ID.
+    // Its floating control is only an affordance: identify the exact
+    // currently playing media at click time, never from the viewer URL
+    // alone. Do not request media-info or download before explicit click.
+    function storyFloatingAnchor(target) {
+        const route=target?.kind==='story-viewer'
+            ? storyViewerRouteInfo(location.href) : storyPermalinkInfo(location.href);
+        if (!target || !route || target.kind!==route.kind ||
+            (target.kind==='story' && route.mediaId!==String(target.mediaId)) ||
+            route.username.toLowerCase()!==String(target.username||'').toLowerCase())
+            return null;
+
+        const vw = Number(window.innerWidth || 0);
+        const vh = Number(window.innerHeight || 0);
+        if (vw < 180 || vh < 180) return null;
+
+        // Prefer the actual visible central story image/video; do not
+        // mistake a small avatar, an invisible preload or our own panel
+        // for the playing story.
+        const visible = [...document.querySelectorAll('video,img')]
+            .filter(el => {
+                if (el.closest?.('#jkl-igb,[aria-hidden="true"]')) return false;
+                const r = el.getBoundingClientRect?.();
+                if (!r || r.width < 140 || r.height < 180 ||
+                    r.right <= 0 || r.bottom <= 0 ||
+                    r.left >= vw || r.top >= vh) return false;
+                const center = (r.left + r.right) / 2;
+                return Math.abs(center - vw / 2) <= vw * .38;
+            })
+            .map(el => {
+                const r = el.getBoundingClientRect();
+                const width = Math.max(0,Math.min(vw,r.right) - Math.max(0,r.left));
+                const height = Math.max(0,Math.min(vh,r.bottom) - Math.max(0,r.top));
+                return {r,score:width*height*
+                    (el.tagName?.toLowerCase() === 'video' ? 1.15 : 1)};
+            })
+            .sort((a,b) => b.score - a.score)[0]?.r || null;
+
+        // Instagram may mount the Story shell before its IMG/VIDEO.
+        // The Story VIEWER identity is verified from the URL. Placement
+        // does not prove which individual media is playing.
+        const viewerWidth = Math.min(480,vw*.72);
+        const rightEdge = visible
+            ? Math.min(vw - 8,visible.right)
+            : (vw + viewerWidth) / 2;
+        const topEdge = visible
+            ? visible.top
+            : Math.max(0,vh*.04);
+        let left = Math.max(8,Math.min(vw-48,rightEdge-48));
+        const top = Math.max(48,Math.min(vh-48,topEdge+56));
+
+        const panel = ui.box?.getBoundingClientRect?.();
+        if (panel && left+38>panel.left && left<panel.right &&
+            top+38>panel.top && top<panel.bottom) {
+            const leftEdge = visible
+                ? visible.left
+                : (vw-viewerWidth)/2;
+            left = Math.max(8,Math.min(vw-48,leftEdge+12));
+        }
+        return {left:Math.round(left),top:Math.round(top)};
+    }
+
     function ensureCurrentDownloadButton() {
         let button =
             document.getElementById(
@@ -17055,8 +17268,9 @@
         return button;
     }
 
-    function placeCurrentDownloadButton(button,root) {
-        const anchor=currentMediaOverlayHost(largestCurrentMedia(root),root);
+    function placeCurrentDownloadButton(button,root,anchorOverride=null) {
+        const anchor=anchorOverride ||
+            currentMediaOverlayHost(largestCurrentMedia(root),root);
         if(!anchor){
             button.remove();
             return 'unavailable';
@@ -17092,7 +17306,7 @@
                     : 'Média ciblé : ' +
                         (target.username ? '@' + target.username + ' · ' : '') +
                         (target.route || target.kind).toUpperCase() +
-                        ' · ' + (target.shortcode || target.mediaId);
+                        ' · ' + (target.shortcode || target.mediaId || 'identification au clic');
         if (ui.singleTarget && ui.singleTarget.textContent !== label) {
             ui.singleTarget.textContent = label;
         }
@@ -17126,7 +17340,11 @@
         }
         const root=currentMediaRoot();
         const media=largestCurrentMedia(root);
-        if(!currentMediaOverlayHost(media,root)){
+        const isStory=target.kind==='story' || target.kind==='story-viewer';
+        const anchor=isStory
+            ? storyFloatingAnchor(target)
+            : currentMediaOverlayHost(media,root);
+        if(!anchor){
             existing?.remove();
             const diagnostic=target.key+':no_safe_media_region';
             if(singleDownloadState.lastOverlayDiagnostic!==diagnostic){
@@ -17139,7 +17357,9 @@
         singleDownloadState.lastOverlayDiagnostic='';
         const button=ensureCurrentDownloadButton();
         applySingleDownloadTarget(button,target);
-        button.dataset.placement=placeCurrentDownloadButton(button,root);
+        button.dataset.placement=isStory
+            ? (placeCurrentDownloadButton(button,root,anchor), 'viewport-pinned-story')
+            : placeCurrentDownloadButton(button,root,anchor);
         button.disabled=state.running || state.downloading ||
             state.feedbackRequired || state.rateLimited || state.apiUnhealthy;
     }

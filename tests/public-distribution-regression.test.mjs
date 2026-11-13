@@ -75,9 +75,9 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.105');
+assert.equal(metadataVersion, '1.5.109');
 assert.equal(metadataVersion, appVersion);
-assert.match(meta('description'), /Stable v1\.5\.105/i,
+assert.match(meta('description'), /Stable v1\.5\.109/i,
     'This release must be clearly labeled stable');
 
 
