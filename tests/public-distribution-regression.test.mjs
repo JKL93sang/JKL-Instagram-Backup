@@ -23,7 +23,7 @@ const expectedRepo =
     'https://github.com/JKL93sang/JKL-Instagram-Backup';
 
 const expectedRaw =
-    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-progressive-dom-coverage-v1.5.116/JKL_Instagram_Backup.user.js';
+    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-native-partial-graphql-v1.5.116/JKL_Instagram_Backup.user.js';
 
 assert.equal(
     meta('name'),
@@ -48,7 +48,7 @@ assert.equal(
 
 assert.equal(
     meta('source'),
-    expectedRepo + '/blob/test/profile-progressive-dom-coverage-v1.5.116/JKL_Instagram_Backup.user.js'
+    expectedRepo + '/blob/test/profile-native-partial-graphql-v1.5.116/JKL_Instagram_Backup.user.js'
 );
 
 assert.equal(
@@ -77,7 +77,7 @@ const appVersion =
 assert.ok(metadataVersion);
 assert.equal(metadataVersion, '1.5.116');
 assert.equal(metadataVersion, appVersion);
-assert.match(meta('description'), /TEST v1\.5\.115/i,
+assert.match(meta('description'), /TEST v1\.5\.116/i,
     'This branch must be clearly labeled TEST');
 
 
