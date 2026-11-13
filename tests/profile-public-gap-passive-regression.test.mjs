@@ -12,6 +12,7 @@ function extract(name) {
 
 const selection=extract('profilePublicGapAvoidsSyntheticRelay');
 const completionRequirement=extract('profileCompletionRequirement');
+const scroll=extract('profileScrollTarget');
 const grid=extract('scanMainGrid');
 assert.ok(grid.includes('if (profilePublicGapAvoidsSyntheticRelay())'),
     'The actual PROFILE scanner must call the passive safety guard');
@@ -49,7 +50,7 @@ function fixture(overrides={}) {
         'currentProfileGridProgress','waitForProfileGridProgress',
         'ownedIds','hydratePermalinkRoots','restore',
         'scanProfileGraphQLFallback',
-        selection+'\n'+completionRequirement+'\n'+grid+
+        selection+'\n'+completionRequirement+'\n'+scroll+'\n'+grid+
         '\nreturn {profilePublicGapAvoidsSyntheticRelay,scanMainGrid};'
     )(
         state,net,{PROFILE_MAX_SCROLLS:6},
