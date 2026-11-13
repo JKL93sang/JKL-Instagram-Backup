@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.115
-// @description  TEST v1.5.115: progressive native PROFILE DOM capture + scoped REELS evidence audit.
+// @version      1.5.116
+// @description  TEST v1.5.116: HAR-confirmed PROFILE partial GraphQL pages recovered with strict identity proof.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/test/profile-progressive-dom-coverage-v1.5.115/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-progressive-dom-coverage-v1.5.115/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-progressive-dom-coverage-v1.5.115/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/test/profile-native-partial-graphql-v1.5.116/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-native-partial-graphql-v1.5.116/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-native-partial-graphql-v1.5.116/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.115', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.116', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
@@ -4453,6 +4453,36 @@
             .split('_')[0];
     }
 
+    // GraphQL field errors do not always invalidate the timeline payload.
+    // Accept an error-bearing page only with exact connection, all IDs
+    // matching their shortcodes, valid page_info and a target-scoped request.
+    function nativeProfilePageAdmissibility(data) {
+        const errors = Array.isArray(data?.errors) ? data.errors.length : 0;
+        if (!errors) return {allowed:true,errors:0,reason:'clean'};
+        const c = keyedConnection(data,GRID_CONNECTION_KEY);
+        if (!c || !Array.isArray(c.edges) || !c.edges.length ||
+            typeof c.page_info?.has_next_page !== 'boolean') {
+            return {allowed:false,errors,reason:'missing_strict_page'};
+        }
+        if (c.page_info.has_next_page === true &&
+            (typeof c.page_info.end_cursor !== 'string' ||
+                !c.page_info.end_cursor)) {
+            return {allowed:false,errors,reason:'cursor_absent'};
+        }
+        const seen = new Set();
+        for (const e of c.edges) {
+            const n = edgeNode(e);
+            const id = normalizePk(n);
+            const code = canonicalShortcode(n?.code || n?.shortcode || '');
+            if (!/^\d+$/.test(id) || !code ||
+                shortcodeId(code) !== id || seen.has(id)) {
+                return {allowed:false,errors,reason:'root_identity_invalid'};
+            }
+            seen.add(id);
+        }
+        return {allowed:true,errors,reason:'verified_partial_page'};
+    }
+
     function captureGrid(
         data,
         meta
@@ -4478,10 +4508,13 @@
         }
 
         const c = gridConn(data);
-        if (
-            !c ||
-            (Array.isArray(data?.errors) && data.errors.length)
-        ) return;
+        const pageEvidence = nativeProfilePageAdmissibility(data);
+        if (!c || !pageEvidence.allowed) return;
+        if (pageEvidence.errors) {
+            log('PROFILE native GraphQL partial errors=' + pageEvidence.errors +
+                ', validated_roots=' + c.edges.length +
+                '; per-media hydration is still mandatory.', 'warn');
+        }
 
         const variables = meta?.variables || {};
         const isRoot =
@@ -4713,6 +4746,28 @@
         }
     }
 
+    // Handle single JSON and newline-delimited browser-native Relay
+    // documents. Never evaluate JavaScript or invent missing data.
+    function nativeGraphQLResponsePayloads(raw) {
+        if (typeof raw !== 'string') return [];
+        const clean = t => String(t || '').trim().replace(/^for \(;;\);\s*/,'');
+        const parse = t => { try { return JSON.parse(clean(t)); } catch { return null; } };
+        const one = parse(raw);
+        if (one && typeof one === 'object') {
+            return Array.isArray(one) ? one.filter(Boolean) : [one];
+        }
+        const chunks = raw.split(/\r?\n(?=\s*(?:\{|\[|for \(;;\);))/);
+        if (chunks.length < 2 || chunks.length > 32) return [];
+        const result = [];
+        for (const chunk of chunks) {
+            const v = parse(chunk);
+            if (!v || typeof v !== 'object') return [];
+            if (Array.isArray(v)) result.push(...v.filter(Boolean));
+            else result.push(v);
+        }
+        return result;
+    }
+
     function installHooks() {
         try {
             net.nativeFetch =
@@ -4892,27 +4947,20 @@
                                         return null;
                                     }
 
-                                    try {
-                                        return JSON.parse(text);
+                                    const payloads = nativeGraphQLResponsePayloads(text);
+                                    if (!payloads.length &&
+                                        Number(r.status || 0) === 200 &&
+                                        knownProfileQuery) {
+                                        apiUnhealthyError(
+                                            `Native ${m.friendly}: Instagram returned HTTP 200 non-JSON.`
+                                        );
                                     }
-                                    catch {
-                                        if (
-                                            Number(r.status || 0) === 200 &&
-                                            knownProfileQuery
-                                        ) {
-                                            apiUnhealthyError(
-                                                `Native ${m.friendly}: Instagram returned HTTP 200 non-JSON.`
-                                            );
-                                        }
-
-                                        return null;
-                                    }
+                                    return payloads;
                                 })
                                 .then(
-                                    data => {
-                                        if (!data) {
-                                            return;
-                                        }
+                                    payloads => {
+                                        for (const data of payloads || []) {
+                                            if (!data) continue;
 
                                         const hasGridConnection =
                                             !!keyedConnection(data, GRID_CONNECTION_KEY);
@@ -4952,6 +5000,7 @@
                                             (hasReelConnection && targetsProfile)
                                         ) {
                                             captureReels(data, m);
+                                        }
                                         }
                                     }
                                 )
@@ -5119,33 +5168,22 @@
                                         return;
                                     }
 
-                                    let data;
-
-                                    if (typeof raw === 'string') {
-                                        try {
-                                            data = JSON.parse(raw);
+                                    const payloads = typeof raw === 'string'
+                                        ? nativeGraphQLResponsePayloads(raw) : [raw];
+                                    if (!payloads.length) {
+                                        const knownProfileQuery =
+                                            GRID_NAMES.has(meta.friendly) ||
+                                            REEL_NAMES.has(meta.friendly);
+                                        if (Number(this.status || 0) === 200 &&
+                                            knownProfileQuery) {
+                                            apiUnhealthyError(
+                                                `Native ${meta.friendly}: Instagram returned HTTP 200 non-JSON.`
+                                            );
                                         }
-                                        catch {
-                                            const knownProfileQuery =
-                                                GRID_NAMES.has(meta.friendly) ||
-                                                REEL_NAMES.has(meta.friendly);
-
-                                            if (
-                                                Number(this.status || 0) === 200 &&
-                                                knownProfileQuery
-                                            ) {
-                                                apiUnhealthyError(
-                                                    `Native ${meta.friendly}: Instagram returned HTTP 200 non-JSON.`
-                                                );
-                                            }
-
-                                            return;
-                                        }
+                                        return;
                                     }
-                                    else {
-                                        data = raw;
-                                    }
-
+                                    for (const data of payloads) {
+                                        if (!data) continue;
                                     const hasGridConnection =
                                         !!keyedConnection(data, GRID_CONNECTION_KEY);
                                     const hasReelConnection =
@@ -5184,6 +5222,7 @@
                                         (hasReelConnection && targetsProfile)
                                     ) {
                                         captureReels(data, meta);
+                                    }
                                     }
                                 }
 
