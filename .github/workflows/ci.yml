@@ -90,6 +90,9 @@ jobs:
       - name: TAGGED prior verified PROFILE archive path and no false coverage
         run: node tests/tagged-historical-archive-continuity-v1-5-111.test.mjs
 
+      - name: PROFILE historical parent audit and DOM failure provenance
+        run: node tests/profile-historical-root-audit-v1-5-114.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
