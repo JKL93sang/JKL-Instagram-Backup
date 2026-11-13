@@ -77,5 +77,5 @@ assert.match(src,/state\.reelsTabObservedRootIds = new Set\(\);/,
     'each scan must reset the source-scoped snapshot');
 assert.match(src,/PROFILE HISTORICAL AUDIT \(read-only\)/);
 assert.match(src,/No coverage or archive changes\./);
-assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.117');
+assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.118');
 console.log('Progressive PROFILE scroll, tab-scoped verified REEL DOM evidence, immutable audit: PASS');
