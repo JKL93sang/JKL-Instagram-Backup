@@ -91,7 +91,7 @@ assert.match(src,/PROFILE HISTORICAL AUDIT \(read-only\)/);
 assert.match(src,/PROFILE historic root not re-proven:/);
 assert.match(src,/profileDomHydrationFailures:/);
 assert.match(src,/state\.profileDomHydrationFailures = \[\]/);
-assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.114');
+assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.115');
 console.log('Historical canonical parent evidence vs current PROFILE/REELS: PASS');
 
 // Exercise REAL production hydration error accounting, without a network.
