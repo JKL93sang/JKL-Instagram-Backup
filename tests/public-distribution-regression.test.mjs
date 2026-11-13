@@ -23,7 +23,7 @@ const expectedRepo =
     'https://github.com/JKL93sang/JKL-Instagram-Backup';
 
 const expectedRaw =
-    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-explicit-fourth-child-v1.5.113/JKL_Instagram_Backup.user.js';
+    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/tagged-carousel-sibling-control-v1.5.113/JKL_Instagram_Backup.user.js';
 
 assert.equal(
     meta('name'),
@@ -48,7 +48,7 @@ assert.equal(
 
 assert.equal(
     meta('source'),
-    expectedRepo + '/blob/fix/tagged-explicit-fourth-child-v1.5.113/JKL_Instagram_Backup.user.js'
+    expectedRepo + '/blob/test/tagged-carousel-sibling-control-v1.5.113/JKL_Instagram_Backup.user.js'
 );
 
 assert.equal(
