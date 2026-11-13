@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.107
-// @description  TEST v1.5.107: username-only Story viewer SOLO and verified click-time media selection.
+// @version      1.5.108
+// @description  TEST v1.5.108: bounded PROFILE viewport recovery and strict TAGGED carousel union.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/private-profile-story-solo-v1.5.106/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/private-profile-story-solo-v1.5.106/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/private-profile-story-solo-v1.5.106/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/profile-tagged-coverage-v1.5.108/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/profile-tagged-coverage-v1.5.108/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/profile-tagged-coverage-v1.5.108/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,10 +31,10 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.107', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.108', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
-        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
+        SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_DOM_SWEEP_MAX_STEPS: 120, PROFILE_DOM_SWEEP_PAUSE_MS: 160, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
         REEL_SCROLL_MIN: 350, REEL_SCROLL_MAX: 1600, REEL_SCROLL_POLL: 120,
         PAGE_MIN: 650, PAGE_MAX: 1250, SHADOW_PAGE_MIN: 250, SHADOW_PAGE_MAX: 450, SHADOW_MAX_PAGES: 200, DOWNLOAD_DELAY: 0, DOWNLOAD_WORKERS: 1, DOWNLOAD_RETRIES: 3, LEDGER_FLUSH_EVERY: 25, DL_DIAG_SAMPLES: 20, MAX_LOG: 2000, MAX_LOG_ARCHIVE: 50000,
         HYDRATE_MIN: 180, HYDRATE_MAX: 320, HYDRATE_RETRIES: 3, HYDRATE_WORKERS: 4, HYDRATE_LARGE_THRESHOLD: 250, HYDRATE_LARGE_WORKERS: 2, HYDRATE_BULK_THRESHOLD: 100, HYDRATE_BULK_SIZE: 20, HYDRATE_SINGLE_FALLBACK_CAP: 100,
@@ -9319,6 +9319,75 @@
             pages, edges:totalEdges, recovered, endReason, docId,
         };
     }
+
+    // React/Instagram may virtualize grid tiles. Jumping straight to the
+    // bottom can skip links that were never in the DOM at scan sample time.
+    // Revisit only the currently opened PROFILE, at bounded viewport steps,
+    // collecting OBSERVATIONS (not authenticated root or pagination proof).
+    // No fabricated GraphQL requests, no replay of an unknown first page.
+    async function sweepProfileDomViewport(seenDom, target) {
+        const before=seenDom.size;
+        const expected=Number(state.expected||0);
+        const nativeMap=net.gridByUser.get(state.username.toLowerCase()) || new Map();
+        if (!expected || expected<=new Set([...nativeMap.keys(),...seenDom.keys()]).size ||
+            state.profileInfo?.is_private!==true) {
+            return {attempted:false,steps:0,added:0,reason:'not_needed'};
+        }
+        if (pathNorm(location.pathname)!==pathNorm(target)) {
+            return {attempted:false,steps:0,added:0,reason:'wrong_route'};
+        }
+
+        const viewport=Math.max(1,Number(window.innerHeight||0));
+        if(viewport<180) return {attempted:false,steps:0,added:0,reason:'small_viewport'};
+        const step=Math.max(240,Math.floor(viewport*0.72));
+        let y=0,visits=0,bottomStable=0;
+        let lastMax=-1,reason='step_cap';
+        const maxSteps=APP.PROFILE_DOM_SWEEP_MAX_STEPS;
+        for(let i=0;i<maxSteps;i++){
+            if(state.cancelled) throw new Error('Cancelled');
+            if(state.feedbackRequired || state.rateLimited || state.apiUnhealthy){
+                reason='safety_stop';break;
+            }
+            if(pathNorm(location.pathname)!==pathNorm(target)){
+                reason='route_changed';break;
+            }
+            const height=Math.max(
+                Number(document.body?.scrollHeight||0),
+                Number(document.documentElement?.scrollHeight||0));
+            const maxTop=Math.max(0,height-viewport);
+            const sampleY=Math.min(y,maxTop);
+            window.scrollTo({top:sampleY,behavior:'auto'});
+            await sleep(APP.PROFILE_DOM_SWEEP_PAUSE_MS);
+            visits++;
+            for(const [id,info] of profileLinks()) seenDom.set(id,info);
+
+            // A virtualized list may append more content at the bottom.
+            // Confirm the end across two samples; NEVER call this a server end.
+            const refreshedHeight=Math.max(
+                Number(document.body?.scrollHeight||0),
+                Number(document.documentElement?.scrollHeight||0));
+            const refreshedMax=Math.max(0,refreshedHeight-viewport);
+            if(sampleY>=refreshedMax-12){
+                bottomStable=lastMax===refreshedMax ? bottomStable+1 : 1;
+                lastMax=refreshedMax;
+                if(bottomStable>=2){reason='visual_bottom_only';break;}
+                await sleep(APP.PROFILE_DOM_SWEEP_PAUSE_MS);
+                for(const [id,info] of profileLinks()) seenDom.set(id,info);
+            } else {
+                bottomStable=0;
+                lastMax=refreshedMax;
+            }
+            y=sampleY+step;
+        }
+        log('PROFILE DOM viewport sweep: steps='+visits+
+            ', candidates='+before+'→'+seenDom.size+
+            ', new='+Math.max(0,seenDom.size-before)+
+            ', end='+reason+
+            '. DOM observations remain unverified until same-ID media-info.');
+        return {attempted:true,steps:visits,
+            added:Math.max(0,seenDom.size-before),reason};
+    }
+
     async function scanMainGrid() {
         log(
             'Scanning native main PROFILE grid (mixed POST + REEL)…'
@@ -9512,6 +9581,11 @@
                     progressBaseline
                 );
             }
+
+            // Passive viewport sweep before DOM identity hydration.
+            // Only collects visible candidate URLs; server roots and
+            // strict same-owner media-info remain the authorities.
+            await sweepProfileDomViewport(seenDom,target);
 
             const map =
                 net.gridByUser.get(
