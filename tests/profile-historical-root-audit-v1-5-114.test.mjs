@@ -102,7 +102,7 @@ function extractAsync(name){
     assert.ok(e>i);
     return src.slice(i,e+7);
 }
-async function failureCase(err,sourceHint='PROFILE_GRID_DOM'){
+async function failureCase(err,sourceHint='PROFILE_GRID_DOM',rejectionCode=''){
     const state={cancelled:false,userId:'100',feedbackRequired:false,
         rateLimited:false,profileDomHydrationFailures:[]};
     const logs=[];
@@ -114,7 +114,8 @@ async function failureCase(err,sourceHint='PROFILE_GRID_DOM'){
         extractAsync('hydratePermalinkRoots')+
         '\nreturn hydratePermalinkRoots;'
     )(state,{HYDRATE_WORKERS:1},async()=>{},()=>0,shortcodeId,
-        canonicalShortcode,async()=>{throw err;},()=>false,()=>'-',
+        canonicalShortcode,async()=>{if(rejectionCode)return {pk:'123'};throw err;},
+        ()=>false,()=>rejectionCode||'-',
         ()=>{},()=>{},x=>logs.push(x),e=>new Error(e),e=>new Error(e),
         ()=>0);
     const result=await run([
@@ -142,5 +143,13 @@ async function failureCase(err,sourceHint='PROFILE_GRID_DOM'){
     const r=await failureCase(e,'TAGGED');
     assert.deepEqual(r.state.profileDomHydrationFailures,[],
         'only PROFILE_GRID_DOM may contribute current DOM failures');
+}
+{
+    const r=await failureCase(null,'PROFILE_GRID_DOM','incomplete_media_units');
+    assert.equal(r.result.failed,1);
+    assert.deepEqual(r.state.profileDomHydrationFailures,[{
+        rootId:'123',shortcode:encode(123),
+        reason:'incomplete_media_units',httpStatus:null,
+    }], 'preserve exact sanitised reason for authenticated-but-incomplete carousel');
 }
 console.log('DOM hydration exact root & HTTP failure redaction: PASS');
