@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.117
-// @description  TEST v1.5.117: avoid unsafe native PROFILE replay after verified server end with counter gap.
+// @version      1.5.118
+// @description  TEST v1.5.118: independently verify accessible carousel children without claiming complete PROFILE coverage.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/test/profile-native-terminal-no-replay-v1.5.117/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-native-terminal-no-replay-v1.5.117/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-native-terminal-no-replay-v1.5.117/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/test/profile-carousel-verified-children-v1.5.118/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-carousel-verified-children-v1.5.118/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-carousel-verified-children-v1.5.118/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.117', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.118', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
@@ -222,6 +222,10 @@
         // response may be saved individually even when PROFILE pagination
         // has not reached a proven server end. Never a full-grid proof.
         verifiedPassiveProfilePostRootIds: new Set(),
+        // Independently observed native + hydrated carousel CHILD identities.
+        // Authorizes exact files in ACCESSIBLE PARTIAL only; never a sixth
+        // undisclosed child or global grid COMPLETE.
+        verifiedNativeAccessibleCarouselMediaIds: new Set(),
         partialDownloadGrants: { subscriber: null, accessible: null },
 
         roots: {
@@ -1277,6 +1281,7 @@
         state.verifiedSubscriberRootIds.clear();
         state.verifiedPassiveReelRootIds.clear();
         state.verifiedPassiveProfilePostRootIds?.clear?.();
+        state.verifiedNativeAccessibleCarouselMediaIds?.clear?.();
         state.verifiedProfileDomApiRootIds?.clear?.();
         state.highlightCatalog.clear();
         state.highlightRenameNotices.clear();
@@ -12154,6 +12159,146 @@
         }
     }
 
+    // In a partial PROFILE, the native parent can declare six slides while
+    // two independent authenticated sources enumerate the SAME five real
+    // children. Grant ONLY those five identified, hydrated file units.
+    // Never treat the numeric count as a sixth ID or a full carousel.
+    function nativeHydratedCarouselChildProof(raw, rec) {
+        const fail = reason => ({ok:false,reason,ids:[]});
+        if (!raw || !rec || rec.type !== 'POST' ||
+            rec.hydratedByApi !== true || rec.structureComplete !== true ||
+            rec.forceHydrate === true || !/^\d+$/.test(String(rec.id || ''))) {
+            return fail('root_or_deep_hydration_unverified');
+        }
+        const rootId=String(rec.id);
+        if (normalizePk(raw) !== rootId ||
+            !state.roots.POST.has(rootId) ||
+            !(rec.sources instanceof Set) ||
+            !rec.sources.has('PROFILE_GRID_NATIVE') ||
+            !rec.sources.has('OWNED_DEEP_HYDRATION')) {
+            return fail('native_or_hydrated_root_identity');
+        }
+        const code=canonicalShortcode(raw.code || raw.shortcode || '');
+        const recCode=canonicalShortcode(rec.shortcode || '');
+        if (!code || !recCode || code !== recCode ||
+            shortcodeId(code) !== rootId) {
+            return fail('shortcode_root_mismatch');
+        }
+        const nativeOwner=normalizePk(raw.user);
+        if (nativeOwner && nativeOwner !== String(state.userId)) {
+            return fail('native_owner_conflict');
+        }
+        const sidecar=raw?.edge_sidecar_to_children;
+        if (sidecar?.page_info?.has_next_page === true ||
+            Number(raw?.carousel_media_pending_post_count || 0) > 0) {
+            return fail('native_children_paginated_or_pending');
+        }
+        const children=Array.isArray(raw.carousel_media) &&
+            raw.carousel_media.length
+                ? raw.carousel_media
+                : (sidecar?.edges || []).map(e=>e?.node).filter(Boolean);
+        const ids=children.map(normalizePk).map(String);
+        const unique=new Set(ids);
+        const claimed=Number(rec.declaredUnitsHint || 0);
+        if (children.length < 2 ||
+            !Number.isSafeInteger(claimed) || claimed <= children.length ||
+            ids.some(id=>!/^\d+$/.test(id)) ||
+            unique.size !== children.length ||
+            rec.expectedUnits !== children.length ||
+            rec.apiUnits !== children.length ||
+            !(rec.knownUnitIds instanceof Set) ||
+            rec.knownUnitIds.size !== children.length ||
+            ids.some(id=>!rec.knownUnitIds.has(id)) ||
+            queuedUnitsForRoot(rootId) !== children.length) {
+            return fail('independent_child_inventory_mismatch');
+        }
+        if (Array.isArray(raw.carousel_media_ids) &&
+            raw.carousel_media_ids.length) {
+            const hinted=raw.carousel_media_ids.map(x=>
+                typeof x==='string' ? x : normalizePk(x));
+            if (hinted.length !== ids.length ||
+                new Set(hinted).size !== ids.length ||
+                hinted.some(id=>!unique.has(String(id)))) {
+                return fail('conflicting_independent_child_ids');
+            }
+        }
+        for (const child of children) {
+            const id=normalizePk(child);
+            if (child.carousel_parent_id &&
+                String(child.carousel_parent_id).split('_')[0] !== rootId) {
+                return fail('child_parent_conflict');
+            }
+            if (Number(child.deleted_reason || 0)>0) {
+                return fail('deleted_child_reference');
+            }
+            const m=state.queue.get(id);
+            if (!m || m.type !== 'POST' || !m.url || !m.filename ||
+                !(m.rootIds instanceof Set) || !m.rootIds.has(rootId) ||
+                !(m.sources instanceof Set) ||
+                !m.sources.has('PROFILE_GRID_NATIVE') ||
+                !m.sources.has('OWNED_DEEP_HYDRATION')) {
+                return fail('child_not_independently_resolved');
+            }
+            const nativeType=Number(child.media_type || 0);
+            if (nativeType === 2 && m.ext !== 'mp4') {
+                return fail('child_video_extension_conflict');
+            }
+            if (nativeType === 1 && m.ext !== 'jpg') {
+                return fail('child_image_extension_conflict');
+            }
+        }
+        return {ok:true,reason:'five_accessible_children_two_sources',
+            ids,declared:claimed,accessible:ids.length};
+    }
+
+    function reconcileNativeHydratedCarouselChildren() {
+        const verified=state.verifiedNativeAccessibleCarouselMediaIds;
+        if (!(verified instanceof Set)) return;
+        verified.clear();
+        if (!scanSelected('post') || state.coverage.ownedHydration !== true ||
+            !state.userId || state.cancelled || state.feedbackRequired ||
+            state.rateLimited || state.apiUnhealthy) return;
+        const key=String(state.username||'').toLowerCase();
+        const owner=String(state.profileInfo?.pk ||
+            state.profileInfo?.id || '').split('_')[0];
+        const session=state.nativeProfileEvidenceSession;
+        const capture=net.gridCaptureSeenAtByUser?.get(key);
+        const audit=net.gridNativeAuditByUser?.get(key);
+        const native=net.gridByUser?.get(key);
+        if (!owner || owner!==String(state.userId) ||
+            !session || session.key!==key ||
+            session.userId!==String(state.userId) ||
+            !Number.isFinite(session.acceptedAt) ||
+            !Number.isFinite(capture) ||
+            !(capture===session.acceptedCapturedAt ||
+                capture>=session.acceptedAt) ||
+            !(native instanceof Map) ||
+            !audit || (audit.initial||0)+(audit.continuation||0)<1) return;
+        let eligibleRoots=0;
+        for(const [id,raw] of native) {
+            const rec=state.rootCatalog.get(String(id));
+            if (!rec || rec.type!=='POST' ||
+                !Number.isSafeInteger(rec.declaredUnitsHint) ||
+                rec.declaredUnitsHint <= rec.expectedUnits) continue;
+            const proof=nativeHydratedCarouselChildProof(raw,rec);
+            if (!proof.ok) {
+                log('PROFILE accessible carousel children NOT authorized: '+
+                    String(id)+', reason='+proof.reason+'.', 'warn');
+                continue;
+            }
+            for(const childId of proof.ids) verified.add(childId);
+            eligibleRoots++;
+            log('PROFILE accessible carousel children individually verified: '+
+                String(id)+', native=deep=' + proof.accessible +
+                ', declared='+proof.declared+
+                '; partial only, missing slide unknown, PROFILE INCOMPLETE.', 'warn');
+        }
+        if (eligibleRoots) log(
+            'PROFILE accessible carousel child-only grant: roots='+
+            eligibleRoots+', exact_media='+verified.size+
+            '; never grants PROFILE or carousel completeness.');
+    }
+
     function verifiedAccessibleMedia() {
         const shadowVerified =
             state.scanPlan?.post === true &&
@@ -12201,7 +12346,15 @@
                     [...m.rootIds].some(rootId =>
                         state.roots.TAGGED.has(String(rootId))
                     );
-                return publicProven || nativeIndividualProven || taggedPresent;
+                const nativeHydratedChildProven =
+                    state.scanPlan?.post === true &&
+                    state.coverage.ownedHydration === true &&
+                    m.sources.has('PROFILE_GRID_NATIVE') &&
+                    m.sources.has('OWNED_DEEP_HYDRATION') &&
+                    state.verifiedNativeAccessibleCarouselMediaIds instanceof Set &&
+                    state.verifiedNativeAccessibleCarouselMediaIds.has(id);
+                return publicProven || nativeIndividualProven ||
+                    nativeHydratedChildProven || taggedPresent;
             }
 
             if (m.type === 'REEL') {
@@ -12309,6 +12462,9 @@
                     .map(String).sort(),
                 passiveProfilePosts:
                     [...(state.verifiedPassiveProfilePostRootIds || [])]
+                        .map(String).sort(),
+                nativeAccessibleCarouselChildren:
+                    [...(state.verifiedNativeAccessibleCarouselMediaIds || [])]
                         .map(String).sort(),
                 tagged: [...state.roots.TAGGED].map(String).sort(),
                 highlight: [...state.roots.HIGHLIGHT].map(String).sort(),
@@ -13500,6 +13656,7 @@
             reconcileProfileGridCoverage();
             reconcileEmptyReelsCoverage();
             reconcilePassiveProfilePostRoots();
+            reconcileNativeHydratedCarouselChildren();
             const profileEvidence = profileSourceDiagnosticSnapshot();
             const c = profileEvidence.counts;
             log(
