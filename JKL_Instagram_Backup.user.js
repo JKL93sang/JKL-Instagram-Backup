@@ -7304,7 +7304,13 @@
 
                 if (!id) {
                     failed++;
-
+                    if (sourceHint === 'PROFILE_GRID_DOM') {
+                        state.profileDomHydrationFailures.push({
+                            rootId:null,
+                            shortcode:canonicalShortcode(info?.shortcode),
+                            reason:'invalid_shortcode',httpStatus:null,
+                        });
+                    }
                     log(
                         `${sourceHint} hydrate failed for ` +
                         `${info.shortcode}: invalid shortcode`,
@@ -7386,7 +7392,21 @@
                         }
 
                         failed++;
-
+                        if (sourceHint === 'PROFILE_GRID_DOM') {
+                            const http=Number(e?.status || 0);
+                            const statusCode=Number.isSafeInteger(http) &&
+                                http >= 400 && http <= 599 ? http : null;
+                            const reason=String(e?.message || '').startsWith(
+                                'PROFILE DOM permalink not confirmed'
+                            ) ? 'identity_or_structure_unverified'
+                                : statusCode ? 'http_error'
+                                    : 'media_info_unavailable';
+                            state.profileDomHydrationFailures.push({
+                                rootId:id,
+                                shortcode:canonicalShortcode(info?.shortcode),
+                                reason,httpStatus:statusCode,
+                            });
+                        }
                         log(
                             `${sourceHint} hydrate failed for ` +
                             `${info.shortcode}: ${e.message}`,
@@ -13140,6 +13160,7 @@
         state.profileMainGridRootIds = new Set();
         state.profileDomObservedRootIds = new Set();
         state.verifiedProfileDomApiRootIds = new Set();
+        state.profileDomHydrationFailures = [];
 
         for (const s of Object.values(state.roots)) {
             s.clear();
@@ -13386,6 +13407,16 @@
                         old.currentQueuedHistoricalUnits +
                         ', dom_candidate=' + old.currentDomCandidate +
                         ', status=' + old.status + '.',
+                        'warn'
+                    );
+                }
+                for (const bad of state.profileDomHydrationFailures || []) {
+                    log(
+                        'PROFILE DOM rejection summary: root=' +
+                        (bad.rootId || '-') +
+                        ', code=' + bad.shortcode +
+                        ', reason=' + bad.reason +
+                        ', http=' + (bad.httpStatus || '-') + '.',
                         'warn'
                     );
                 }
@@ -15240,6 +15271,8 @@
                 globalGap: globalGap(),
                 profileSourceDiagnostics: profileSourceDiagnosticSnapshot(),
                 profileHistoricalRootAudit: profileHistoricalRootAudit(),
+                profileDomHydrationFailures:
+                    (state.profileDomHydrationFailures || []).map(x=>({...x})),
                 publicShadow: { ...state.shadow },
                 connectedHidden: {
                     ...state.hidden,
