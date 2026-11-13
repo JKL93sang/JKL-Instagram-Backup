@@ -9585,7 +9585,9 @@
             // Passive viewport sweep before DOM identity hydration.
             // Only collects visible candidate URLs; server roots and
             // strict same-owner media-info remain the authorities.
-            await sweepProfileDomViewport(seenDom,target);
+            if (state.profileInfo?.is_private === true) {
+                await sweepProfileDomViewport(seenDom,target);
+            }
 
             const map =
                 net.gridByUser.get(
