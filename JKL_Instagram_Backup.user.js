@@ -16513,6 +16513,101 @@
             )
         );
     }
+
+    // Identity check for the visible Story occurs only on an explicit click.
+    // Never infer a media ID from /stories/<username>/ itself.
+    function storyAssetKey(value) {
+        try {
+            const u=new URL(String(value||''));
+            if(u.protocol!=='https:' ||
+                !/(^|\.)(cdninstagram\.com|fbcdn\.net|instagram\.com)$/i.test(u.hostname))
+                return '';
+            return u.pathname;
+        } catch { return ''; }
+    }
+
+    function storyVisibleAssetKey() {
+        const vw=Number(window.innerWidth||0),vh=Number(window.innerHeight||0);
+        return [...document.querySelectorAll('video,img')]
+            .filter(el=>{
+                if(el.closest?.('#jkl-igb,[aria-hidden="true"]')) return false;
+                const r=el.getBoundingClientRect?.();
+                return r && r.width>=140 && r.height>=180 &&
+                    r.right>0 && r.bottom>0 && r.left<vw && r.top<vh &&
+                    Math.abs((r.left+r.right)/2-vw/2)<=vw*.38;
+            })
+            .map(el=>{
+                const r=el.getBoundingClientRect();
+                return {el,score:Math.max(0,Math.min(vw,r.right)-Math.max(0,r.left))*
+                    Math.max(0,Math.min(vh,r.bottom)-Math.max(0,r.top))*
+                    (el.tagName?.toLowerCase()==='video'?1.15:1)};
+            })
+            .sort((a,b)=>b.score-a.score)
+            .map(x=>storyAssetKey(x.el.currentSrc||x.el.src||
+                x.el.getAttribute?.('src')||''))
+            .find(Boolean) || '';
+    }
+
+    function storyItemAssetKeys(item) {
+        const variants=[
+            item?.video_url,item?.display_url,item?.display_uri,item?.thumbnail_src,
+            ...(item?.video_versions||[]).map(x=>x?.url),
+            ...(item?.image_versions2?.candidates||[]).map(x=>x?.url),
+            ...(item?.display_resources||[]).map(x=>x?.src),
+            bestVideo(item),bestImage(item),
+        ];
+        return new Set(variants.map(storyAssetKey).filter(Boolean));
+    }
+
+    async function resolveStoryViewerItem(target) {
+        const before=storyViewerRouteInfo(location.href);
+        if(!before || target?.kind!=='story-viewer' ||
+            before.username.toLowerCase()!==String(target.username||'').toLowerCase())
+            throw new Error('SINGLE STORY: le lecteur ne correspond plus au compte demandé.');
+
+        const visibleBefore=storyVisibleAssetKey();
+        const username=before.username;
+        let userId=String(state.username.toLowerCase()===username.toLowerCase()
+            ? state.userId||'' : '');
+        if(!/^\d+$/.test(userId)) {
+            // Only one verified profile HTML request, on deliberate click.
+            const profile=await fetchProfilePageMetadata(username);
+            userId=String(profile?.pk||profile?.id||'').split('_')[0];
+            if(!/^\d+$/.test(userId))
+                throw new Error('SINGLE STORY: ID du compte non confirmé.');
+        }
+        const reels=await fetchWebStoryReel(userId,false,'SINGLE STORY viewer');
+        const reel=reels.find(x=>hiId(x?.id)===userId);
+        if(!reel || !Array.isArray(reel.items) || reel.items.length===0)
+            throw new Error('SINGLE STORY: aucune Story authentifiée pour ce compte.');
+
+        const items=reel.items.filter(x=>/^\d+$/.test(normalizePk(x)));
+        if(items.length!==reel.items.length)
+            throw new Error('SINGLE STORY: identité média absente dans la réponse.');
+        let selected;
+        if(items.length===1) {
+            selected=items[0];
+        } else {
+            const matches=visibleBefore
+                ? items.filter(x=>storyItemAssetKeys(x).has(visibleBefore))
+                : [];
+            if(matches.length!==1)
+                throw new Error('SINGLE STORY: plusieurs Stories, le média affiché est ambigu. Aucun téléchargement.');
+            selected=matches[0];
+        }
+
+        const after=storyViewerRouteInfo(location.href);
+        if(!after || after.username.toLowerCase()!==username.toLowerCase() ||
+            (items.length>1 && storyVisibleAssetKey()!==visibleBefore))
+            throw new Error('SINGLE STORY: le lecteur a changé pendant la vérification.');
+
+        const id=normalizePk(selected);
+        log('SINGLE STORY viewer verified: account='+username+
+            ', items='+items.length+', id='+id+'.');
+        // Keep full media-info, filenames and all-or-nothing downloader.
+        return fetchStandaloneMediaInfo(id,'SINGLE STORY '+id);
+    }
+
     async function downloadSingleTarget(
         target,
         button = null
@@ -16542,7 +16637,7 @@
     
         if (
             !resolved ||
-            !/^\d+$/.test(id) ||
+            (!/^\d+$/.test(id) && resolved.kind!=='story-viewer') ||
             !key ||
             singleDownloadState.busy.has(
                 key
@@ -16584,12 +16679,11 @@
         }
     
         const label =
-            resolved.kind === 'story'
-                ? `story ${id}`
-                : (
-                    resolved.shortcode ||
-                    id
-                );
+            resolved.kind==='story-viewer'
+                ? 'story affichée @'+resolved.username
+                : resolved.kind==='story'
+                    ? `story ${id}`
+                    : (resolved.shortcode || id);
     
         log(
             `Single download requested: kind=${resolved.kind}, route=${resolved.route || '-'}, ` +
@@ -16621,13 +16715,17 @@
             );
     
             const item =
-                await fetchStandaloneMediaInfo(
-                    id,
-                    `SINGLE ${String(resolved.kind || 'media').toUpperCase()} ${label}`
-                );
-    
+                resolved.kind==='story-viewer'
+                    ? await resolveStoryViewerItem(resolved)
+                    : await fetchStandaloneMediaInfo(
+                        id,
+                        `SINGLE ${String(resolved.kind || 'media').toUpperCase()} ${label}`
+                    );
+            const actualId=resolved.kind==='story-viewer'
+                ? normalizePk(item) : id;
+
             const forcedType =
-                resolved.kind === 'story'
+                (resolved.kind === 'story' || resolved.kind === 'story-viewer')
                     ? 'STORY'
                     : resolved.route === 'reel'
                         ? 'REEL'
@@ -16637,7 +16735,7 @@
                 standaloneUnits(
                     item,
                     forcedType,
-                    id
+                    actualId
                 );
     
             if (!files.length) {
