@@ -10579,6 +10579,84 @@
         return {ok:true, reason:'all_discovered_units_archived'};
     }
 
+
+    // A tagged carousel can arrive partially from BOTH the native tagged
+    // connection and the existing authenticated media-info GET. Combine
+    // only proven child IDs from the SAME parent, if the two independent
+    // source fragments jointly satisfy the identical declared item count.
+    // No guessed child IDs, synthetic GraphQL pagination or preview URLs.
+    function verifiedTaggedCarouselUnion(listing,detailed) {
+        const fail=(reason,diag={})=>({ok:false,reason,...diag});
+        const a=listing?.media&&typeof listing.media==='object'
+            ? listing.media : listing;
+        const b=detailed?.media&&typeof detailed.media==='object'
+            ? detailed.media : detailed;
+        const aId=normalizePk(a),bId=normalizePk(b);
+        if(!/^\d+$/.test(String(aId||'')) || aId!==bId)
+            return fail('parent_identity_mismatch');
+        const isSidecar=x=>Number(x?.media_type)===8 ||
+            x?.__typename==='GraphSidecar' ||
+            ['carousel','carousel_container'].includes(
+                String(x?.product_type||x?.media_product_type||'').toLowerCase());
+        if(!isSidecar(a) || !isSidecar(b))
+            return fail('not_both_carousel');
+        if(a?.edge_sidecar_to_children?.page_info?.has_next_page===true ||
+            b?.edge_sidecar_to_children?.page_info?.has_next_page===true)
+            return fail('child_pagination_unfinished');
+        const claimed=x=>{
+            const v=x?.carousel_media_count;
+            if(v==null || v==='') return null;
+            const n=Number(v);
+            return Number.isSafeInteger(n) && n>=2 ? n : NaN;
+        };
+        const ca=claimed(a),cb=claimed(b);
+        if(Number.isNaN(ca) || Number.isNaN(cb) ||
+            (ca!==null && cb!==null && ca!==cb))
+            return fail('carousel_count_conflict');
+        const count=ca??cb;
+        if(!Number.isSafeInteger(count) || count<2 || count>100)
+            return fail('missing_safe_carousel_count');
+        const children=root=>Array.isArray(root?.carousel_media) &&
+            root.carousel_media.length ? root.carousel_media :
+            (root?.edge_sidecar_to_children?.edges||[])
+                .map(e=>e?.node).filter(Boolean);
+        const first=children(a),second=children(b);
+        if(!first.length || !second.length)
+            return fail('carousel_child_list_missing');
+        const merged=new Map();
+        for(const arr of [first,second]){
+            const local=new Set();
+            for(const unit of arr){
+                const id=normalizePk(unit);
+                if(!/^\d+$/.test(String(id||'')) || local.has(id))
+                    return fail('duplicate_or_invalid_child_identity');
+                local.add(id);
+                const prev=merged.get(id);
+                if(prev){
+                    const videoFlag=x=>x?.is_video===true ||
+                        Number(x?.media_type)===2 ||
+                        x?.__typename==='GraphVideo';
+                    const explicitVideo=x=>x?.is_video===true ||
+                        x?.is_video===false ||
+                        x?.media_type!=null ||
+                        x?.__typename==='GraphVideo' ||
+                        x?.__typename==='GraphImage';
+                    if(explicitVideo(prev) && explicitVideo(unit) &&
+                        videoFlag(prev)!==videoFlag(unit))
+                        return fail('child_media_kind_conflict');
+                    const usable=x=>!!(isVideo(x)?bestVideo(x):bestImage(x));
+                    if(!usable(prev) && usable(unit)) merged.set(id,unit);
+                } else merged.set(id,unit);
+            }
+        }
+        const diag={listed:first.length,detailed:second.length,
+            union:merged.size,claimed:count};
+        if(merged.size!==count) return fail('child_count_union_gap',diag);
+        const output={...b,media_type:8,
+            carousel_media_count:count,carousel_media:[...merged.values()]};
+        return {ok:true,root:output,reason:'exact_verified_child_union',...diag};
+    }
+
     async function scanTaggedGraphQL() {
         state.coverage.tagged = false;
 
@@ -10782,24 +10860,45 @@
                             addMedia(detailed, 'TAGGED', 'TAGGED');
                             const detailedProof =
                                 discoveredMediaResolution(detailed, 'TAGGED');
-                            // Do not let a shorter hydrated carousel replace a
-                            // stronger unit-count claim from the original feed.
-                            const rawCount = Number(media?.carousel_media_count || 0);
-                            const fullChildren = Array.isArray(detailed?.carousel_media)
+                            // A hydrated carousel cannot silently override
+                            // a larger count claimed by the TAGGED feed.
+                            const rawCount=Number(media?.carousel_media_count||0);
+                            const fullChildren=Array.isArray(detailed?.carousel_media)
                                 ? detailed.carousel_media.length
                                 : Array.isArray(detailed?.edge_sidecar_to_children?.edges)
                                     ? detailed.edge_sidecar_to_children.edges.length
                                     : 0;
-                            if (detailedProof.ok && Number.isSafeInteger(rawCount) &&
-                                rawCount > 1 && fullChildren < rawCount) {
-                                proof = {ok:false, reason:'hydrated_carousel_count_gap'};
-                            } else {
-                                proof = detailedProof;
-                                if (proof.ok) {
-                                    hydratedRoots++;
-                                    recovery = 'web_media_info_resolved';
+                            const hydratedShort=detailedProof.ok &&
+                                Number.isSafeInteger(rawCount) && rawCount>1 &&
+                                fullChildren<rawCount;
+                            proof=hydratedShort
+                                ? {ok:false,reason:'hydrated_carousel_count_gap'}
+                                : detailedProof;
+
+                            // Both authentic responses may contain different
+                            // fragments of the same carousel. Only an exact
+                            // root-ID / count / child-ID union can recover it.
+                            if(!proof.ok && [
+                                'carousel_item_count_gap',
+                                'carousel_children_unavailable',
+                                'hydrated_carousel_count_gap',
+                            ].includes(proof.reason)){
+                                const joined=verifiedTaggedCarouselUnion(media,detailed);
+                                if(joined.ok){
+                                    addMedia(joined.root,'TAGGED','TAGGED');
+                                    proof=discoveredMediaResolution(joined.root,'TAGGED');
+                                    if(proof.ok) recovery='web_media_info_union_resolved';
+                                }
+                                if(!proof.ok){
+                                    log('TAGGED carousel strict union not complete: root='+
+                                        rootId+', list='+String(joined.listed??'-')+
+                                        ', info='+String(joined.detailed??'-')+
+                                        ', union='+String(joined.union??'-')+
+                                        ', declared='+String(joined.claimed??'-')+
+                                        ', reason='+joined.reason+'.','warn');
                                 }
                             }
+                            if(proof.ok) hydratedRoots++;
                         }
                     } catch (err) {
                         throwIfInstagramStop(err, 'TAGGED media-info');
