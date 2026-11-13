@@ -84,6 +84,9 @@ jobs:
       - name: Story username-only Firefox URL, visible-item selection and click-time safety
         run: node tests/story-username-viewer-regression.test.mjs
 
+      - name: Private PROFILE viewport and TAGGED strict carousel union safety regression
+        run: node tests/profile-tagged-coverage-v1-5-108.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
