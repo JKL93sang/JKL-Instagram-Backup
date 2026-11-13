@@ -16609,7 +16609,12 @@
         log('SINGLE STORY viewer verified: account='+username+
             ', items='+items.length+', id='+id+'.');
         // Keep full media-info, filenames and all-or-nothing downloader.
-        return fetchStandaloneMediaInfo(id,'SINGLE STORY '+id);
+        const item=await fetchStandaloneMediaInfo(id,'SINGLE STORY '+id);
+        const finalRoute=storyViewerRouteInfo(location.href);
+        if(!finalRoute || finalRoute.username.toLowerCase()!==username.toLowerCase() ||
+            (items.length>1 && storyVisibleAssetKey()!==visibleBefore))
+            throw new Error('SINGLE STORY: le lecteur a changé avant le téléchargement.');
+        return item;
     }
 
     async function downloadSingleTarget(
@@ -17166,12 +17171,10 @@
         return {left:Math.round(left),top:Math.round(top)};
     }
 
-    // A /stories/<username>/<media-id>/ URL is an exact media target,
-    // even when Instagram's Story player has no <main>, <section> or
-    // article element. Keep the SOLO button fixed to the portrait viewer
-    // rather than silently hiding it for lack of an ordinary POST root.
-    // No inferred media ID, no scraping request and no click until the
-    // user explicitly presses the button.
+    // The viewer may use /stories/<username>/ with NO numeric media ID.
+    // Its floating control is only an affordance: identify the exact
+    // currently playing media at click time, never from the viewer URL
+    // alone. Do not request media-info or download before explicit click.
     function storyFloatingAnchor(target) {
         const route=target?.kind==='story-viewer'
             ? storyViewerRouteInfo(location.href) : storyPermalinkInfo(location.href);
@@ -17207,8 +17210,8 @@
             .sort((a,b) => b.score - a.score)[0]?.r || null;
 
         // Instagram may mount the Story shell before its IMG/VIDEO.
-        // The exact media ID is already verified from the URL, so place
-        // the control over the center viewer until the content mounts.
+        // The Story VIEWER identity is verified from the URL. Placement
+        // does not prove which individual media is playing.
         const viewerWidth = Math.min(480,vw*.72);
         const rightEdge = visible
             ? Math.min(vw - 8,visible.right)
