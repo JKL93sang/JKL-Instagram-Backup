@@ -107,8 +107,10 @@ const helper=new Function(
 const actualDownload=extract('downloadSingleTarget');
 const actualClick=extract('handleSingleDownloadClick');
 const actualFindButton=extract('singleDownloadButtonFromEvent');
-assert.match(actualDownload,/standaloneUnits\(\s*item,\s*forcedType,\s*id\s*\)/,
-    'Single pipeline MUST pass selected root identity into all-or-nothing unit planner');
+assert.match(actualDownload,/standaloneUnits\(\s*item,\s*forcedType,\s*actualId\s*\)/,
+    'Single pipeline MUST pass the verified resolved root identity into all-or-nothing unit planner');
+assert.match(actualDownload,/const actualId\s*=\s*resolved.kind\s*===\s*'story-viewer'/,
+    'The username-only Story viewer must use authenticated item identity, not a guessed root ID');
 const executer=new Function(
     'state','singleDownloadState','status','log','fetchStandaloneMediaInfo',
     'standaloneUnits','downloadStandaloneFile','sleep','APP','setTimeout',
