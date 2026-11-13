@@ -163,6 +163,43 @@ location.href='https://www.instagram.com/stories/b_kkaaa/';
 
 assert.ok(src.includes("!/^\\d+$/.test(id) && resolved.kind!=='story-viewer'"),
     'download guard must distinguish account-only Story from a numeric root');
+
+const transfers=[],finalStatuses=[];
+const transferState={running:false,downloading:false,
+    feedbackRequired:false,rateLimited:false,apiUnhealthy:false};
+const testButton={isConnected:true,innerHTML:'<svg/>',disabled:false,
+    classList:{bag:new Set(),add(k){this.bag.add(k)},
+        remove(k){this.bag.delete(k)},contains(k){return this.bag.has(k)}},
+};
+const manualDownload=new Function(
+    'state','singleDownloadState','status','log',
+    'fetchStandaloneMediaInfo','resolveStoryViewerItem','normalizePk',
+    'standaloneUnits','downloadStandaloneFile','sleep','APP','setTimeout',
+    extract('downloadSingleTarget',true)+'\\nreturn downloadSingleTarget;'
+)(
+    transferState,{busy:new Set()},
+    (...x)=>finalStatuses.push(x),()=>{},
+    async()=>{throw Error('viewer cannot use an invented numeric root')},
+    async()=>({pk:id1}),x=>String(x?.pk||''),
+    (item,forced,expected)=>{
+        assert.equal(item.pk,id1);
+        assert.equal(forced,'STORY');
+        assert.equal(expected,id1);
+        return [{id:id1,filename:'story.mp4'}];
+    },
+    async file=>{
+        assert.equal(transferState.downloading,true,
+            'global operation mutex must guard user-only Story transfer');
+        transfers.push(file.id);
+    },
+    async()=>{}, {DOWNLOAD_DELAY:0},()=>0
+);
+await manualDownload(viewer,testButton);
+assert.deepEqual(transfers,[id1],
+    'username-only floating SOLO click must use verified root and existing downloader');
+assert.equal(transferState.downloading,false);
+assert.equal(finalStatuses.at(-1)?.[1],'ok');
+
 assert.match(src,/resolveStoryViewerItem\(resolved\)/,
     'button click must resolve the viewer before invoking normal media-info downloader');
 assert.equal(src.match(/@version\s+([0-9.]+)/)?.[1],'1.5.107');
