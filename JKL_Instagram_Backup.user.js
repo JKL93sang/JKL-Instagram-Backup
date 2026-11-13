@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.106
-// @description  TEST v1.5.106: story-view SOLO placement, bounded TAGGED recovery and private PROFILE diagnostics.
+// @version      1.5.107
+// @description  TEST v1.5.107: username-only Story viewer SOLO and verified click-time media selection.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.106', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.107', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
@@ -16010,6 +16010,21 @@
         }
     }
 
+
+    // Instagram may show /stories/<username>/ without the item's ID.
+    // This is only the VIEWER identity, NOT a verified media identity.
+    function storyViewerRouteInfo(value) {
+        try {
+            const u=new URL(String(value||''),location.origin);
+            const m=u.pathname.match(/^\/stories\/([A-Za-z0-9._]{1,30})\/?$/);
+            if(!m) return null;
+            const username=cleanUser(m[1]);
+            if(!username || username.toLowerCase()==='highlights') return null;
+            return {kind:'story-viewer',route:'story',username,
+                mediaId:'',shortcode:'',key:'story-viewer:'+username.toLowerCase()};
+        } catch {return null;}
+    }
+
     function singleDownloadTargetFromUrl(value) {
         const media =
             mediaPermalinkInfo(
@@ -16031,9 +16046,7 @@
             };
         }
     
-        return storyPermalinkInfo(
-            value
-        );
+        return storyPermalinkInfo(value) || storyViewerRouteInfo(value);
     }
 
     function singleDownloadTargetFromRoot(root) {
@@ -16153,9 +16166,11 @@
         }
     
         button.title =
-            target.kind === 'story'
-                ? 'Télécharger cette story uniquement'
-                : 'Télécharger cette publication uniquement';
+            target.kind === 'story-viewer'
+                ? 'Télécharger la story affichée uniquement'
+                : target.kind === 'story'
+                    ? 'Télécharger cette story uniquement'
+                    : 'Télécharger cette publication uniquement';
     
         button.setAttribute(
             'aria-label',
@@ -16199,11 +16214,11 @@
             );
     
         if (
-            /^\d+$/.test(mediaId) &&
-            (
-                kind === 'story' ||
-                kind === 'media'
-            )
+            (/^\d+$/.test(mediaId) &&
+                (kind === 'story' || kind === 'media')) ||
+            (kind === 'story-viewer' && !mediaId && username &&
+                storyViewerRouteInfo(location.href)?.username.toLowerCase() ===
+                    username.toLowerCase())
         ) {
             return {
                 kind,
@@ -16918,7 +16933,7 @@
             .filter(visible);
         if(dialogs.length) return dialogs[dialogs.length-1];
 
-        if(storyPermalinkInfo(location.href)) {
+        if(storyPermalinkInfo(location.href) || storyViewerRouteInfo(location.href)) {
             const sections=[...document.querySelectorAll('section')]
                 .filter(visible);
             return sections.reverse().find(el=>el.querySelector('img,video')) ||
@@ -17056,11 +17071,12 @@
     // No inferred media ID, no scraping request and no click until the
     // user explicitly presses the button.
     function storyFloatingAnchor(target) {
-        const route = storyPermalinkInfo(location.href);
-        if (!target || target.kind !== 'story' || !route ||
-            route.mediaId !== String(target.mediaId) ||
-            route.username.toLowerCase() !==
-                String(target.username || '').toLowerCase()) return null;
+        const route=target?.kind==='story-viewer'
+            ? storyViewerRouteInfo(location.href) : storyPermalinkInfo(location.href);
+        if (!target || !route || target.kind!==route.kind ||
+            (target.kind==='story' && route.mediaId!==String(target.mediaId)) ||
+            route.username.toLowerCase()!==String(target.username||'').toLowerCase())
+            return null;
 
         const vw = Number(window.innerWidth || 0);
         const vh = Number(window.innerHeight || 0);
@@ -17185,7 +17201,7 @@
                     : 'Média ciblé : ' +
                         (target.username ? '@' + target.username + ' · ' : '') +
                         (target.route || target.kind).toUpperCase() +
-                        ' · ' + (target.shortcode || target.mediaId);
+                        ' · ' + (target.shortcode || target.mediaId || 'identification au clic');
         if (ui.singleTarget && ui.singleTarget.textContent !== label) {
             ui.singleTarget.textContent = label;
         }
@@ -17219,7 +17235,8 @@
         }
         const root=currentMediaRoot();
         const media=largestCurrentMedia(root);
-        const anchor=target.kind==='story'
+        const isStory=target.kind==='story' || target.kind==='story-viewer';
+        const anchor=isStory
             ? storyFloatingAnchor(target)
             : currentMediaOverlayHost(media,root);
         if(!anchor){
@@ -17235,7 +17252,7 @@
         singleDownloadState.lastOverlayDiagnostic='';
         const button=ensureCurrentDownloadButton();
         applySingleDownloadTarget(button,target);
-        button.dataset.placement=target.kind==='story'
+        button.dataset.placement=isStory
             ? (placeCurrentDownloadButton(button,root,anchor), 'viewport-pinned-story')
             : placeCurrentDownloadButton(button,root,anchor);
         button.disabled=state.running || state.downloading ||
