@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.111
-// @description  TEST v1.5.111: TAGGED count-proof diagnostics and historical archive-path continuity.
+// @version      1.5.114
+// @description  TEST v1.5.114: read-only historical PROFILE parent reconciliation.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/tagged-evidence-and-archive-v1.5.111/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-evidence-and-archive-v1.5.111/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-evidence-and-archive-v1.5.111/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/test/profile-historical-root-audit-v1.5.114/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-historical-root-audit-v1.5.114/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-historical-root-audit-v1.5.114/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.111', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.114', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
@@ -13356,6 +13356,40 @@
                 '. DOM/reels never grant PROFILE completeness.',
                 c.gapMainVsCounter ? 'warn' : 'info'
             );
+            if (scanSelected('post') && scanSelected('reel')) {
+                const audit=profileHistoricalRootAudit();
+                log(
+                    'PROFILE HISTORICAL AUDIT (read-only): historical=' +
+                    audit.historicalRootCount +
+                    ' (native=' + audit.historicalNativeProvenanceCount +
+                    ', dom_only=' + audit.historicalDomOnlyCount +
+                    '), current_main_plus_reels=' +
+                    audit.currentObservedRootCount +
+                    ', absent_from_current=' +
+                    audit.historicRootsAbsentFromCurrent +
+                    ' (native=' + audit.historicNativeAbsent +
+                    ', dom_only=' + audit.historicDomOnlyAbsent +
+                    '), dom_unresolved=' +
+                    audit.currentUnresolvedDomCandidateIds.length +
+                    ', counter_history_delta=' +
+                    audit.numericCounterVsHistory +
+                    '. No coverage or archive changes.',
+                    'warn'
+                );
+                for (const old of audit.missing.slice(0,40)) {
+                    log(
+                        'PROFILE historic root not re-proven: root=' +
+                        old.rootId + ', code=' + old.shortcode +
+                        ', source=' + old.provenance +
+                        ', historic_units=' + old.historicalUnits +
+                        ', current_queued_units=' +
+                        old.currentQueuedHistoricalUnits +
+                        ', dom_candidate=' + old.currentDomCandidate +
+                        ', status=' + old.status + '.',
+                        'warn'
+                    );
+                }
+            }
             updateStats();
 
             logScanProfilerSummary(
@@ -14933,6 +14967,137 @@
         await downloadMissing();
     }
 
+
+    // Previously verified native/DOM PROFILE archive receipts identify
+    // historical parent roots. They NEVER prove current access, a missing
+    // server page, or permission to re-download an old media ID.
+    function reconcileHistoricalProfileRoots(input = {}) {
+        const valid = x => /^\d+$/.test(String(x || ''));
+        const ids = list => new Set(
+            (Array.isArray(list) ? list : []).map(String).filter(valid)
+        );
+        const main = ids(input.main);
+        const reels = ids(input.reels);
+        const dom = ids(input.dom);
+        const native = ids(input.native);
+        const currentMediaIds = ids(input.currentMediaIds);
+        const observed = new Set([...main, ...reels]);
+        const selectedPost = input.selectedPost === true;
+        const selectedReel = input.selectedReel === true;
+        const completeSelection = selectedPost && selectedReel;
+        const expected = Number(input.expected);
+        const countVerified =
+            Number.isSafeInteger(expected) && expected >= 0;
+        const groups = new Map();
+        const ledger = input.ledger && typeof input.ledger === 'object'
+            ? input.ledger : {};
+
+        for (const [mediaId, old] of Object.entries(ledger)) {
+            if (!valid(mediaId) || !old || typeof old !== 'object' ||
+                !['POST','REEL'].includes(old.type) ||
+                !Array.isArray(old.sources)) continue;
+            const nativeSource = old.sources.includes('PROFILE_GRID_NATIVE');
+            const domSource = old.sources.includes('PROFILE_GRID_DOM');
+            // No tagged-only item or historical receipt without source proof
+            // can establish historical ownership.
+            if (!nativeSource && !domSource) continue;
+            const code = canonicalShortcode(old.shortcode);
+            const parentId = shortcodeId(code);
+            if (!code || !valid(parentId)) continue;
+            let group = groups.get(parentId);
+            if (!group) {
+                group = {
+                    rootId:parentId, shortcode:code,
+                    mediaIds:new Set(), nativeSource:false, domSource:false,
+                };
+                groups.set(parentId, group);
+            }
+            group.mediaIds.add(mediaId);
+            group.nativeSource ||= nativeSource;
+            group.domSource ||= domSource;
+        }
+
+        const roots = [...groups.values()]
+            .sort((a,b)=>a.rootId.localeCompare(b.rootId));
+        const missing = roots
+            .filter(g=>!observed.has(g.rootId))
+            .map(g=>{
+                const historicalMedia=[...g.mediaIds];
+                const presentUnits=historicalMedia.filter(id=>
+                    currentMediaIds.has(id)
+                ).length;
+                const domLink=dom.has(g.rootId);
+                return {
+                    rootId:g.rootId,shortcode:g.shortcode,
+                    provenance:g.nativeSource
+                        ? 'PROFILE_GRID_NATIVE' : 'PROFILE_GRID_DOM',
+                    historicalUnits:historicalMedia.length,
+                    currentQueuedHistoricalUnits:presentUnits,
+                    currentDomCandidate:domLink,
+                    currentNativeRoot:native.has(g.rootId),
+                    status:domLink
+                        ? 'current_dom_candidate_unverified'
+                        : presentUnits
+                            ? 'historical_root_with_current_media_only'
+                            : 'historical_root_not_in_current_selection',
+                };
+            });
+        const nativeMissing = missing.filter(x=>
+            x.provenance === 'PROFILE_GRID_NATIVE'
+        ).length;
+        return {
+            kind:completeSelection
+                ? 'PROFILE_HISTORICAL_RECONCILIATION_DIAGNOSTIC'
+                : 'PROFILE_HISTORICAL_COMPARISON_NOT_SELECTED',
+            selectedPost,selectedReel,
+            expectedAuthenticated:countVerified ? expected : null,
+            historicalRootCount:groups.size,
+            historicalNativeProvenanceCount:
+                roots.filter(x=>x.nativeSource).length,
+            historicalDomOnlyCount:
+                roots.filter(x=>!x.nativeSource).length,
+            currentObservedRootCount:observed.size,
+            currentMatchedHistoricalRoots:roots.length-missing.length,
+            historicRootsAbsentFromCurrent:missing.length,
+            historicNativeAbsent:nativeMissing,
+            historicDomOnlyAbsent:missing.length-nativeMissing,
+            currentRootsWithNoHistoricalEvidence:
+                [...observed].filter(id=>!groups.has(id)).sort(),
+            currentUnresolvedDomCandidateIds:
+                [...dom].filter(id=>!observed.has(id)).sort(),
+            numericCounterVsHistory:countVerified
+                ? expected-groups.size : null,
+            numericCounterVsCurrent:countVerified
+                ? expected-observed.size : null,
+            // During TAGGED-only sessions this list is withheld rather
+            // than misrepresenting all historical roots as missing.
+            missing:completeSelection ? missing : [],
+            warning:!completeSelection
+                ? 'POSTS and REELS were not both selected; historic/current ' +
+                  'comparison does not establish PROFILE coverage.'
+                : 'Past receipts and media_count are not current server ' +
+                  'pagination. TAGGED/DOM observations cannot establish ' +
+                  'current OWNED membership, deleted files or downloads.',
+        };
+    }
+
+    function profileHistoricalRootAudit() {
+        const key=String(state.username || '').toLowerCase();
+        const reels=net.reelsByUserId?.get(String(state.userId || ''));
+        const native=net.gridByUser?.get(key);
+        return reconcileHistoricalProfileRoots({
+            ledger:loadDb()?.profiles?.[state.userId]?.media || {},
+            main:[...(state.profileMainGridRootIds || [])],
+            reels:reels instanceof Map ? [...reels.keys()] : [],
+            native:native instanceof Map ? [...native.keys()] : [],
+            dom:[...(state.profileDomObservedRootIds || [])],
+            currentMediaIds:[...state.queue.keys()],
+            expected:state.expected,
+            selectedPost:scanSelected('post'),
+            selectedReel:scanSelected('reel'),
+        });
+    }
+
     function profileSourceDiagnosticSnapshot() {
         // Read-only evidence. Main PROFILE is captured before visiting
         // independent REELS; DOM links remain candidates, never proof.
@@ -15074,6 +15239,7 @@
                 accessibleOwnedRoots: ownedCount(),
                 globalGap: globalGap(),
                 profileSourceDiagnostics: profileSourceDiagnosticSnapshot(),
+                profileHistoricalRootAudit: profileHistoricalRootAudit(),
                 publicShadow: { ...state.shadow },
                 connectedHidden: {
                     ...state.hidden,
