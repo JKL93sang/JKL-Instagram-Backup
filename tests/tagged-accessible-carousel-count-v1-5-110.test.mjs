@@ -55,7 +55,7 @@ function archive(raw,sourceName,state) {
 {
     assert.deepEqual(reconcile(listing,detailed), {
         ok:true,reason:'verified_accessible_count_hint_mismatch',
-        rootId:'500',declared:4,accessible:3,
+        rootId:'500',declared:4,accessible:3,sameOrder:true,
     });
     const state={queue:new Map()};
     archive(detailed,'TAGGED',state);
@@ -68,13 +68,18 @@ function archive(raw,sourceName,state) {
         {verifiedAccessibleCarousel:true}).ok,false,
         'override must not affect PROFILE, HIGHLIGHTS or other sources');
 }
+assert.deepEqual(reconcile(listing,
+    sidecar([kids[0],kids[2],kids[1]],4)),{
+        ok:true,reason:'verified_accessible_count_hint_mismatch',
+        rootId:'500',declared:4,accessible:3,sameOrder:false,
+    },'same authentic child set in different order must be allowed');
+
 const wrong = [
     [sidecar(kids,3),detailed,'no greater count hint'],
     [sidecar(kids,5),sidecar(kids,4),'conflicting detailed count'],
     [listing,sidecar(kids,4,{pk:'999'}),'different root'],
     [listing,sidecar(kids,4,{user:{pk:'71'}}),'different owner'],
     [listing,sidecar(kids,4,{code:'OtherCode'}),'different shortcode'],
-    [listing,sidecar([kids[0],kids[2],kids[1]],4),'different child order'],
     [listing,sidecar([kids[0],kids[1],kids[1]],4),'duplicate child'],
     [listing,sidecar([...kids,child('504')],4),'more detailed children'],
     [listing,sidecar(kids.slice(0,2),4),'fewer detailed children'],
@@ -109,7 +114,8 @@ async function runTagged(left,right) {
     const logs=[],requests=[];
     const scanner=new Function('state','net','APP','gql','taggedConn',
         'edgeNode','addMedia','discoveredMediaResolution','normalizePk',
-        'taggedAccessibleCarouselProof','fetchOwnedMediaInfo','updateStats',
+        'taggedAccessibleCarouselProof','restoreHistoricalTaggedPostArchive',
+        'fetchOwnedMediaInfo','updateStats',
         'log','throwIfInstagramStop','sleep','rand',
         extract('scanTaggedGraphQL')+'\nreturn scanTaggedGraphQL;'
     )(state,net,{TAGGED_FALLBACK_DOC:'fixture',TAGGED_MAX_PAGES:2,
@@ -118,7 +124,7 @@ async function runTagged(left,right) {
             page_info:{has_next_page:false,end_cursor:null}}}),
         d=>d.conn,e=>e.node,
         (m,_type,origin)=>archive(m,origin,state),proof(state),normalizePk,
-        reconcile,async(id,_label,policy)=>{
+        reconcile,()=>0,async(id,_label,policy)=>{
             requests.push({id,policy});
             return right;
         },()=>{},(line)=>logs.push(String(line)),()=>{},async()=>{},()=>0);
@@ -138,7 +144,8 @@ async function runTagged(left,right) {
     assert.ok(r.logs.some(s=>s.includes('resolved=1, unresolved=0')));
     assert.deepEqual(r.state.taggedCountHintMismatches,[{
         rootId:'500',shortcode:'CxExample',declared:4,accessible:3,
-        sameAuthenticatedChildren:true,historicalCompletenessUnknown:true,
+        sameAuthenticatedChildren:true,sameOrder:true,
+        historicalCompletenessUnknown:true,
     }],'manifest must retain a compact, explainable anomaly record');
 }
 {
@@ -146,6 +153,12 @@ async function runTagged(left,right) {
         carousel_media_ids:['501','502','503','504']}));
     assert.equal(r.ok,false,'explicit fourth child inventory must block completion');
     assert.ok(r.logs.some(s=>s.includes('unresolved=1')));
+    assert.ok(r.logs.some(s=>s.includes(
+        'TAGGED count hint proof rejected: root=500, reason=independent_child_ids_conflict')),
+        'scanner must provide actionable, privacy-safe rejection diagnostics');
+    assert.equal(r.state.taggedCountHintFailures.length,1);
+    assert.equal(r.state.taggedCountHintFailures[0].reason,
+        'independent_child_ids_conflict');
     assert.deepEqual(r.state.taggedCountHintMismatches,[],
         'rejected count hints are not classified as verified accessible');
 }
@@ -169,6 +182,8 @@ async function runTagged(left,right) {
     assert.equal(r.ok,false,'different media owner may not use count override');
 }
 assert.ok(source.includes('taggedCountHintMismatches:'), 'manifest includes count warnings');
+assert.ok(source.includes('taggedCountHintFailures:'), 'manifest includes rejected proof reasons');
+assert.ok(source.includes('taggedHistoricalPostRestored:'), 'manifest includes archive continuity count');
 assert.ok(source.includes('<span>TAGGED count hints</span>'),
     'user sees count mismatch even when TAGGED accessible coverage passes');
 console.log('TAGGED authenticated accessible count hint reconciliation: PASS');
