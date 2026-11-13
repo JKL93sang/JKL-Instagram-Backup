@@ -104,5 +104,5 @@ assert.match(scan,/navigationEnded = false;/,
     'counter gap must not get a false complete by no-replay');
 assert.match(scan,/continuing REELS and media hydration/,
     'other scan phases must still run');
-assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.117');
+assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.118');
 console.log('Native PROFILE terminal counter gap: no unsafe replay, no false COMPLETE, scoped proof & continuation: PASS');
