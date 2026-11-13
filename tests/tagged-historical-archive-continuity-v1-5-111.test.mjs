@@ -90,6 +90,41 @@ function harness({old={},current=['901','902'],who='123'}={}) {
     h.state.queue.get('901').sources.delete('TAGGED');
     assert.equal(h.restore(makeRoot(['901','902'])),0);
 }
+// Previously native-verified POST can remain in POSTS while download is
+// authorized by a CURRENT, independently completed TAGGED source; never
+// mistake an old receipt for present PROFILE/remote completeness.
+{
+    const h=harness({old:{901:verified('901')}});
+    const rec=h.state.queue.get('901');
+    rec.url='https://cdn.example.test/901.jpg';
+    h.restore(makeRoot(['901','902']));
+    const state={
+        queue:new Map([['901',rec]]),userId:'123',
+        scanPlan:{post:false,reel:false,tagged:true},
+        coverage:{publicShadow:false,ownedHydration:false,tagged:true},
+        shadow:{applicable:false,pageInfoEnded:false,postIds:new Set(),profileId:''},
+        roots:{POST:new Set(),REEL:new Set(),TAGGED:new Set(['900'])},
+    };
+    const proof=new Function('state','mediaArchiveCategory',
+        extract('verifiedAccessibleMedia')+
+        '\nreturn verifiedAccessibleMedia;'
+    )(state,m=>m.type==='POST'?'POSTS':m.type);
+    assert.equal(proof().length,1,
+        'currently complete TAGGED surface may authorize same-item download to historical POSTS');
+    assert.equal(state.roots.POST.size,0,
+        'current PROFILE identity must remain unproved');
+    state.coverage.tagged=false;
+    assert.equal(proof().length,0,'incomplete TAGGED is no permission');
+    state.coverage.tagged=true;
+    state.roots.TAGGED.clear();
+    assert.equal(proof().length,0,'no current tagged root is no permission');
+    state.roots.TAGGED.add('900');
+    rec.historicalPostArchiveContinuity=false;
+    assert.equal(proof().length,0,'historical proof flag is mandatory');
+    rec.historicalPostArchiveContinuity=true;
+    rec.sources.delete('TAGGED');
+    assert.equal(proof().length,0,'current tag source is mandatory');
+}
 assert.match(source,/TAGGED historical archive category preserved:/);
 assert.match(source,/current PROFILE coverage unchanged/);
 assert.match(source,/taggedHistoricalPostRestored:/);
