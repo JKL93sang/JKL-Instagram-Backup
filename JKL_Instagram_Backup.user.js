@@ -16225,7 +16225,7 @@
                 route:
                     route ||
                     (
-                        kind === 'story'
+                        kind === 'story' || kind === 'story-viewer'
                             ? 'story'
                             : 'p'
                     ),
@@ -16239,6 +16239,8 @@
             };
         }
     
+        // Never substitute a different Story after a stale viewer click.
+        if (kind === 'story-viewer') return null;
         return currentSingleDownloadTarget();
     }
 
