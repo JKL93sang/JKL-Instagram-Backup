@@ -84,6 +84,9 @@ jobs:
       - name: Story username-only Firefox URL, visible-item selection and click-time safety
         run: node tests/story-username-viewer-regression.test.mjs
 
+      - name: TAGGED authenticated accessible-carousel counter anomaly regression tests
+        run: node tests/tagged-accessible-carousel-count-v1-5-110.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
