@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.112
-// @description  TEST v1.5.112: verify an explicit fourth TAGGED child by authenticated same-origin media-info.
+// @version      1.5.113
+// @description  TEST v1.5.113: one authenticated known-sibling control after an extra TAGGED child HTTP 400.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/tagged-explicit-fourth-child-v1.5.112/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-explicit-fourth-child-v1.5.112/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-explicit-fourth-child-v1.5.112/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/test/tagged-carousel-sibling-control-v1.5.113/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/tagged-carousel-sibling-control-v1.5.113/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/tagged-carousel-sibling-control-v1.5.113/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.112', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.113', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
@@ -10678,7 +10678,7 @@
         return {
             ok:true, reason:'one_server_enumerated_child_not_materialized',
             rootId:parent, childId:missing[0],
-            declared, known:rightIds.length
+            knownSiblingId:rightIds[0], declared, known:rightIds.length
         };
     }
 
@@ -10831,6 +10831,7 @@
         state.taggedHistoricalPostRestored = 0;
         state.taggedExplicitChildProbes = [];
         let explicitChildInfoRequests = 0;
+        let siblingControlInfoRequests = 0;
 
         const initialDoc =
             net.taggedDocInitial ||
@@ -11213,6 +11214,71 @@
                                                 'child_media_info_unavailable';
                                             audit.httpStatus =
                                                 Number(e?.status || 0) || null;
+                                            // The orphan's HTTP 400 might mean
+                                            // either "inaccessible orphan" OR
+                                            // "this endpoint cannot fetch ANY
+                                            // carousel child by ID". Compare
+                                            // with ONE *known, materialized*
+                                            // sibling, using the exact same
+                                            // endpoint/options. One control per
+                                            // entire TAGGED scan, never a loop.
+                                            if (audit.httpStatus === 400 &&
+                                                siblingControlInfoRequests < 1 &&
+                                                /^\d+$/.test(
+                                                    candidate.knownSiblingId || ''
+                                                )) {
+                                                siblingControlInfoRequests++;
+                                                const control = {
+                                                    childId:
+                                                        candidate.knownSiblingId,
+                                                    status: 'attempted',
+                                                };
+                                                try {
+                                                    const sibling =
+                                                        await fetchOwnedMediaInfo(
+                                                            candidate.knownSiblingId,
+                                                            'TAGGED known-sibling control',
+                                                            {singleWebOnly:true}
+                                                        );
+                                                    control.status =
+                                                        normalizePk(sibling) ===
+                                                            candidate.knownSiblingId
+                                                            ? 'known_child_reachable'
+                                                            : 'identity_mismatch';
+                                                } catch (controlErr) {
+                                                    // Keep global auth/feedback/
+                                                    // rate-limit circuit breakers.
+                                                    throwIfInstagramStop(
+                                                        controlErr,
+                                                        'TAGGED known-sibling control'
+                                                    );
+                                                    const st = Number(
+                                                        controlErr?.status || 0
+                                                    );
+                                                    control.status = st === 400
+                                                        ? 'same_http_400'
+                                                        : st
+                                                            ? 'http_error'
+                                                            : 'unknown_error';
+                                                    control.httpStatus =
+                                                        st || null;
+                                                }
+                                                audit.siblingControl = control;
+                                                log(
+                                                    'TAGGED known-sibling control: ' +
+                                                    'root=' + rootId +
+                                                    ', known_id=' +
+                                                    candidate.knownSiblingId +
+                                                    ', result=' +
+                                                    control.status +
+                                                    (control.httpStatus
+                                                        ? ', http=' +
+                                                            control.httpStatus
+                                                        : '') +
+                                                    ', no_media_inference.',
+                                                    'warn'
+                                                );
+                                            }
                                         }
                                     }
                                     state.taggedExplicitChildProbes.push(audit);
