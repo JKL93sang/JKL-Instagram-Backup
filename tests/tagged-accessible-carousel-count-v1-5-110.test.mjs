@@ -30,6 +30,15 @@ const reconcile = new Function('normalizePk',
     extract('taggedAccessibleCarouselProof')+
     '\nreturn taggedAccessibleCarouselProof;'
 )(normalizePk);
+
+const candidate = new Function('normalizePk',
+    extract('taggedExplicitMissingChildCandidate')+
+    '\nreturn taggedExplicitMissingChildCandidate;'
+)(normalizePk);
+const validateChild = new Function('normalizePk','bestImage','bestVideo',
+    extract('taggedValidateExplicitChild')+
+    '\nreturn taggedValidateExplicitChild;'
+)(normalizePk,x=>x.url||'',x=>x.url||'');
 const proof = state => new Function('state','normalizePk',
     extract('discoveredMediaResolution')+
     '\nreturn discoveredMediaResolution;'
@@ -105,7 +114,7 @@ const wrong = [
 for(const [left,right,why] of wrong) {
     assert.equal(reconcile(left,right).ok,false,why);
 }
-async function runTagged(left,right) {
+async function runTagged(left,right,extraChild=null) {
     const state={userId:'1',cancelled:false,queue:new Map(),
         roots:{TAGGED:new Set()},coverage:{tagged:false}};
     const net={taggedDocInitial:null,taggedDocConnection:null,
@@ -115,6 +124,7 @@ async function runTagged(left,right) {
     const scanner=new Function('state','net','APP','gql','taggedConn',
         'edgeNode','addMedia','discoveredMediaResolution','normalizePk',
         'taggedAccessibleCarouselProof','restoreHistoricalTaggedPostArchive',
+        'taggedExplicitMissingChildCandidate','taggedValidateExplicitChild',
         'fetchOwnedMediaInfo','updateStats',
         'log','throwIfInstagramStop','sleep','rand',
         extract('scanTaggedGraphQL')+'\nreturn scanTaggedGraphQL;'
@@ -124,8 +134,13 @@ async function runTagged(left,right) {
             page_info:{has_next_page:false,end_cursor:null}}}),
         d=>d.conn,e=>e.node,
         (m,_type,origin)=>archive(m,origin,state),proof(state),normalizePk,
-        reconcile,()=>0,async(id,_label,policy)=>{
+        reconcile,()=>0,candidate,validateChild,
+        async(id,_label,policy)=>{
             requests.push({id,policy});
+            if(id==='504') {
+                if(extraChild instanceof Error) throw extraChild;
+                return extraChild || right;
+            }
             return right;
         },()=>{},(line)=>logs.push(String(line)),()=>{},async()=>{},()=>0);
     const ok=await scanner();
@@ -161,6 +176,61 @@ async function runTagged(left,right) {
         'independent_child_ids_conflict');
     assert.deepEqual(r.state.taggedCountHintMismatches,[],
         'rejected count hints are not classified as verified accessible');
+    assert.equal(r.state.taggedExplicitChildProbes.length,1);
+    assert.equal(r.state.taggedExplicitChildProbes[0].childId,'504',
+        'exact missing child ID must come from authenticated inventory');
+    assert.equal(r.state.taggedExplicitChildProbes[0].status,
+        'child_identity_mismatch','wrong info ID must never count');
+    assert.equal(r.requests.length,2,'one root and one genuine child media-info only');
+    assert.equal(r.requests[1].policy.singleWebOnly,true);
+}
+{
+    const full = sidecar(kids,4,{
+        carousel_media_ids:['501','502','503','504'],
+    });
+    const fourth = {...child('504'),carousel_parent_id:'500',user:{pk:'70'}};
+    const r = await runTagged(listing,full,fourth);
+    assert.equal(r.ok,true,'independently authenticated real fourth media resolves the root');
+    assert.equal(r.state.queue.size,4,'do not invent or omit any child');
+    assert.equal(r.state.queue.has('504'),true);
+    assert.equal(r.state.taggedExplicitChildProbes[0].status,
+        'resolved_all_declared_children');
+    assert.equal(r.requests.length,2,'one parent and exactly one explicit child GET');
+    assert.ok(r.logs.some(s=>s.includes('explicit_child_resolved=1')));
+    assert.ok(r.logs.some(s=>s.includes('resolved=1, unresolved=0')));
+}
+{
+    const full = sidecar(kids,4,{
+        carousel_media_ids:['501','502','503','504'],
+    });
+    const r=await runTagged(listing,full,{
+        ...child('504'),carousel_parent_id:'999',user:{pk:'70'}
+    });
+    assert.equal(r.ok,false,'wrong parent ID must fail without archiving a fourth child');
+    assert.equal(r.state.queue.size,3);
+    assert.equal(r.state.taggedExplicitChildProbes[0].status,
+        'child_parent_identity_mismatch');
+}
+{
+    const full=sidecar(kids,4,{
+        carousel_media_ids:['501','502','503','504'],
+    });
+    const e=new Error('HTTP 404');e.status=404;
+    const r=await runTagged(listing,full,e);
+    assert.equal(r.ok,false,'unavailable fourth media remains unverified');
+    assert.equal(r.state.queue.size,3);
+    assert.equal(r.state.taggedExplicitChildProbes[0].status,
+        'child_media_info_unavailable');
+    assert.equal(r.state.taggedExplicitChildProbes[0].httpStatus,404);
+}
+{
+    const full=sidecar(kids,4,{
+        carousel_media_ids:['501','502','503','503'],
+    });
+    const r=await runTagged(listing,full);
+    assert.equal(r.ok,false,'duplicate fourth ID is not a true independent candidate');
+    assert.equal(r.requests.length,1,'no speculative probe on contradictory ID list');
+    assert.equal(r.state.taggedExplicitChildProbes.length,0);
 }
 {
     // Missing from BOTH authenticated sources. A URL present in the
@@ -184,6 +254,7 @@ async function runTagged(left,right) {
 assert.ok(source.includes('taggedCountHintMismatches:'), 'manifest includes count warnings');
 assert.ok(source.includes('taggedCountHintFailures:'), 'manifest includes rejected proof reasons');
 assert.ok(source.includes('taggedHistoricalPostRestored:'), 'manifest includes archive continuity count');
+assert.ok(source.includes('taggedExplicitChildProbes:'), 'manifest exports bounded genuine child probe outcomes');
 assert.ok(source.includes('<span>TAGGED count hints</span>'),
     'user sees count mismatch even when TAGGED accessible coverage passes');
 console.log('TAGGED authenticated accessible count hint reconciliation: PASS');
