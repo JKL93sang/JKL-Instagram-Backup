@@ -81,6 +81,9 @@ jobs:
       - name: Story direct-permalink SOLO viewport and private-account safety regression
         run: node tests/story-floating-private-scan-regression.test.mjs
 
+      - name: Story username-only Firefox URL, visible-item selection and click-time safety
+        run: node tests/story-username-viewer-regression.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
