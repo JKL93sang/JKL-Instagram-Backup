@@ -6851,6 +6851,10 @@
                     <span>TAGGED files</span>
                     <b>${files.TAGGED}</b>
                 </div>
+                <div class="diag-row">
+                    <span>TAGGED count hints</span>
+                    <b class="${state.taggedCountHintMismatches?.length ? 'warn' : ''}">${state.taggedCountHintMismatches?.length || 0}</b>
+                </div>
 
                 <div class="diag-row">
                     <span>HIGHLIGHT files</span>
@@ -10614,6 +10618,7 @@
 
     async function scanTaggedGraphQL() {
         state.coverage.tagged = false;
+        state.taggedCountHintMismatches = [];
 
         const initialDoc =
             net.taggedDocInitial ||
@@ -10841,6 +10846,15 @@
                                     recovery = 'web_media_info_resolved';
                                     if (countHintProof.ok) {
                                         verifiedCountHintMismatches++;
+                                        state.taggedCountHintMismatches.push({
+                                            rootId,
+                                            shortcode: String(media?.code ||
+                                                media?.shortcode || ''),
+                                            declared: countHintProof.declared,
+                                            accessible: countHintProof.accessible,
+                                            sameAuthenticatedChildren: true,
+                                            historicalCompletenessUnknown: true,
+                                        });
                                         log(
                                             'TAGGED accessible carousel count hint mismatch: root=' +
                                             rootId + ', declared=' + countHintProof.declared +
@@ -14898,6 +14912,8 @@
                     ...state.hidden,
                     recoveredCodes: [...state.hidden.recoveredCodes],
                 },
+                taggedCountHintMismatches:
+                    (state.taggedCountHintMismatches || []).map(x => ({...x})),
                 hiddenArchive: {
                     media: hiddenMediaCount(),
                     filesOnDisk: state.diskHidden.size,
