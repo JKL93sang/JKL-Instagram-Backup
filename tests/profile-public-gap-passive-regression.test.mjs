@@ -12,6 +12,7 @@ function extract(name) {
 
 const selection=extract('profilePublicGapAvoidsSyntheticRelay');
 const completionRequirement=extract('profileCompletionRequirement');
+const verifiedNativeTerminal=extract('profileNativeTerminalCounterGapProof');
 const scroll=extract('profileScrollTarget');
 const grid=extract('scanMainGrid');
 assert.ok(grid.includes('if (profilePublicGapAvoidsSyntheticRelay())'),
@@ -49,8 +50,8 @@ function fixture(overrides={}) {
         'sleep','profileLinks','updateStats','addMedia','ownedCount',
         'currentProfileGridProgress','waitForProfileGridProgress',
         'ownedIds','hydratePermalinkRoots','restore',
-        'scanProfileGraphQLFallback',
-        selection+'\n'+completionRequirement+'\n'+scroll+'\n'+grid+
+        'scanProfileGraphQLFallback','requestTargetsCurrentProfile',
+        selection+'\n'+completionRequirement+'\n'+verifiedNativeTerminal+'\n'+scroll+'\n'+grid+
         '\nreturn {profilePublicGapAvoidsSyntheticRelay,scanMainGrid};'
     )(
         state,net,{PROFILE_MAX_SCROLLS:6},
@@ -71,6 +72,7 @@ function fixture(overrides={}) {
         async()=>{throw Error('DOM hydration not expected')},
         async()=>{},
         async()=>{dispatched.push('script-relay');return {ended:false}},
+        ({variables})=>variables?.username===user,
     );
     return {state,net,logs,dispatched,...scan};
 }

@@ -99,6 +99,9 @@ jobs:
       - name: HAR-shaped partial GraphQL PROFILE recovery, 121-parent evidence and JSON-lines safety
         run: node tests/profile-native-partial-graphql-v1-5-116.test.mjs
 
+      - name: Native PROFILE verified server end with count gap must never trigger replay
+        run: node tests/profile-native-terminal-no-replay-v1-5-117.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 

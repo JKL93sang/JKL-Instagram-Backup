@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.116
-// @description  TEST v1.5.116: HAR-confirmed PROFILE partial GraphQL pages recovered with strict identity proof.
+// @version      1.5.117
+// @description  TEST v1.5.117: avoid unsafe native PROFILE replay after verified server end with counter gap.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/test/profile-native-partial-graphql-v1.5.116/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-native-partial-graphql-v1.5.116/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-native-partial-graphql-v1.5.116/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/test/profile-native-terminal-no-replay-v1.5.117/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-native-terminal-no-replay-v1.5.117/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-native-terminal-no-replay-v1.5.117/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.116', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.117', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
@@ -8840,6 +8840,57 @@
         };
     }
 
+    // If the browser has ALREADY seen both the genuine native first page
+    // and the genuine terminal continuation, a contradictory global media
+    // counter is not a reason to replay the entire timeline again.
+    // Read-only proof; deliberately leaves PROFILE INCOMPLETE on that gap.
+    function profileNativeTerminalCounterGapProof(requirement) {
+        const reasons = Array.isArray(requirement?.reasons)
+            ? requirement.reasons : [];
+        if (requirement?.required !== true ||
+            reasons.length !== 1 || reasons[0] !== 'native_below_ig_counter') {
+            return {verified:false,reason:'not_isolated_counter_gap'};
+        }
+        const key = String(state.username || '').toLowerCase();
+        const uid = String(state.userId || '');
+        const owner = String(state.profileInfo?.pk ||
+            state.profileInfo?.id || '').split('_')[0];
+        const expected = Number(state.expected);
+        const roots = net.gridByUser?.get(key);
+        const page = net.gridPageInfo?.get(key);
+        const audit = net.gridNativeAuditByUser?.get(key);
+        const first = net.gridNativeInitialByUser?.get(key);
+        const cont = net.gridNativeContinuationByUser?.get(key);
+        const session = state.nativeProfileEvidenceSession;
+        const capturedAt = net.gridCaptureSeenAtByUser?.get(key);
+        const earliest = session?.acceptedCapturedAt == null
+            ? Number(session?.acceptedAt) : Number(session.acceptedCapturedAt);
+        const validRequest = request => !!request &&
+            requestTargetsCurrentProfile({variables:request.variables}) &&
+            /^\d+$/.test(String(request.docId || ''));
+        const validTime = Number.isFinite(capturedAt) &&
+            Number.isFinite(earliest) && capturedAt >= earliest &&
+            capturedAt <= Date.now();
+        const idsVerified = roots instanceof Map && roots.size > 0 &&
+            [...roots.keys()].every(id => /^\d+$/.test(String(id)) &&
+                (state.roots.POST.has(id) || state.roots.REEL.has(id)));
+        const verified = /^\d+$/.test(uid) && owner === uid &&
+            !!session && session.key === key && session.userId === uid &&
+            validTime && validRequest(first) && validRequest(cont) &&
+            audit?.initial >= 1 && audit?.continuation >= 1 &&
+            audit?.lastHasNext === 'false' &&
+            page?.has_next_page === false &&
+            idsVerified &&
+            Number.isSafeInteger(expected) && expected > roots.size;
+        return {
+            verified,
+            reason:verified ? 'native_end_counter_gap' :
+                'missing_target_scoped_terminal_contract',
+            observed:roots instanceof Map ? roots.size : 0,
+            expected:Number.isSafeInteger(expected) ? expected : null,
+        };
+    }
+
     function currentProfileGridProgress() {
         const map =
             net.gridByUser.get(
@@ -9685,7 +9736,22 @@
                     'warn'
                 );
 
-                if (profilePublicGapAvoidsSyntheticRelay()) {
+                const nativeTerminalGap =
+                    profileNativeTerminalCounterGapProof(completionRequirement);
+                if (nativeTerminalGap.verified) {
+                    // Instagram already ended its authentic native PROFILE.
+                    // A script-generated first-page replay cannot prove an
+                    // extra root from a stale/contradictory counter, and has
+                    // been shown to trigger server_execution on this account.
+                    navigationEnded = false;
+                    log('PROFILE native terminal pagination verified: ' +
+                        nativeTerminalGap.observed + ' distinct parents; ' +
+                        'authenticated counter=' + nativeTerminalGap.expected +
+                        '. Skipping synthetic Relay replay; preserving ' +
+                        'counter gap, continuing REELS and media hydration. ' +
+                        'PROFILE stays INCOMPLETE.', 'warn');
+                }
+                else if (profilePublicGapAvoidsSyntheticRelay()) {
                     // Both 1.5.91 and 1.5.92 received server_execution
                     // on the first reconstructed PROFILE continuation.
                     // Never turn 34/34 observed roots into a fabricated
