@@ -16233,7 +16233,9 @@
                 shortcode,
                 username,
                 key:
-                    `${kind}:${mediaId}`,
+                    kind === 'story-viewer'
+                        ? 'story-viewer:' + username.toLowerCase()
+                        : `${kind}:${mediaId}`,
             };
         }
     
