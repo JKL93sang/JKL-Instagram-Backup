@@ -28,7 +28,7 @@ const cleanUser=x=>String(x||'').trim().replace(/^@/,'')
 const api=new Function('APP','location','state','document','cleanUser',
     [
         'canonicalShortcode','shortcodeId','mediaPermalinkInfo',
-        'storyPermalinkInfo','singleDownloadTargetFromUrl',
+        'storyPermalinkInfo','storyViewerRouteInfo','singleDownloadTargetFromUrl',
         'profileLinks','currentSingleDownloadTarget',
     ].map(extract).join('\n')+
     '\nreturn {mediaPermalinkInfo,singleDownloadTargetFromUrl,profileLinks,currentSingleDownloadTarget};'
