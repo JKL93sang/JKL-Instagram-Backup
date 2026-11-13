@@ -7334,10 +7334,15 @@
                         // visible links into the OWNED scan. Media-info must
                         // corroborate the exact profile and parent shortcode.
                         if (strictDom && !domApiProven) {
-                            throw new Error(
-                                'PROFILE DOM permalink not confirmed by same-owner, same-ID complete media-info (' +
-                                profileDomMediaInfoFailureCode(info,item,state.userId) + ')'
+                            const failureCode=profileDomMediaInfoFailureCode(
+                                info,item,state.userId
                             );
+                            const reason=new Error(
+                                'PROFILE DOM permalink not confirmed by same-owner, same-ID complete media-info (' +
+                                failureCode + ')'
+                            );
+                            reason.profileDomFailureCode=failureCode;
+                            throw reason;
                         }
 
                         const forced =
@@ -7396,11 +7401,15 @@
                             const http=Number(e?.status || 0);
                             const statusCode=Number.isSafeInteger(http) &&
                                 http >= 400 && http <= 599 ? http : null;
-                            const reason=String(e?.message || '').startsWith(
-                                'PROFILE DOM permalink not confirmed'
-                            ) ? 'identity_or_structure_unverified'
-                                : statusCode ? 'http_error'
-                                    : 'media_info_unavailable';
+                            const detailedCode=String(
+                                e?.profileDomFailureCode || ''
+                            );
+                            const safeCode=/^[a-z][a-z0-9_]{0,60}$/.test(
+                                detailedCode
+                            ) ? detailedCode : '';
+                            const reason=safeCode ||
+                                (statusCode ? 'http_error'
+                                    : 'media_info_unavailable');
                             state.profileDomHydrationFailures.push({
                                 rootId:id,
                                 shortcode:canonicalShortcode(info?.shortcode),
