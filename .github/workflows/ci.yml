@@ -96,6 +96,9 @@ jobs:
       - name: Progressive native PROFILE DOM and verified REELS tab audit tests
         run: node tests/profile-progressive-dom-coverage-v1-5-115.test.mjs
 
+      - name: HAR-shaped partial GraphQL PROFILE recovery, 121-parent evidence and JSON-lines safety
+        run: node tests/profile-native-partial-graphql-v1-5-116.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
