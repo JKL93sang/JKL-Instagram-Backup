@@ -74,6 +74,7 @@ function scenario({
         'ownedCount', 'globalGap', 'scanDownloadFingerprint',
         'capturePartialDownloadGrants', 'pathNorm', 'findAnchor', 'location',
         'profileSurfaceOperationalSkip','profileHistoricalRootAudit',
+        'reconcileNativeHydratedCarouselChildren',
         methods + '\nreturn { scanAll };'
     )(
         state, net, { username: { value:'jennnii97' } },
@@ -184,6 +185,7 @@ function scenario({
             historicDomOnlyAbsent:0,currentUnresolvedDomCandidateIds:[],
             numericCounterVsHistory:null,missing:[],
         }),
+        () => {}, // No private carousel in this public one-POST fixture.
     );
     return {
         state, logs, statuses, phases, run: api.scanAll,

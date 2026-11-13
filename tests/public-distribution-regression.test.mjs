@@ -23,7 +23,7 @@ const expectedRepo =
     'https://github.com/JKL93sang/JKL-Instagram-Backup';
 
 const expectedRaw =
-    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-native-terminal-no-replay-v1.5.117/JKL_Instagram_Backup.user.js';
+    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-carousel-verified-children-v1.5.118/JKL_Instagram_Backup.user.js';
 
 assert.equal(
     meta('name'),
@@ -48,7 +48,7 @@ assert.equal(
 
 assert.equal(
     meta('source'),
-    expectedRepo + '/blob/test/profile-native-terminal-no-replay-v1.5.117/JKL_Instagram_Backup.user.js'
+    expectedRepo + '/blob/test/profile-carousel-verified-children-v1.5.118/JKL_Instagram_Backup.user.js'
 );
 
 assert.equal(
@@ -75,9 +75,9 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.117');
+assert.equal(metadataVersion, '1.5.118');
 assert.equal(metadataVersion, appVersion);
-assert.match(meta('description'), /TEST v1\.5\.117/i,
+assert.match(meta('description'), /TEST v1\.5\.118/i,
     'This branch must be clearly labeled TEST');
 
 

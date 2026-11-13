@@ -119,5 +119,5 @@ assert.equal(net.gridByUser.get('synthetic').size,before,
     'unrelated profile query never contributes parent roots');
 assert.match(src,/nativeGraphQLResponsePayloads\(text\)/);
 assert.match(src,/nativeGraphQLResponsePayloads\(raw\)/);
-assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.117');
+assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.118');
 console.log('HAR 11-page/121-root partial-error recovery + strict page/identity guards + JSON-lines parsing: PASS');
