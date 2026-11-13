@@ -57,6 +57,7 @@ assert.deepEqual(result.counts,{
     domCandidates:26,
     mainGridSnapshot:115,
     independentNativeReels:361,
+    independentReelsDom:0,
     publicNativeUnion:110,
     publicNativeOverlap:19,
     mainOutsidePublicNative:5,
@@ -70,6 +71,13 @@ assert.equal(result.rootIds.public.length,89);
 assert.equal(result.rootIds.native.length,40);
 assert.equal(result.rootIds.mainGridSnapshot.length,115);
 assert.equal(result.rootIds.independentNativeReels.length,361);
+assert.deepEqual(result.rootIds.independentReelsDom,[]);
+state.reelsTabObservedRootIds=new Set(['3001','3002']);
+const domEvidence=diagnostic();
+assert.equal(domEvidence.counts.independentReelsDom,2);
+assert.deepEqual(domEvidence.rootIds.independentReelsDom,['3001','3002']);
+assert.equal(domEvidence.counts.mainGridSnapshot,115,
+    'REELS-only DOM roots must never inflate the PROFILE grid');
 assert.ok(!result.rootIds.domCandidates.includes('untrusted-link'));
 assert.ok(result.rootIds.domCandidates.includes('99999'));
 assert.equal(JSON.parse(JSON.stringify(result)).rootIds.native.length,40,
@@ -106,5 +114,5 @@ assert.match(src,/profileSourceDiagnostics:\s*profileSourceDiagnosticSnapshot\(\
 assert.match(src,/PROFILE SOURCE AUDIT \(diagnostic only\)/);
 assert.ok(!extract('profileSourceDiagnosticSnapshot').includes('gmRequest('));
 assert.ok(!extract('profileSourceDiagnosticSnapshot').includes('nativeFetch('));
-assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.114');
+assert.equal(src.match(/\/\/ @version\s+([0-9.]+)/)?.[1],'1.5.115');
 console.log('PROFILE source audit: 115/117 vs 89 PUBLIC/40 native/361 independent REELS, safe snapshots and JSON export — PASS.');
