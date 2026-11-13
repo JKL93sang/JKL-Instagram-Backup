@@ -115,6 +115,7 @@ async function taggedFixture(data,{hasNext=false,details={}}={}) {
     };
     const scanner=new Function('state','net','APP','gql','taggedConn',
         'edgeNode','addMedia','discoveredMediaResolution','normalizePk',
+        'taggedAccessibleCarouselProof','restoreHistoricalTaggedPostArchive',
         'fetchOwnedMediaInfo','updateStats','log','throwIfInstagramStop','sleep','rand',
         extract('scanTaggedGraphQL')+
         '\nreturn scanTaggedGraphQL;'
@@ -122,7 +123,10 @@ async function taggedFixture(data,{hasNext=false,details={}}={}) {
         TAGGED_HYDRATION_LIMIT:8},
         gql,d=>d.conn,e=>e.node,
         (media,_kind,origin)=>archive(media,origin,state),
-        proofFn(state),normalizePk,fetchOwnedMediaInfo,()=>{},
+        proofFn(state),normalizePk,
+        new Function('normalizePk',extract('taggedAccessibleCarouselProof')+
+            '\nreturn taggedAccessibleCarouselProof;')(normalizePk),
+        ()=>0,fetchOwnedMediaInfo,()=>{},
         (...args)=>logs.push(args),()=>{},async()=>{},()=>0);
     return {completed:await scanner(),state,calls,logs,mediaInfoCalls};
 }
