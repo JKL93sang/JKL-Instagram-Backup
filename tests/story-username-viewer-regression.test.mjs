@@ -161,7 +161,7 @@ calls=[];await assert.rejects(resolveStoryViewerItem(viewer),/ne correspond/);
 assert.equal(calls.length,0,'wrong-account route must not start API requests');
 location.href='https://www.instagram.com/stories/b_kkaaa/';
 
-assert.match(src,/!\/\^\\d\+\$\/\.test\(id\) && resolved.kind!=='story-viewer'/,
+assert.ok(src.includes("!/^\\d+$/.test(id) && resolved.kind!=='story-viewer'"),
     'download guard must distinguish account-only Story from a numeric root');
 assert.match(src,/resolveStoryViewerItem\(resolved\)/,
     'button click must resolve the viewer before invoking normal media-info downloader');
