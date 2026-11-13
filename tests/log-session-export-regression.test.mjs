@@ -12,7 +12,7 @@ function extract(name) {
     assert.ok(end>pos,'unclosed function '+name);
     return source.slice(pos,end+7);
 }
-const APP={NAME:'JKL Instagram Backup',VERSION:'1.5.109',
+const APP={NAME:'JKL Instagram Backup',VERSION:'1.5.115',
     MAX_LOG:2000,MAX_LOG_ARCHIVE:50000};
 assert.match(source, /MAX_LOG:\s*2000\s*,\s*MAX_LOG_ARCHIVE:\s*50000/,
     'display capacity and longer-lived log archive required');

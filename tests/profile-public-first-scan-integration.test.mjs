@@ -73,7 +73,7 @@ function scenario({
         'scanAvatar', 'hydrateOwnedRootsDeep', 'logScanProfilerSummary',
         'ownedCount', 'globalGap', 'scanDownloadFingerprint',
         'capturePartialDownloadGrants', 'pathNorm', 'findAnchor', 'location',
-        'profileSurfaceOperationalSkip',
+        'profileSurfaceOperationalSkip','profileHistoricalRootAudit',
         methods + '\nreturn { scanAll };'
     )(
         state, net, { username: { value:'jennnii97' } },
@@ -177,6 +177,13 @@ function scenario({
         () => !noTab,
         { pathname:'/jennnii97/' },
         () => false, // This fixture has no unresolved public/native union.
+        () => ({
+            historicalRootCount:0,historicalNativeProvenanceCount:0,
+            historicalDomOnlyCount:0,currentObservedRootCount:0,
+            historicRootsAbsentFromCurrent:0,historicNativeAbsent:0,
+            historicDomOnlyAbsent:0,currentUnresolvedDomCandidateIds:[],
+            numericCounterVsHistory:null,missing:[],
+        }),
     );
     return {
         state, logs, statuses, phases, run: api.scanAll,

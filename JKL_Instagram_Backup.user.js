@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.109
-// @description  Stable v1.5.109: Firefox-verified Story SOLO, authenticated media identity, safe partial archive.
+// @version      1.5.115
+// @description  TEST v1.5.115: progressive native PROFILE DOM capture + scoped REELS evidence audit.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/main/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/test/profile-progressive-dom-coverage-v1.5.115/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-progressive-dom-coverage-v1.5.115/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-progressive-dom-coverage-v1.5.115/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.109', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.115', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
@@ -204,6 +204,9 @@
         // Read-only PROFILE provenance snapshots; never grant coverage.
         profileMainGridRootIds: new Set(),
         profileDomObservedRootIds: new Set(),
+        // Verified roots actually seen on the independent REELS DOM tab.
+        // Diagnostic only, never evidence of an exhaustive server end.
+        reelsTabObservedRootIds: new Set(),
         verifiedProfileDomApiRootIds: new Set(), // strict same-owner POST media-info, never DOM alone
         rootCatalog: new Map(),
         highlightCatalog: new Map(), // Instagram reel ID -> stable archive folder
@@ -6851,6 +6854,18 @@
                     <span>TAGGED files</span>
                     <b>${files.TAGGED}</b>
                 </div>
+                <div class="diag-row">
+                    <span>TAGGED count hints</span>
+                    <b class="${state.taggedCountHintMismatches?.length ? 'warn' : ''}">${state.taggedCountHintMismatches?.length || 0}</b>
+                </div>
+                <div class="diag-row">
+                    <span>TAGGED rejected hints</span>
+                    <b class="${state.taggedCountHintFailures?.length ? 'warn' : ''}">${state.taggedCountHintFailures?.length || 0}</b>
+                </div>
+                <div class="diag-row">
+                    <span>TAGGED legacy POST paths</span>
+                    <b>${state.taggedHistoricalPostRestored || 0}</b>
+                </div>
 
                 <div class="diag-row">
                     <span>HIGHLIGHT files</span>
@@ -7292,7 +7307,13 @@
 
                 if (!id) {
                     failed++;
-
+                    if (sourceHint === 'PROFILE_GRID_DOM') {
+                        state.profileDomHydrationFailures.push({
+                            rootId:null,
+                            shortcode:canonicalShortcode(info?.shortcode),
+                            reason:'invalid_shortcode',httpStatus:null,
+                        });
+                    }
                     log(
                         `${sourceHint} hydrate failed for ` +
                         `${info.shortcode}: invalid shortcode`,
@@ -7316,10 +7337,15 @@
                         // visible links into the OWNED scan. Media-info must
                         // corroborate the exact profile and parent shortcode.
                         if (strictDom && !domApiProven) {
-                            throw new Error(
-                                'PROFILE DOM permalink not confirmed by same-owner, same-ID complete media-info (' +
-                                profileDomMediaInfoFailureCode(info,item,state.userId) + ')'
+                            const failureCode=profileDomMediaInfoFailureCode(
+                                info,item,state.userId
                             );
+                            const reason=new Error(
+                                'PROFILE DOM permalink not confirmed by same-owner, same-ID complete media-info (' +
+                                failureCode + ')'
+                            );
+                            reason.profileDomFailureCode=failureCode;
+                            throw reason;
                         }
 
                         const forced =
@@ -7374,7 +7400,25 @@
                         }
 
                         failed++;
-
+                        if (sourceHint === 'PROFILE_GRID_DOM') {
+                            const http=Number(e?.status || 0);
+                            const statusCode=Number.isSafeInteger(http) &&
+                                http >= 400 && http <= 599 ? http : null;
+                            const detailedCode=String(
+                                e?.profileDomFailureCode || ''
+                            );
+                            const safeCode=/^[a-z][a-z0-9_]{0,60}$/.test(
+                                detailedCode
+                            ) ? detailedCode : '';
+                            const reason=safeCode ||
+                                (statusCode ? 'http_error'
+                                    : 'media_info_unavailable');
+                            state.profileDomHydrationFailures.push({
+                                rootId:id,
+                                shortcode:canonicalShortcode(info?.shortcode),
+                                reason,httpStatus:statusCode,
+                            });
+                        }
                         log(
                             `${sourceHint} hydrate failed for ` +
                             `${info.shortcode}: ${e.message}`,
@@ -9319,6 +9363,18 @@
             pages, edges:totalEdges, recovered, endReason, docId,
         };
     }
+    // Step through the rendered PROFILE grid instead of jumping over
+    // virtualized/intermediate DOM items. No Instagram request is generated
+    // by this helper; browser-native lazy loading remains authoritative.
+    function profileScrollTarget(currentY, documentHeight, viewportHeight) {
+        const current = Math.max(0, Number(currentY) || 0);
+        const height = Math.max(0, Number(documentHeight) || 0);
+        const viewport = Math.max(1, Number(viewportHeight) || 1);
+        const bottom = Math.max(0, height - viewport);
+        const stride = Math.max(1, Math.floor(viewport * 0.8));
+        return Math.min(bottom, current + stride);
+    }
+
     async function scanMainGrid() {
         log(
             'Scanning native main PROFILE grid (mixed POST + REEL)…'
@@ -9498,19 +9554,24 @@
 
                 const progressBaseline =
                     currentProfileGridProgress();
-
-                window.scrollTo({
-                    top:
-                        document.body
-                            .scrollHeight,
-
-                    behavior:
-                        'auto',
-                });
-
-                await waitForProfileGridProgress(
-                    progressBaseline
+                const documentHeight = progressBaseline.height;
+                const viewport = window.innerHeight;
+                const bottom = Math.max(0, documentHeight - viewport);
+                const nextY = profileScrollTarget(
+                    window.scrollY, documentHeight, viewport
                 );
+
+                window.scrollTo({top:nextY, behavior:'auto'});
+
+                // Mid-grid moves should not spend the full server-wait
+                // window on unchanged page height. At the actual bottom,
+                // retain the existing network/height wait and safety cap.
+                if (nextY < bottom - 20) {
+                    await sleep(APP.PROFILE_SCROLL_MIN);
+                }
+                else {
+                    await waitForProfileGridProgress(progressBaseline);
+                }
             }
 
             const map =
@@ -10120,6 +10181,12 @@
                 );
             }
 
+            // Store only independently visible AND resolved REEL roots.
+            // Untouched TAGGED/old receipts must not enter this set.
+            state.reelsTabObservedRootIds = new Set(
+                [...seenDom.keys()].filter(id => state.roots.REEL.has(id))
+            );
+
             const nativeRoots =
                 state.roots.REEL.size;
 
@@ -10441,11 +10508,169 @@
         return completed;
     }
 
+
+    // A metadata count alone cannot identify an invisible fourth slide.
+    // Reconcile only TWO authenticated, same-root, explicitly enumerated
+    // versions of the same TAGGED carousel. Never fabricate a child ID.
+    function taggedAccessibleCarouselProof(listing, detailed) {
+        const fail = reason => ({ok:false, reason});
+        const a = listing?.media && typeof listing.media === 'object'
+            ? listing.media : listing;
+        const b = detailed?.media && typeof detailed.media === 'object'
+            ? detailed.media : detailed;
+        const parent = normalizePk(a);
+        if (!/^\d+$/.test(parent) || normalizePk(b) !== parent) {
+            return fail('parent_identity_mismatch');
+        }
+        const carousel = x => Number(x?.media_type) === 8 ||
+            x?.__typename === 'GraphSidecar' ||
+            ['carousel','carousel_container'].includes(String(
+                x?.product_type || x?.media_product_type || ''
+            ).toLowerCase());
+        if (!carousel(a) || !carousel(b)) {
+            return fail('not_both_carousels');
+        }
+        const count = Number(a.carousel_media_count);
+        const side = x => x?.edge_sidecar_to_children;
+        const children = x => Array.isArray(x?.carousel_media) &&
+            x.carousel_media.length
+                ? x.carousel_media
+                : (side(x)?.edges || []).map(e => e?.node).filter(Boolean);
+        const aa = children(a), bb = children(b);
+        if (!Number.isSafeInteger(count) || count <= aa.length ||
+            aa.length < 2 || bb.length !== aa.length) {
+            return fail('not_a_matching_count_hint');
+        }
+        const secondClaim = b.carousel_media_count == null ||
+            b.carousel_media_count === '' ? 0 : Number(b.carousel_media_count);
+        if (!Number.isSafeInteger(secondClaim) ||
+            (secondClaim !== 0 && secondClaim !== count &&
+                secondClaim !== bb.length)) {
+            return fail('detailed_count_conflict');
+        }
+        if ([a,b].some(x =>
+            side(x)?.page_info?.has_next_page === true ||
+            Number(x?.carousel_media_pending_post_count || 0) > 0
+        )) return fail('pending_or_paginated_children');
+        const idOf = x => typeof x === 'string' && /^\d+$/.test(x)
+            ? x : normalizePk(x);
+        const ids = arr => arr.map(idOf);
+        const ai = ids(aa), bi = ids(bb);
+        const aSet = new Set(ai), bSet = new Set(bi);
+        if (ai.some(id => !/^\d+$/.test(id)) ||
+            bi.some(id => !/^\d+$/.test(id)) ||
+            aSet.size !== ai.length || bSet.size !== bi.length ||
+            ai.length !== bi.length ||
+            ai.some(id => !bSet.has(id))) {
+            return fail('child_identity_mismatch');
+        }
+        // API representations may legitimately return the same genuine
+        // children in a different order. Verify types by ID, not position.
+        const sameOrder = ai.every((id,i) => id === bi[i]);
+        const bById = new Map(bb.map(child => [idOf(child), child]));
+        // Some Instagram response shapes expose an independent full ID
+        // inventory. It must not contradict the displayed child arrays.
+        for (const x of [a,b]) {
+            if (Array.isArray(x?.carousel_media_ids) &&
+                x.carousel_media_ids.length) {
+                const extraIds = ids(x.carousel_media_ids);
+                if (extraIds.length !== ai.length ||
+                    new Set(extraIds).size !== ai.length ||
+                    extraIds.some(id => !aSet.has(id))) {
+                    return fail('independent_child_ids_conflict');
+                }
+            }
+            if (Array.isArray(x?.edge_sidecar_to_children?.edges) &&
+                x.edge_sidecar_to_children.edges.length) {
+                const edgeIds = ids(x.edge_sidecar_to_children.edges
+                    .map(e => e?.node));
+                if (edgeIds.length !== ai.length ||
+                    new Set(edgeIds).size !== ai.length ||
+                    edgeIds.some(id => !aSet.has(id))) {
+                    return fail('sidecar_children_conflict');
+                }
+            }
+        }
+        const aOwner = normalizePk(a?.user);
+        const bOwner = normalizePk(b?.user);
+        if (aOwner && bOwner && aOwner !== bOwner) {
+            return fail('owner_identity_mismatch');
+        }
+        const aCode = String(a.code || a.shortcode || '');
+        const bCode = String(b.code || b.shortcode || '');
+        if (aCode && bCode && aCode !== bCode) {
+            return fail('shortcode_mismatch');
+        }
+        for (let i = 0; i < aa.length; i++) {
+            const c = aa[i], d = bById.get(ai[i]);
+            if ((c?.carousel_parent_id && idOf(c.carousel_parent_id) !== parent) ||
+                (d?.carousel_parent_id && idOf(d.carousel_parent_id) !== parent)) {
+                return fail('child_parent_mismatch');
+            }
+            const ca = Number(c?.media_type), cb = Number(d?.media_type);
+            if (Number.isInteger(ca) && ca > 0 &&
+                Number.isInteger(cb) && cb > 0 && ca !== cb) {
+                return fail('child_type_conflict');
+            }
+            if (Number(c?.deleted_reason || 0) > 0 ||
+                Number(d?.deleted_reason || 0) > 0) {
+                return fail('deleted_child_referenced');
+            }
+        }
+        return {ok:true, reason:'verified_accessible_count_hint_mismatch',
+            rootId:parent, declared:count, accessible:ai.length, sameOrder};
+    }
+
+
+    // Preserve archive filenames when a currently TAGGED-only unit had a
+    // previously verified native PROFILE POST identity. This is historical
+    // folder continuity only: do NOT add PROFILE roots or fake live proof.
+    function restoreHistoricalTaggedPostArchive(root) {
+        if (!state.userId) return 0;
+        const prior = loadDb()?.profiles?.[state.userId]?.media || {};
+        const items = Array.isArray(root?.carousel_media) &&
+            root.carousel_media.length
+                ? root.carousel_media
+                : (root?.edge_sidecar_to_children?.edges || [])
+                    .map(e => e?.node).filter(Boolean);
+        const units = items.length ? items : [root];
+        let restored = 0;
+        for (const child of units) {
+            const id = normalizePk(child);
+            const rec = state.queue.get(id);
+            const previous = prior[id];
+            if (!rec || rec.type !== 'TAGGED' ||
+                !(rec.sources instanceof Set) || !rec.sources.has('TAGGED') ||
+                previous?.type !== 'POST' ||
+                !Array.isArray(previous.sources) ||
+                !previous.sources.includes('PROFILE_GRID_NATIVE') ||
+                !Number.isSafeInteger(Number(previous.timestamp)) ||
+                Number(previous.timestamp) <= 0 ||
+                !['jpg','mp4'].includes(String(rec.ext || '').toLowerCase()) ||
+                !String(previous.shortcode || '') ||
+                !String(rec.shortcode || '') ||
+                canonicalShortcode(previous.shortcode) !==
+                    canonicalShortcode(rec.shortcode)) continue;
+            const timestamp = Number(previous.timestamp);
+            const expectedFilename = filename({
+                ...rec,type:'POST',timestamp
+            });
+            if (String(previous.filename || '') !== expectedFilename) continue;
+
+            rec.type = 'POST';
+            rec.timestamp = timestamp;
+            rec.filename = expectedFilename;
+            rec.historicalPostArchiveContinuity = true;
+            restored++;
+        }
+        return restored;
+    }
+
     // A server pagination end proves the LIST ended, not that each item
     // became an archived file. Validate each returned unit by exact ID and
     // source provenance, including sidecars and previously indexed files.
     // Never request extra data merely to make this check pass.
-    function discoveredMediaResolution(raw, source) {
+    function discoveredMediaResolution(raw, source, options = {}) {
         const fail = reason => ({ok:false, reason});
         const root = raw?.media && typeof raw.media === 'object'
             ? raw.media : raw;
@@ -10476,7 +10701,9 @@
         if (isCarousel && children.length < 2) {
             return fail('carousel_children_unavailable');
         }
-        if (Number.isSafeInteger(claimedCount) && claimedCount > units.length) {
+        if (Number.isSafeInteger(claimedCount) && claimedCount > units.length &&
+            !(source === 'TAGGED' &&
+              options?.verifiedAccessibleCarousel === true && isCarousel)) {
             return fail('carousel_item_count_gap');
         }
         const rootId = normalizePk(root);
@@ -10507,6 +10734,9 @@
 
     async function scanTaggedGraphQL() {
         state.coverage.tagged = false;
+        state.taggedCountHintMismatches = [];
+        state.taggedCountHintFailures = [];
+        state.taggedHistoricalPostRestored = 0;
 
         const initialDoc =
             net.taggedDocInitial ||
@@ -10554,6 +10784,7 @@
         const unresolvedReasons = new Map();
         let hydrationAttempts = 0;
         let hydratedRoots = 0;
+        let verifiedCountHintMismatches = 0;
         let endReason = 'max_pages';
         const seenCursors = new Set();
 
@@ -10679,6 +10910,16 @@
                 const rootId = normalizePk(media);
                 if (rootId) state.roots.TAGGED.add(rootId);
                 addMedia(media, 'TAGGED', 'TAGGED');
+                const historicalRestored = restoreHistoricalTaggedPostArchive(media);
+                if (historicalRestored) {
+                    state.taggedHistoricalPostRestored += historicalRestored;
+                    log(
+                        'TAGGED historical archive category preserved: root=' +
+                        rootId + ', files=' + historicalRestored +
+                        ' (previous native PROFILE POST evidence only; ' +
+                        'current PROFILE coverage unchanged).'
+                    );
+                }
                 let proof = discoveredMediaResolution(media, 'TAGGED');
                 let recovery = 'not_needed';
 
@@ -10706,10 +10947,97 @@
                             proof = {ok:false, reason:'media_info_identity_mismatch'};
                         } else {
                             addMedia(detailed, 'TAGGED', 'TAGGED');
-                            const detailedProof =
-                                discoveredMediaResolution(detailed, 'TAGGED');
-                            // Do not let a shorter hydrated carousel replace a
-                            // stronger unit-count claim from the original feed.
+                            state.taggedHistoricalPostRestored +=
+                                restoreHistoricalTaggedPostArchive(detailed);
+                            const countHintProof =
+                                taggedAccessibleCarouselProof(media, detailed);
+                            const detailedProof = discoveredMediaResolution(
+                                detailed, 'TAGGED',
+                                {verifiedAccessibleCarousel: countHintProof.ok}
+                            );
+                            if (!countHintProof.ok &&
+                                Number(media?.carousel_media_count || 0) > 1 &&
+                                proof.reason === 'carousel_item_count_gap') {
+                                const childrenOf = x =>
+                                    Array.isArray(x?.carousel_media) &&
+                                    x.carousel_media.length
+                                        ? x.carousel_media
+                                        : (x?.edge_sidecar_to_children?.edges || [])
+                                            .map(e => e?.node).filter(Boolean);
+                                const left = childrenOf(media);
+                                const right = childrenOf(detailed);
+                                const leftIds = left.map(normalizePk);
+                                const rightIds = right.map(normalizePk);
+                                const sameSet = leftIds.length === rightIds.length &&
+                                    new Set(leftIds).size === leftIds.length &&
+                                    new Set(rightIds).size === rightIds.length &&
+                                    leftIds.every(id => rightIds.includes(id));
+                                const mismatch = {
+                                    rootId,
+                                    reason: countHintProof.reason,
+                                    claimed: Number(media.carousel_media_count),
+                                    detailClaim:
+                                        detailed.carousel_media_count == null
+                                            ? null : Number(detailed.carousel_media_count),
+                                    listChildren: left.length,
+                                    detailChildren: right.length,
+                                    sameChildIds: sameSet,
+                                    sameChildOrder: leftIds.length === rightIds.length &&
+                                        leftIds.every((id,i) => id === rightIds[i]),
+                                    listMediaType: Number(media?.media_type || 0),
+                                    infoMediaType: Number(detailed?.media_type || 0),
+                                    listOwnerPresent: !!normalizePk(media?.user),
+                                    infoOwnerPresent: !!normalizePk(detailed?.user),
+                                    ownerMatch: !!normalizePk(media?.user) &&
+                                        normalizePk(media?.user) ===
+                                            normalizePk(detailed?.user),
+                                    sameShortcode: !!String(media?.code ||
+                                        media?.shortcode || '') &&
+                                        String(media?.code || media?.shortcode) ===
+                                            String(detailed?.code ||
+                                                detailed?.shortcode || ''),
+                                    listIndependentIds:
+                                        Array.isArray(media?.carousel_media_ids)
+                                            ? media.carousel_media_ids.length : null,
+                                    detailIndependentIds:
+                                        Array.isArray(detailed?.carousel_media_ids)
+                                            ? detailed.carousel_media_ids.length : null,
+                                    listSidecarNext:
+                                        media?.edge_sidecar_to_children?.page_info
+                                            ?.has_next_page === true,
+                                    detailSidecarNext:
+                                        detailed?.edge_sidecar_to_children?.page_info
+                                            ?.has_next_page === true,
+                                    listPending:
+                                        Number(media?.carousel_media_pending_post_count || 0),
+                                    detailPending:
+                                        Number(detailed?.carousel_media_pending_post_count || 0),
+                                };
+                                state.taggedCountHintFailures.push(mismatch);
+                                log(
+                                    'TAGGED count hint proof rejected: root=' +
+                                    rootId + ', reason=' + mismatch.reason +
+                                    ', list=' + mismatch.listChildren +
+                                    ', info=' + mismatch.detailChildren +
+                                    ', same_ids=' + mismatch.sameChildIds +
+                                    ', same_order=' + mismatch.sameChildOrder +
+                                    ', claims=' + mismatch.claimed +
+                                    '/' + (mismatch.detailClaim ?? '-') +
+                                    ', owner_match=' + mismatch.ownerMatch +
+                                    ', code_match=' + mismatch.sameShortcode +
+                                    ', types=' + mismatch.listMediaType +
+                                    '/' + mismatch.infoMediaType +
+                                    ', id_lists=' + (mismatch.listIndependentIds ?? '-') +
+                                    '/' + (mismatch.detailIndependentIds ?? '-') +
+                                    ', pending=' + mismatch.listPending +
+                                    '/' + mismatch.detailPending + '.',
+                                    'warn'
+                                );
+                            }
+                            // A matching full authenticated child-ID inventory
+                            // is proof only of CURRENTLY ACCESSIBLE media. A
+                            // larger numeric hint must stay visible in logs;
+                            // independent contradictory IDs must fail closed.
                             const rawCount = Number(media?.carousel_media_count || 0);
                             const fullChildren = Array.isArray(detailed?.carousel_media)
                                 ? detailed.carousel_media.length
@@ -10717,13 +11045,37 @@
                                     ? detailed.edge_sidecar_to_children.edges.length
                                     : 0;
                             if (detailedProof.ok && Number.isSafeInteger(rawCount) &&
-                                rawCount > 1 && fullChildren < rawCount) {
+                                rawCount > 1 && fullChildren < rawCount &&
+                                !countHintProof.ok) {
                                 proof = {ok:false, reason:'hydrated_carousel_count_gap'};
                             } else {
                                 proof = detailedProof;
                                 if (proof.ok) {
                                     hydratedRoots++;
                                     recovery = 'web_media_info_resolved';
+                                    if (countHintProof.ok) {
+                                        verifiedCountHintMismatches++;
+                                        state.taggedCountHintMismatches.push({
+                                            rootId,
+                                            shortcode: String(media?.code ||
+                                                media?.shortcode || ''),
+                                            declared: countHintProof.declared,
+                                            accessible: countHintProof.accessible,
+                                            sameAuthenticatedChildren: true,
+                                            sameOrder: countHintProof.sameOrder,
+                                            historicalCompletenessUnknown: true,
+                                        });
+                                        log(
+                                            'TAGGED accessible carousel count hint mismatch: root=' +
+                                            rootId + ', declared=' + countHintProof.declared +
+                                            ', list=info_same_children=' +
+                                            countHintProof.accessible +
+                                            ', status=accessible_units_verified_only. ' +
+                                            'The historical declared count is NOT explained; ' +
+                                            'no fourth media ID was inferred.',
+                                            'warn'
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -10830,6 +11182,9 @@
             `TAGGED GraphQL complete: pages=${pages}, roots=${totalRoots}, ` +
             `resolved=${resolvedRoots}, unresolved=${unresolvedRoots}, ` +
             `hydration=${hydratedRoots}/${hydrationAttempts}, ` +
+            `count_hint_mismatches=${verifiedCountHintMismatches}, ` +
+            `count_hint_rejected=${state.taggedCountHintFailures.length}, ` +
+            `historical_post_paths=${state.taggedHistoricalPostRestored}, ` +
             `end=${endReason}, ended=${state.coverage.tagged}, ` +
             `reasons=${[...unresolvedReasons].map(([key, count]) =>
                 key + ':' + count).join(',') || '-'}. ` +
@@ -11731,7 +12086,17 @@
                     [...m.rootIds].some(rootId =>
                         state.verifiedPassiveProfilePostRootIds.has(String(rootId))
                     );
-                return publicProven || nativeIndividualProven;
+                // Preserve download eligibility via a CURRENT completed
+                // TAGGED collection for a previously native-verified POST.
+                // Historical filenames do not grant current PROFILE proof.
+                const taggedPresent = m.historicalPostArchiveContinuity === true &&
+                    state.scanPlan?.tagged === true &&
+                    state.coverage.tagged === true &&
+                    m.sources.has('TAGGED') &&
+                    [...m.rootIds].some(rootId =>
+                        state.roots.TAGGED.has(String(rootId))
+                    );
+                return publicProven || nativeIndividualProven || taggedPresent;
             }
 
             if (m.type === 'REEL') {
@@ -12829,7 +13194,9 @@
         // Fresh per-scan snapshots; resilient to older in-memory test fixtures.
         state.profileMainGridRootIds = new Set();
         state.profileDomObservedRootIds = new Set();
+        state.reelsTabObservedRootIds = new Set();
         state.verifiedProfileDomApiRootIds = new Set();
+        state.profileDomHydrationFailures = [];
 
         for (const s of Object.values(state.roots)) {
             s.clear();
@@ -13042,10 +13409,55 @@
                 ', dom_candidates=' + c.domCandidates +
                 ', main_outside_public_native=' + c.mainOutsidePublicNative +
                 ', independent_reels=' + c.independentNativeReels +
+                ', reels_dom_verified=' + c.independentReelsDom +
                 ', main_reels_overlap=' + c.mainAlsoInIndependentReels +
                 '. DOM/reels never grant PROFILE completeness.',
                 c.gapMainVsCounter ? 'warn' : 'info'
             );
+            if (scanSelected('post') && scanSelected('reel')) {
+                const audit=profileHistoricalRootAudit();
+                log(
+                    'PROFILE HISTORICAL AUDIT (read-only): historical=' +
+                    audit.historicalRootCount +
+                    ' (native=' + audit.historicalNativeProvenanceCount +
+                    ', dom_only=' + audit.historicalDomOnlyCount +
+                    '), current_main_plus_reels=' +
+                    audit.currentObservedRootCount +
+                    ', absent_from_current=' +
+                    audit.historicRootsAbsentFromCurrent +
+                    ' (native=' + audit.historicNativeAbsent +
+                    ', dom_only=' + audit.historicDomOnlyAbsent +
+                    '), dom_unresolved=' +
+                    audit.currentUnresolvedDomCandidateIds.length +
+                    ', counter_history_delta=' +
+                    audit.numericCounterVsHistory +
+                    '. No coverage or archive changes.',
+                    'warn'
+                );
+                for (const old of audit.missing.slice(0,40)) {
+                    log(
+                        'PROFILE historic root not re-proven: root=' +
+                        old.rootId + ', code=' + old.shortcode +
+                        ', source=' + old.provenance +
+                        ', historic_units=' + old.historicalUnits +
+                        ', current_queued_units=' +
+                        old.currentQueuedHistoricalUnits +
+                        ', dom_candidate=' + old.currentDomCandidate +
+                        ', status=' + old.status + '.',
+                        'warn'
+                    );
+                }
+                for (const bad of state.profileDomHydrationFailures || []) {
+                    log(
+                        'PROFILE DOM rejection summary: root=' +
+                        (bad.rootId || '-') +
+                        ', code=' + bad.shortcode +
+                        ', reason=' + bad.reason +
+                        ', http=' + (bad.httpStatus || '-') + '.',
+                        'warn'
+                    );
+                }
+            }
             updateStats();
 
             logScanProfilerSummary(
@@ -14623,6 +15035,140 @@
         await downloadMissing();
     }
 
+
+    // Previously verified native/DOM PROFILE archive receipts identify
+    // historical parent roots. They NEVER prove current access, a missing
+    // server page, or permission to re-download an old media ID.
+    function reconcileHistoricalProfileRoots(input = {}) {
+        const valid = x => /^\d+$/.test(String(x || ''));
+        const ids = list => new Set(
+            (Array.isArray(list) ? list : []).map(String).filter(valid)
+        );
+        const main = ids(input.main);
+        const reels = ids(input.reels);
+        const dom = ids(input.dom);
+        const native = ids(input.native);
+        const currentMediaIds = ids(input.currentMediaIds);
+        const observed = new Set([...main, ...reels]);
+        const selectedPost = input.selectedPost === true;
+        const selectedReel = input.selectedReel === true;
+        const completeSelection = selectedPost && selectedReel;
+        const expected = Number(input.expected);
+        const countVerified =
+            Number.isSafeInteger(expected) && expected >= 0;
+        const groups = new Map();
+        const ledger = input.ledger && typeof input.ledger === 'object'
+            ? input.ledger : {};
+
+        for (const [mediaId, old] of Object.entries(ledger)) {
+            if (!valid(mediaId) || !old || typeof old !== 'object' ||
+                !['POST','REEL'].includes(old.type) ||
+                !Array.isArray(old.sources)) continue;
+            const nativeSource = old.sources.includes('PROFILE_GRID_NATIVE');
+            const domSource = old.sources.includes('PROFILE_GRID_DOM');
+            // No tagged-only item or historical receipt without source proof
+            // can establish historical ownership.
+            if (!nativeSource && !domSource) continue;
+            const code = canonicalShortcode(old.shortcode);
+            const parentId = shortcodeId(code);
+            if (!code || !valid(parentId)) continue;
+            let group = groups.get(parentId);
+            if (!group) {
+                group = {
+                    rootId:parentId, shortcode:code,
+                    mediaIds:new Set(), nativeSource:false, domSource:false,
+                };
+                groups.set(parentId, group);
+            }
+            group.mediaIds.add(mediaId);
+            group.nativeSource ||= nativeSource;
+            group.domSource ||= domSource;
+        }
+
+        const roots = [...groups.values()]
+            .sort((a,b)=>a.rootId.localeCompare(b.rootId));
+        const missing = roots
+            .filter(g=>!observed.has(g.rootId))
+            .map(g=>{
+                const historicalMedia=[...g.mediaIds];
+                const presentUnits=historicalMedia.filter(id=>
+                    currentMediaIds.has(id)
+                ).length;
+                const domLink=dom.has(g.rootId);
+                return {
+                    rootId:g.rootId,shortcode:g.shortcode,
+                    provenance:g.nativeSource
+                        ? 'PROFILE_GRID_NATIVE' : 'PROFILE_GRID_DOM',
+                    historicalUnits:historicalMedia.length,
+                    currentQueuedHistoricalUnits:presentUnits,
+                    currentDomCandidate:domLink,
+                    currentNativeRoot:native.has(g.rootId),
+                    status:domLink
+                        ? 'current_dom_candidate_unverified'
+                        : presentUnits
+                            ? 'historical_root_with_current_media_only'
+                            : 'historical_root_not_in_current_selection',
+                };
+            });
+        const nativeMissing = missing.filter(x=>
+            x.provenance === 'PROFILE_GRID_NATIVE'
+        ).length;
+        return {
+            kind:completeSelection
+                ? 'PROFILE_HISTORICAL_RECONCILIATION_DIAGNOSTIC'
+                : 'PROFILE_HISTORICAL_COMPARISON_NOT_SELECTED',
+            selectedPost,selectedReel,
+            expectedAuthenticated:countVerified ? expected : null,
+            historicalRootCount:groups.size,
+            historicalNativeProvenanceCount:
+                roots.filter(x=>x.nativeSource).length,
+            historicalDomOnlyCount:
+                roots.filter(x=>!x.nativeSource).length,
+            currentObservedRootCount:observed.size,
+            currentMatchedHistoricalRoots:roots.length-missing.length,
+            historicRootsAbsentFromCurrent:missing.length,
+            historicNativeAbsent:nativeMissing,
+            historicDomOnlyAbsent:missing.length-nativeMissing,
+            currentRootsWithNoHistoricalEvidence:
+                [...observed].filter(id=>!groups.has(id)).sort(),
+            currentUnresolvedDomCandidateIds:
+                [...dom].filter(id=>!observed.has(id)).sort(),
+            numericCounterVsHistory:countVerified
+                ? expected-groups.size : null,
+            numericCounterVsCurrent:countVerified
+                ? expected-observed.size : null,
+            // During TAGGED-only sessions this list is withheld rather
+            // than misrepresenting all historical roots as missing.
+            missing:completeSelection ? missing : [],
+            warning:!completeSelection
+                ? 'POSTS and REELS were not both selected; historic/current ' +
+                  'comparison does not establish PROFILE coverage.'
+                : 'Past receipts and media_count are not current server ' +
+                  'pagination. TAGGED/DOM observations cannot establish ' +
+                  'current OWNED membership, deleted files or downloads.',
+        };
+    }
+
+    function profileHistoricalRootAudit() {
+        const key=String(state.username || '').toLowerCase();
+        const reels=net.reelsByUserId?.get(String(state.userId || ''));
+        const native=net.gridByUser?.get(key);
+        return reconcileHistoricalProfileRoots({
+            ledger:loadDb()?.profiles?.[state.userId]?.media || {},
+            main:[...(state.profileMainGridRootIds || [])],
+            reels:[...new Set([
+                ...(reels instanceof Map ? reels.keys() : []),
+                ...(state.reelsTabObservedRootIds || []),
+            ])],
+            native:native instanceof Map ? [...native.keys()] : [],
+            dom:[...(state.profileDomObservedRootIds || [])],
+            currentMediaIds:[...state.queue.keys()],
+            expected:state.expected,
+            selectedPost:scanSelected('post'),
+            selectedReel:scanSelected('reel'),
+        });
+    }
+
     function profileSourceDiagnosticSnapshot() {
         // Read-only evidence. Main PROFILE is captured before visiting
         // independent REELS; DOM links remain candidates, never proof.
@@ -14639,6 +15185,8 @@
         const reelMap = net.reelsByUserId?.get(String(state.userId || ''));
         const reelRoots = reelMap instanceof Map
             ? new Set(reelMap.keys()) : new Set();
+        const reelDomRoots = state.reelsTabObservedRootIds instanceof Set
+            ? state.reelsTabObservedRootIds : new Set();
         const valid = id => /^\d+$/.test(String(id));
         const list = xs => [...xs].map(String).filter(valid).sort();
         const pub = new Set(list(publicRoots));
@@ -14646,6 +15194,7 @@
         const dom = new Set(list(domCandidates));
         const main = new Set(list(mainRoots));
         const reels = new Set(list(reelRoots));
+        const reelDom = new Set(list(reelDomRoots));
         const publicNative = new Set([...pub, ...nat]);
         const withDom = new Set([...publicNative, ...dom]);
         const expected = Number(state.profileInfo?.media_count);
@@ -14664,12 +15213,28 @@
                 state.coverage?.publicShadow === true,
             nativeServerEnded:nativePage?.has_next_page === false &&
                 nativeAudit?.lastHasNext === 'false',
+            nativeRequestProvenance:{
+                observedInitial:Number(nativeAudit?.initial || 0),
+                observedContinuations:Number(nativeAudit?.continuation || 0),
+                firstPageContractRecorded:
+                    net.gridNativeInitialByUser?.has(key) === true,
+                continuationContractRecorded:
+                    net.gridNativeContinuationByUser?.has(key) === true,
+                lastHasNext:String(nativeAudit?.lastHasNext || 'unknown'),
+                // A terminal page reached without its initial contract
+                // is NOT proof that the beginning of the list was captured.
+                observedEndWithoutFirstPageContract:
+                    nativePage?.has_next_page === false &&
+                    !(Number(nativeAudit?.initial || 0) > 0 &&
+                      net.gridNativeInitialByUser?.has(key) === true),
+            },
             counts:{
                 public:pub.size,
                 native:nat.size,
                 domCandidates:dom.size,
                 mainGridSnapshot:main.size,
                 independentNativeReels:reels.size,
+                independentReelsDom:reelDom.size,
                 publicNativeUnion:publicNative.size,
                 publicNativeOverlap:overlap(pub,nat),
                 mainOutsidePublicNative:
@@ -14688,6 +15253,7 @@
                 domCandidates:list(dom),
                 mainGridSnapshot:list(main),
                 independentNativeReels:list(reels),
+                independentReelsDom:list(reelDom),
             },
             warning:'Diagnostic only: DOM candidates, independent REELS ' +
                 'and Instagram counters do not establish missing PROFILE ' +
@@ -14764,11 +15330,20 @@
                 accessibleOwnedRoots: ownedCount(),
                 globalGap: globalGap(),
                 profileSourceDiagnostics: profileSourceDiagnosticSnapshot(),
+                profileHistoricalRootAudit: profileHistoricalRootAudit(),
+                profileDomHydrationFailures:
+                    (state.profileDomHydrationFailures || []).map(x=>({...x})),
                 publicShadow: { ...state.shadow },
                 connectedHidden: {
                     ...state.hidden,
                     recoveredCodes: [...state.hidden.recoveredCodes],
                 },
+                taggedCountHintMismatches:
+                    (state.taggedCountHintMismatches || []).map(x => ({...x})),
+                taggedCountHintFailures:
+                    (state.taggedCountHintFailures || []).map(x => ({...x})),
+                taggedHistoricalPostRestored:
+                    Number(state.taggedHistoricalPostRestored || 0),
                 hiddenArchive: {
                     media: hiddenMediaCount(),
                     filesOnDisk: state.diskHidden.size,

@@ -84,6 +84,18 @@ jobs:
       - name: Story username-only Firefox URL, visible-item selection and click-time safety
         run: node tests/story-username-viewer-regression.test.mjs
 
+      - name: TAGGED authenticated accessible-carousel counter anomaly regression tests
+        run: node tests/tagged-accessible-carousel-count-v1-5-110.test.mjs
+
+      - name: TAGGED prior verified PROFILE archive path and no false coverage
+        run: node tests/tagged-historical-archive-continuity-v1-5-111.test.mjs
+
+      - name: PROFILE historical parent audit and DOM failure provenance
+        run: node tests/profile-historical-root-audit-v1-5-114.test.mjs
+
+      - name: Progressive native PROFILE DOM and verified REELS tab audit tests
+        run: node tests/profile-progressive-dom-coverage-v1-5-115.test.mjs
+
       - name: Public distribution metadata regression tests
         run: node tests/public-distribution-regression.test.mjs
 
