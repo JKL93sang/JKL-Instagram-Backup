@@ -175,7 +175,7 @@ const manualDownload=new Function(
     'state','singleDownloadState','status','log',
     'fetchStandaloneMediaInfo','resolveStoryViewerItem','normalizePk',
     'standaloneUnits','downloadStandaloneFile','sleep','APP','setTimeout',
-    extract('downloadSingleTarget',true)+'\\nreturn downloadSingleTarget;'
+    extract('downloadSingleTarget',true)+'\nreturn downloadSingleTarget;'
 )(
     transferState,{busy:new Set()},
     (...x)=>finalStatuses.push(x),()=>{},
