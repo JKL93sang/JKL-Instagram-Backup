@@ -132,5 +132,5 @@ assert.match(src,/TAGGED_HYDRATION_LIMIT:\s*16\b/);
 assert.match(src,/hydrationAttempts\s*<\s*APP.TAGGED_HYDRATION_LIMIT/);
 assert.ok(!src.includes('TAGGED REST fallback requested'));
 assert.match(src,/profileDomMediaInfoFailureCode\(info,item,state.userId\)/);
-assert.equal(src.match(/@version\s+([0-9.]+)/)?.[1],'1.5.112');
-console.log('v1.5.112: real Story URL SOLO visible without main/section; exact target, media positioning, no highlight guessing, scan mutex, TAGGED bounded recovery — PASS');
+assert.equal(src.match(/@version\s+([0-9.]+)/)?.[1],'1.5.113');
+console.log('v1.5.113: real Story URL SOLO visible without main/section; exact target, media positioning, no highlight guessing, scan mutex, TAGGED bounded recovery — PASS');
