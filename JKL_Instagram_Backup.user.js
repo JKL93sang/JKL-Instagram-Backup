@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.111
-// @description  TEST v1.5.111: TAGGED count-proof diagnostics and historical archive-path continuity.
+// @version      1.5.112
+// @description  TEST v1.5.112: verify an explicit fourth TAGGED child by authenticated same-origin media-info.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/tagged-evidence-and-archive-v1.5.111/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-evidence-and-archive-v1.5.111/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-evidence-and-archive-v1.5.111/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/tagged-explicit-fourth-child-v1.5.112/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-explicit-fourth-child-v1.5.112/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-explicit-fourth-child-v1.5.112/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.111', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.112', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
@@ -10567,6 +10567,153 @@
     }
 
 
+
+    // An authenticated media-info response can contain a *full* parent
+    // carousel_media_ids inventory even when carousel_media has fewer
+    // downloadable objects. The fourth ID is REAL, but its accessibility is
+    // not proved by this inventory alone. Permit one bounded same-origin
+    // per-child media-info check, never an inferred or guessed ID.
+    function taggedExplicitMissingChildCandidate(listing, detailed) {
+        const fail = reason => ({ok:false, reason});
+        const a = listing?.media && typeof listing.media === 'object'
+            ? listing.media : listing;
+        const b = detailed?.media && typeof detailed.media === 'object'
+            ? detailed.media : detailed;
+        const parent = normalizePk(a);
+        if (!/^\d+$/.test(parent) || normalizePk(b) !== parent) {
+            return fail('parent_identity_mismatch');
+        }
+        const isCarousel = x => Number(x?.media_type) === 8 ||
+            x?.__typename === 'GraphSidecar';
+        if (!isCarousel(a) || !isCarousel(b)) {
+            return fail('not_both_carousels');
+        }
+        const declared = Number(a?.carousel_media_count);
+        if (!Number.isSafeInteger(declared) ||
+            declared < 3 || declared > 30 ||
+            Number(b?.carousel_media_count) !== declared) {
+            return fail('not_equal_safe_declared_counts');
+        }
+        if ([a,b].some(x =>
+            x?.edge_sidecar_to_children?.page_info?.has_next_page === true ||
+            Number(x?.carousel_media_pending_post_count || 0) > 0
+        )) return fail('pending_or_paginated_children');
+        if (normalizePk(a?.user) && normalizePk(b?.user) &&
+            normalizePk(a.user) !== normalizePk(b.user)) {
+            return fail('owner_identity_mismatch');
+        }
+        const codeA = String(a?.code || a?.shortcode || '');
+        const codeB = String(b?.code || b?.shortcode || '');
+        if (codeA && codeB && codeA !== codeB) {
+            return fail('shortcode_mismatch');
+        }
+        const elements = x => Array.isArray(x?.carousel_media) &&
+            x.carousel_media.length ? x.carousel_media :
+            (x?.edge_sidecar_to_children?.edges || [])
+                .map(e => e?.node).filter(Boolean);
+        const rawId = x => typeof x === 'string' && /^\d+$/.test(x)
+            ? x : normalizePk(x);
+        const left = elements(a), right = elements(b);
+        const leftIds = left.map(rawId), rightIds = right.map(rawId);
+        const validSet = ids => ids.length > 0 &&
+            ids.every(id => /^\d+$/.test(id)) &&
+            new Set(ids).size === ids.length;
+        if (!validSet(leftIds) || !validSet(rightIds) ||
+            leftIds.length !== declared - 1 ||
+            rightIds.length !== declared - 1 ||
+            leftIds.some(id => !rightIds.includes(id))) {
+            return fail('not_same_declared_minus_one_children');
+        }
+        const knownById = new Map(right.map(c => [rawId(c),c]));
+        for (const c of left) {
+            const id = rawId(c), d = knownById.get(id);
+            if (c?.carousel_parent_id &&
+                String(c.carousel_parent_id).split('_')[0] !== parent) {
+                return fail('listing_child_parent_conflict');
+            }
+            if (d?.carousel_parent_id &&
+                String(d.carousel_parent_id).split('_')[0] !== parent) {
+                return fail('detailed_child_parent_conflict');
+            }
+            if (Number(c?.deleted_reason || 0) > 0 ||
+                Number(d?.deleted_reason || 0) > 0) {
+                return fail('deleted_child_in_array');
+            }
+            const ca = Number(c?.media_type), cb = Number(d?.media_type);
+            if (ca > 0 && cb > 0 && ca !== cb) {
+                return fail('known_child_type_mismatch');
+            }
+        }
+        const inventory = Array.isArray(b?.carousel_media_ids)
+            ? b.carousel_media_ids.map(rawId) : [];
+        if (!validSet(inventory) || inventory.length !== declared ||
+            leftIds.some(id => !inventory.includes(id))) {
+            return fail('incomplete_or_conflicting_inventory');
+        }
+        if (Array.isArray(a?.carousel_media_ids) &&
+            a.carousel_media_ids.length) {
+            const listingInventory = a.carousel_media_ids.map(rawId);
+            if (!validSet(listingInventory) ||
+                listingInventory.length !== declared ||
+                listingInventory.some(id => !inventory.includes(id))) {
+                return fail('listing_inventory_conflict');
+            }
+        }
+        // A sidecar edge list, when exposed independently, must identify
+        // exactly the known three or the full inventory; never contradict.
+        for (const x of [a,b]) {
+            const edges = x?.edge_sidecar_to_children?.edges;
+            if (!Array.isArray(edges) || !edges.length) continue;
+            const ids = edges.map(e => rawId(e?.node));
+            if (!validSet(ids) ||
+                ![declared - 1,declared].includes(ids.length) ||
+                ids.some(id => !inventory.includes(id))) {
+                return fail('sidecar_inventory_conflict');
+            }
+        }
+        const missing = inventory.filter(id => !rightIds.includes(id));
+        if (missing.length !== 1) {
+            return fail('not_exactly_one_independent_child');
+        }
+        return {
+            ok:true, reason:'one_server_enumerated_child_not_materialized',
+            rootId:parent, childId:missing[0],
+            declared, known:rightIds.length
+        };
+    }
+
+    // Strict authentication of the independently enumerated child: a
+    // successful HTTP response is never enough unless it names that exact
+    // ID, agrees with any explicit parent and owner, and offers media data.
+    function taggedValidateExplicitChild(parent, childId, child) {
+        if (!/^\d+$/.test(String(childId || '')) ||
+            normalizePk(child) !== String(childId)) {
+            return {ok:false,reason:'child_identity_mismatch'};
+        }
+        const parentId = normalizePk(parent);
+        const declaredParent = String(child?.carousel_parent_id ||
+            child?.parent_media_id || '').split('_')[0];
+        if (declaredParent && declaredParent !== parentId) {
+            return {ok:false,reason:'child_parent_identity_mismatch'};
+        }
+        const owner = normalizePk(parent?.user);
+        const childOwner = normalizePk(child?.user);
+        if (owner && childOwner && owner !== childOwner) {
+            return {ok:false,reason:'child_owner_identity_mismatch'};
+        }
+        const type = Number(child?.media_type);
+        if (![1,2].includes(type) ||
+            Number(child?.deleted_reason || 0) > 0) {
+            return {ok:false,reason:'child_type_or_deleted_conflict'};
+        }
+        const url = type === 2 ? bestVideo(child) :
+            bestImage(child,false);
+        if (!url || !/^https:\/\//i.test(String(url))) {
+            return {ok:false,reason:'child_downloadable_media_unavailable'};
+        }
+        return {ok:true,reason:'authenticated_independent_child'};
+    }
+
     // Preserve archive filenames when a currently TAGGED-only unit had a
     // previously verified native PROFILE POST identity. This is historical
     // folder continuity only: do NOT add PROFILE roots or fake live proof.
@@ -10682,6 +10829,8 @@
         state.taggedCountHintMismatches = [];
         state.taggedCountHintFailures = [];
         state.taggedHistoricalPostRestored = 0;
+        state.taggedExplicitChildProbes = [];
+        let explicitChildInfoRequests = 0;
 
         const initialDoc =
             net.taggedDocInitial ||
@@ -10983,13 +11132,121 @@
                             // is proof only of CURRENTLY ACCESSIBLE media. A
                             // larger numeric hint must stay visible in logs;
                             // independent contradictory IDs must fail closed.
+                            // A FOURTH numeric ID exists in the authenticated
+                            // parent inventory, not in the three media objects.
+                            // Make at most two additional same-origin GETs per
+                            // TAGGED scan, each with an exact server-returned ID.
+                            // No alternate host, retries or speculative ID.
+                            let explicitChildProof = null;
+                            if (!countHintProof.ok &&
+                                countHintProof.reason ===
+                                    'independent_child_ids_conflict' &&
+                                proof.reason === 'carousel_item_count_gap') {
+                                const candidate =
+                                    taggedExplicitMissingChildCandidate(
+                                        media, detailed
+                                    );
+                                if (candidate.ok) {
+                                    const audit = {
+                                        parent: rootId,
+                                        childId: candidate.childId,
+                                        declared: candidate.declared,
+                                        alreadyMaterialized: candidate.known,
+                                        status: explicitChildInfoRequests >= 2
+                                            ? 'bounded_probe_limit' : 'attempted',
+                                    };
+                                    if (explicitChildInfoRequests < 2) {
+                                        explicitChildInfoRequests++;
+                                        try {
+                                            const child = await fetchOwnedMediaInfo(
+                                                candidate.childId,
+                                                'TAGGED enumerated carousel child',
+                                                {singleWebOnly:true}
+                                            );
+                                            const validation =
+                                                taggedValidateExplicitChild(
+                                                    detailed,candidate.childId,child
+                                                );
+                                            if (validation.ok) {
+                                                const children = Array.isArray(
+                                                    detailed.carousel_media
+                                                ) && detailed.carousel_media.length
+                                                    ? detailed.carousel_media
+                                                    : (detailed
+                                                        ?.edge_sidecar_to_children
+                                                        ?.edges || [])
+                                                        .map(e => e?.node)
+                                                        .filter(Boolean);
+                                                const verifiedRoot = {
+                                                    ...detailed,
+                                                    carousel_media: [
+                                                        ...children,child
+                                                    ],
+                                                };
+                                                // Parent's explicit 4 IDs and
+                                                // child's authenticated media info
+                                                // are both required; never reduce
+                                                // carousel_media_count to three.
+                                                addMedia(
+                                                    verifiedRoot,'TAGGED','TAGGED'
+                                                );
+                                                state.taggedHistoricalPostRestored +=
+                                                    restoreHistoricalTaggedPostArchive(
+                                                        verifiedRoot
+                                                    );
+                                                explicitChildProof =
+                                                    discoveredMediaResolution(
+                                                        verifiedRoot,'TAGGED'
+                                                    );
+                                                audit.status = explicitChildProof.ok
+                                                    ? 'resolved_all_declared_children'
+                                                    : explicitChildProof.reason;
+                                            } else {
+                                                audit.status = validation.reason;
+                                            }
+                                        } catch (e) {
+                                            throwIfInstagramStop(
+                                                e,
+                                                'TAGGED enumerated carousel child'
+                                            );
+                                            audit.status =
+                                                'child_media_info_unavailable';
+                                            audit.httpStatus =
+                                                Number(e?.status || 0) || null;
+                                        }
+                                    }
+                                    state.taggedExplicitChildProbes.push(audit);
+                                    log(
+                                        'TAGGED explicit fourth child: root=' +
+                                        rootId + ', server_id=' +
+                                        candidate.childId + ', status=' +
+                                        audit.status +
+                                        (audit.httpStatus
+                                            ? ', http=' + audit.httpStatus : '') +
+                                        ', no_assumed_child.',
+                                        explicitChildProof?.ok
+                                            ? 'info' : 'warn'
+                                    );
+                                } else {
+                                    log(
+                                        'TAGGED explicit child recovery not safe: ' +
+                                        'root=' + rootId +
+                                        ', reason=' + candidate.reason + '.',
+                                        'warn'
+                                    );
+                                }
+                            }
                             const rawCount = Number(media?.carousel_media_count || 0);
                             const fullChildren = Array.isArray(detailed?.carousel_media)
                                 ? detailed.carousel_media.length
                                 : Array.isArray(detailed?.edge_sidecar_to_children?.edges)
                                     ? detailed.edge_sidecar_to_children.edges.length
                                     : 0;
-                            if (detailedProof.ok && Number.isSafeInteger(rawCount) &&
+                            if (explicitChildProof?.ok) {
+                                proof = explicitChildProof;
+                                hydratedRoots++;
+                                recovery = 'web_explicit_child_resolved';
+                            } else if (detailedProof.ok && Number.isSafeInteger(rawCount) &&
                                 rawCount > 1 && fullChildren < rawCount &&
                                 !countHintProof.ok) {
                                 proof = {ok:false, reason:'hydrated_carousel_count_gap'};
@@ -11129,6 +11386,9 @@
             `hydration=${hydratedRoots}/${hydrationAttempts}, ` +
             `count_hint_mismatches=${verifiedCountHintMismatches}, ` +
             `count_hint_rejected=${state.taggedCountHintFailures.length}, ` +
+            `explicit_child_probes=${state.taggedExplicitChildProbes.length}, ` +
+            `explicit_child_resolved=${state.taggedExplicitChildProbes.filter(
+                x => x.status === 'resolved_all_declared_children').length}, ` +
             `historical_post_paths=${state.taggedHistoricalPostRestored}, ` +
             `end=${endReason}, ended=${state.coverage.tagged}, ` +
             `reasons=${[...unresolvedReasons].map(([key, count]) =>
@@ -15085,6 +15345,8 @@
                     (state.taggedCountHintFailures || []).map(x => ({...x})),
                 taggedHistoricalPostRestored:
                     Number(state.taggedHistoricalPostRestored || 0),
+                taggedExplicitChildProbes:
+                    (state.taggedExplicitChildProbes || []).map(x => ({...x})),
                 hiddenArchive: {
                     media: hiddenMediaCount(),
                     filesOnDisk: state.diskHidden.size,
