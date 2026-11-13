@@ -114,7 +114,7 @@ const wrong = [
 for(const [left,right,why] of wrong) {
     assert.equal(reconcile(left,right).ok,false,why);
 }
-async function runTagged(left,right,extraChild=null) {
+async function runTagged(left,right,extraChild=null,knownSibling=null) {
     const state={userId:'1',cancelled:false,queue:new Map(),
         roots:{TAGGED:new Set()},coverage:{tagged:false}};
     const net={taggedDocInitial:null,taggedDocConnection:null,
@@ -140,6 +140,10 @@ async function runTagged(left,right,extraChild=null) {
             if(id==='504') {
                 if(extraChild instanceof Error) throw extraChild;
                 return extraChild || right;
+            }
+            if(id==='501') {
+                if(knownSibling instanceof Error) throw knownSibling;
+                return knownSibling || right;
             }
             return right;
         },()=>{},(line)=>logs.push(String(line)),()=>{},async()=>{},()=>0);
@@ -222,6 +226,52 @@ async function runTagged(left,right,extraChild=null) {
     assert.equal(r.state.taggedExplicitChildProbes[0].status,
         'child_media_info_unavailable');
     assert.equal(r.state.taggedExplicitChildProbes[0].httpStatus,404);
+    assert.equal(r.requests.length,2,'only HTTP400 triggers diagnostic sibling');
+}
+{
+    const full=sidecar(kids,4,{
+        carousel_media_ids:['501','502','503','504'],
+    });
+    const e=new Error('HTTP 400');e.status=400;
+    const r=await runTagged(listing,full,e,{
+        ...child('501'),carousel_parent_id:'500',user:{pk:'70'}
+    });
+    assert.equal(r.ok,false,'reachable known sibling does not prove missing fourth');
+    assert.deepEqual(r.requests.map(x=>x.id),['500','504','501'],
+        'only one known sibling control after true extra child HTTP400');
+    assert.ok(r.requests.every(x=>x.policy.singleWebOnly===true));
+    const probe=r.state.taggedExplicitChildProbes[0];
+    assert.equal(probe.childId,'504');
+    assert.equal(probe.httpStatus,400);
+    assert.deepEqual(probe.siblingControl,{
+        childId:'501',status:'known_child_reachable'
+    },'endpoint can read known sibling, but fourth still inaccessible');
+    assert.equal(r.state.queue.size,3,'control must never mutate archive or coverage');
+    assert.ok(r.logs.some(x=>x.includes(
+        'TAGGED known-sibling control: root=500, known_id=501, result=known_child_reachable')));
+}
+{
+    const full=sidecar(kids,4,{
+        carousel_media_ids:['501','502','503','504'],
+    });
+    const e=new Error('HTTP 400');e.status=400;
+    const ce=new Error('HTTP 400 sibling');ce.status=400;
+    const r=await runTagged(listing,full,e,ce);
+    assert.equal(r.ok,false);
+    assert.deepEqual(r.requests.map(x=>x.id),['500','504','501']);
+    assert.deepEqual(r.state.taggedExplicitChildProbes[0].siblingControl,{
+        childId:'501',status:'same_http_400',httpStatus:400
+    },'same HTTP400 known sibling suggests endpoint constraint, not definite orphan deletion');
+}
+{
+    const full=sidecar(kids,4,{
+        carousel_media_ids:['501','502','503','504'],
+    });
+    const e=new Error('HTTP 400');e.status=400;
+    const r=await runTagged(listing,full,e,child('999'));
+    assert.equal(r.ok,false,'wrong known sibling identity cannot prove endpoint support');
+    assert.equal(r.state.taggedExplicitChildProbes[0].siblingControl.status,
+        'identity_mismatch');
 }
 {
     const full=sidecar(kids,4,{
