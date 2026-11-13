@@ -42,6 +42,14 @@ assert.equal(result.userId,uid);
 assert.equal(result.account,username);
 assert.equal(result.expectedAuthenticated,117);
 assert.equal(result.nativeServerEnded,false);
+assert.deepEqual(result.nativeRequestProvenance,{
+    observedInitial:1,
+    observedContinuations:0,
+    firstPageContractRecorded:false,
+    continuationContractRecorded:false,
+    lastHasNext:'true',
+    observedEndWithoutFirstPageContract:false,
+});
 assert.equal(result.publicServerEnded,true);
 assert.deepEqual(result.counts,{
     public:89,
@@ -82,6 +90,8 @@ state.profileInfo.media_count=117;
 net.gridPageInfo.get(username).has_next_page=false;
 net.gridNativeAuditByUser.get(username).lastHasNext='false';
 assert.equal(diagnostic().nativeServerEnded,true);
+assert.equal(diagnostic().nativeRequestProvenance.observedEndWithoutFirstPageContract,true,
+    'server end without first-page capture is not exhaustive PROFILE proof');
 assert.equal(diagnostic().counts.gapMainVsCounter,2,
     'observing an end flag is not proof of missing identity');
 
