@@ -144,9 +144,10 @@ async function runTagged(left,right) {
     assert.ok(r.logs.some(s=>s.includes('unresolved=1')));
 }
 {
-    const r=await runTagged(listing,sidecar([
-        child('501'),child('502'),child('503',1,false),
-    ],4));
+    // Missing from BOTH authenticated sources. A URL present in the
+    // listing would itself be valid media evidence, so do not discard it.
+    const unavailable = [child('501'),child('502'),child('503',1,false)];
+    const r=await runTagged(sidecar(unavailable,4),sidecar(unavailable,4));
     assert.equal(r.ok,false,'missing authenticated child URL cannot count as downloaded');
 }
 {
