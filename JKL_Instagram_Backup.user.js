@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.109
-// @description  Stable v1.5.109: Firefox-verified Story SOLO, authenticated media identity, safe partial archive.
+// @version      1.5.110
+// @description  TEST v1.5.110: strict TAGGED accessible-carousel proof while retaining Story SOLO.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/main/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/main/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/fix/tagged-accessible-carousel-proof-v1.5.110/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-accessible-carousel-proof-v1.5.110/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/tagged-accessible-carousel-proof-v1.5.110/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.109', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.110', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
@@ -10441,11 +10441,116 @@
         return completed;
     }
 
+
+    // A metadata count alone cannot identify an invisible fourth slide.
+    // Reconcile only TWO authenticated, same-root, explicitly enumerated
+    // versions of the same TAGGED carousel. Never fabricate a child ID.
+    function taggedAccessibleCarouselProof(listing, detailed) {
+        const fail = reason => ({ok:false, reason});
+        const a = listing?.media && typeof listing.media === 'object'
+            ? listing.media : listing;
+        const b = detailed?.media && typeof detailed.media === 'object'
+            ? detailed.media : detailed;
+        const parent = normalizePk(a);
+        if (!/^\d+$/.test(parent) || normalizePk(b) !== parent) {
+            return fail('parent_identity_mismatch');
+        }
+        const carousel = x => Number(x?.media_type) === 8 ||
+            x?.__typename === 'GraphSidecar' ||
+            ['carousel','carousel_container'].includes(String(
+                x?.product_type || x?.media_product_type || ''
+            ).toLowerCase());
+        if (!carousel(a) || !carousel(b)) {
+            return fail('not_both_carousels');
+        }
+        const count = Number(a.carousel_media_count);
+        const side = x => x?.edge_sidecar_to_children;
+        const children = x => Array.isArray(x?.carousel_media) &&
+            x.carousel_media.length
+                ? x.carousel_media
+                : (side(x)?.edges || []).map(e => e?.node).filter(Boolean);
+        const aa = children(a), bb = children(b);
+        if (!Number.isSafeInteger(count) || count <= aa.length ||
+            aa.length < 2 || bb.length !== aa.length) {
+            return fail('not_a_matching_count_hint');
+        }
+        const secondClaim = b.carousel_media_count == null ||
+            b.carousel_media_count === '' ? 0 : Number(b.carousel_media_count);
+        if (!Number.isSafeInteger(secondClaim) ||
+            (secondClaim !== 0 && secondClaim !== count &&
+                secondClaim !== bb.length)) {
+            return fail('detailed_count_conflict');
+        }
+        if ([a,b].some(x =>
+            side(x)?.page_info?.has_next_page === true ||
+            Number(x?.carousel_media_pending_post_count || 0) > 0
+        )) return fail('pending_or_paginated_children');
+        const idOf = x => typeof x === 'string' && /^\d+$/.test(x)
+            ? x : normalizePk(x);
+        const ids = arr => arr.map(idOf);
+        const ai = ids(aa), bi = ids(bb);
+        if (ai.some(id => !/^\d+$/.test(id)) ||
+            new Set(ai).size !== ai.length ||
+            ai.length !== bi.length ||
+            ai.some((id,i) => id !== bi[i])) {
+            return fail('child_identity_mismatch');
+        }
+        // Some Instagram response shapes expose an independent full ID
+        // inventory. It must not contradict the displayed child arrays.
+        for (const x of [a,b]) {
+            if (Array.isArray(x?.carousel_media_ids) &&
+                x.carousel_media_ids.length) {
+                const extraIds = ids(x.carousel_media_ids);
+                if (extraIds.length !== ai.length ||
+                    extraIds.some((id,i) => id !== ai[i])) {
+                    return fail('independent_child_ids_conflict');
+                }
+            }
+            if (Array.isArray(x?.edge_sidecar_to_children?.edges) &&
+                x.edge_sidecar_to_children.edges.length) {
+                const edgeIds = ids(x.edge_sidecar_to_children.edges
+                    .map(e => e?.node));
+                if (edgeIds.length !== ai.length ||
+                    edgeIds.some((id,i) => id !== ai[i])) {
+                    return fail('sidecar_children_conflict');
+                }
+            }
+        }
+        const aOwner = normalizePk(a?.user);
+        const bOwner = normalizePk(b?.user);
+        if (aOwner && bOwner && aOwner !== bOwner) {
+            return fail('owner_identity_mismatch');
+        }
+        const aCode = String(a.code || a.shortcode || '');
+        const bCode = String(b.code || b.shortcode || '');
+        if (aCode && bCode && aCode !== bCode) {
+            return fail('shortcode_mismatch');
+        }
+        for (let i = 0; i < aa.length; i++) {
+            const c = aa[i], d = bb[i];
+            if ((c?.carousel_parent_id && idOf(c.carousel_parent_id) !== parent) ||
+                (d?.carousel_parent_id && idOf(d.carousel_parent_id) !== parent)) {
+                return fail('child_parent_mismatch');
+            }
+            const ca = Number(c?.media_type), cb = Number(d?.media_type);
+            if (Number.isInteger(ca) && ca > 0 &&
+                Number.isInteger(cb) && cb > 0 && ca !== cb) {
+                return fail('child_type_conflict');
+            }
+            if (Number(c?.deleted_reason || 0) > 0 ||
+                Number(d?.deleted_reason || 0) > 0) {
+                return fail('deleted_child_referenced');
+            }
+        }
+        return {ok:true, reason:'verified_accessible_count_hint_mismatch',
+            rootId:parent, declared:count, accessible:ai.length};
+    }
+
     // A server pagination end proves the LIST ended, not that each item
     // became an archived file. Validate each returned unit by exact ID and
     // source provenance, including sidecars and previously indexed files.
     // Never request extra data merely to make this check pass.
-    function discoveredMediaResolution(raw, source) {
+    function discoveredMediaResolution(raw, source, options = {}) {
         const fail = reason => ({ok:false, reason});
         const root = raw?.media && typeof raw.media === 'object'
             ? raw.media : raw;
@@ -10476,7 +10581,9 @@
         if (isCarousel && children.length < 2) {
             return fail('carousel_children_unavailable');
         }
-        if (Number.isSafeInteger(claimedCount) && claimedCount > units.length) {
+        if (Number.isSafeInteger(claimedCount) && claimedCount > units.length &&
+            !(source === 'TAGGED' &&
+              options?.verifiedAccessibleCarousel === true && isCarousel)) {
             return fail('carousel_item_count_gap');
         }
         const rootId = normalizePk(root);
@@ -10554,6 +10661,7 @@
         const unresolvedReasons = new Map();
         let hydrationAttempts = 0;
         let hydratedRoots = 0;
+        let verifiedCountHintMismatches = 0;
         let endReason = 'max_pages';
         const seenCursors = new Set();
 
@@ -10706,10 +10814,16 @@
                             proof = {ok:false, reason:'media_info_identity_mismatch'};
                         } else {
                             addMedia(detailed, 'TAGGED', 'TAGGED');
-                            const detailedProof =
-                                discoveredMediaResolution(detailed, 'TAGGED');
-                            // Do not let a shorter hydrated carousel replace a
-                            // stronger unit-count claim from the original feed.
+                            const countHintProof =
+                                taggedAccessibleCarouselProof(media, detailed);
+                            const detailedProof = discoveredMediaResolution(
+                                detailed, 'TAGGED',
+                                {verifiedAccessibleCarousel: countHintProof.ok}
+                            );
+                            // A matching full authenticated child-ID inventory
+                            // is proof only of CURRENTLY ACCESSIBLE media. A
+                            // larger numeric hint must stay visible in logs;
+                            // independent contradictory IDs must fail closed.
                             const rawCount = Number(media?.carousel_media_count || 0);
                             const fullChildren = Array.isArray(detailed?.carousel_media)
                                 ? detailed.carousel_media.length
@@ -10717,13 +10831,27 @@
                                     ? detailed.edge_sidecar_to_children.edges.length
                                     : 0;
                             if (detailedProof.ok && Number.isSafeInteger(rawCount) &&
-                                rawCount > 1 && fullChildren < rawCount) {
+                                rawCount > 1 && fullChildren < rawCount &&
+                                !countHintProof.ok) {
                                 proof = {ok:false, reason:'hydrated_carousel_count_gap'};
                             } else {
                                 proof = detailedProof;
                                 if (proof.ok) {
                                     hydratedRoots++;
                                     recovery = 'web_media_info_resolved';
+                                    if (countHintProof.ok) {
+                                        verifiedCountHintMismatches++;
+                                        log(
+                                            'TAGGED accessible carousel count hint mismatch: root=' +
+                                            rootId + ', declared=' + countHintProof.declared +
+                                            ', list=info_same_children=' +
+                                            countHintProof.accessible +
+                                            ', status=accessible_units_verified_only. ' +
+                                            'The historical declared count is NOT explained; ' +
+                                            'no fourth media ID was inferred.',
+                                            'warn'
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -10830,6 +10958,7 @@
             `TAGGED GraphQL complete: pages=${pages}, roots=${totalRoots}, ` +
             `resolved=${resolvedRoots}, unresolved=${unresolvedRoots}, ` +
             `hydration=${hydratedRoots}/${hydrationAttempts}, ` +
+            `count_hint_mismatches=${verifiedCountHintMismatches}, ` +
             `end=${endReason}, ended=${state.coverage.tagged}, ` +
             `reasons=${[...unresolvedReasons].map(([key, count]) =>
                 key + ':' + count).join(',') || '-'}. ` +
