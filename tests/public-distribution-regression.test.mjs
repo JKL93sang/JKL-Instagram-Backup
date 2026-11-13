@@ -23,7 +23,7 @@ const expectedRepo =
     'https://github.com/JKL93sang/JKL-Instagram-Backup';
 
 const expectedRaw =
-    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/private-profile-story-solo-v1.5.106/JKL_Instagram_Backup.user.js';
+    'https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/fix/profile-tagged-coverage-v1.5.108/JKL_Instagram_Backup.user.js';
 
 assert.equal(
     meta('name'),
@@ -48,7 +48,7 @@ assert.equal(
 
 assert.equal(
     meta('source'),
-    expectedRepo + '/blob/fix/private-profile-story-solo-v1.5.106/JKL_Instagram_Backup.user.js'
+    expectedRepo + '/blob/fix/profile-tagged-coverage-v1.5.108/JKL_Instagram_Backup.user.js'
 );
 
 assert.equal(
@@ -75,7 +75,7 @@ const appVersion =
     )?.[1];
 
 assert.ok(metadataVersion);
-assert.equal(metadataVersion, '1.5.107');
+assert.equal(metadataVersion, '1.5.108');
 assert.equal(metadataVersion, appVersion);
 assert.match(meta('description'), /TEST v1\.5\.107/i,
     'This branch must be clearly labeled TEST');
