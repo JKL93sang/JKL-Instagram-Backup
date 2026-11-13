@@ -38,7 +38,7 @@ const capture = new Function(
     'net','GRID_NAMES','requestTargetsCurrentProfile',
     'gridUser','gridConn','edgeNode','normalizePk',
     'keyedConnection','GRID_CONNECTION_KEY',
-    extract('captureGrid')+'\nreturn captureGrid;'
+    extract('nativeProfilePageAdmissibility')+'\n'+\n    extract('captureGrid')+'\nreturn captureGrid;'
 )(
     net,new Set([friendly]),
     m=>m.variables?.username==='sample.account',
