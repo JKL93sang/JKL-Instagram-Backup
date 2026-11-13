@@ -101,8 +101,8 @@ assert.deepEqual(buttonTarget(button),viewer,'click target preserves viewer iden
 state.running=true;refresh();assert.equal(overlay.disabled,true);
 state.running=false;refresh();assert.equal(overlay.disabled,false);
 location.href='https://www.instagram.com/stories/highlights/17912345/';
-assert.equal(buttonTarget(button)?.kind,'story-viewer',
-    'fallback target stays scoped, but must be rejected by click-time route validation');
+assert.equal(buttonTarget(button),null,
+    'a stale username-only Story button must never become a different click target');
 refresh();assert.equal(overlay,null,'overlay removed after leaving user-only Story');
 location.href='https://www.instagram.com/stories/b_kkaaa/';
 
