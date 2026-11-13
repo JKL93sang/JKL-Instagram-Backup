@@ -1,14 +1,14 @@
 // ==UserScript==
 // @name         JKL Instagram Backup
 // @namespace    https://jkl.local/
-// @version      1.5.114
-// @description  TEST v1.5.114: read-only historical PROFILE parent reconciliation.
+// @version      1.5.115
+// @description  TEST v1.5.115: progressive native PROFILE DOM capture + scoped REELS evidence audit.
 // @author       JKL
 // @homepageURL  https://github.com/JKL93sang/JKL-Instagram-Backup
 // @supportURL   https://github.com/JKL93sang/JKL-Instagram-Backup/issues
-// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/test/profile-historical-root-audit-v1.5.114/JKL_Instagram_Backup.user.js
-// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-historical-root-audit-v1.5.114/JKL_Instagram_Backup.user.js
-// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-historical-root-audit-v1.5.114/JKL_Instagram_Backup.user.js
+// @source       https://github.com/JKL93sang/JKL-Instagram-Backup/blob/test/profile-progressive-dom-coverage-v1.5.115/JKL_Instagram_Backup.user.js
+// @updateURL    https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-progressive-dom-coverage-v1.5.115/JKL_Instagram_Backup.user.js
+// @downloadURL  https://raw.githubusercontent.com/JKL93sang/JKL-Instagram-Backup/test/profile-progressive-dom-coverage-v1.5.115/JKL_Instagram_Backup.user.js
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
@@ -31,7 +31,7 @@
     'use strict';
 
     const APP = Object.freeze({
-        NAME: 'JKL Instagram Backup', VERSION: '1.5.114', TZ: 'Europe/Paris',
+        NAME: 'JKL Instagram Backup', VERSION: '1.5.115', TZ: 'Europe/Paris',
         DB: 'JKL_IG_BACKUP_DB_V1', SETTINGS: 'JKL_IG_BACKUP_SETTINGS_V1',
         APP_ID: '936619743392459', ASBD_ID: '359341',
         SCROLL_MIN: 3000, SCROLL_MAX: 5500, PROFILE_SCROLL_MIN: 450, PROFILE_SCROLL_MAX: 3200, PROFILE_SCROLL_POLL: 160, PROFILE_MAX_SCROLLS: 200, PROFILE_BOOTSTRAP_MAX_AGE_MS: 20000, REEL_MAX_SCROLLS: 5000, TAGGED_MAX_PAGES: 5000, TAGGED_HYDRATION_LIMIT: 16,
@@ -204,6 +204,9 @@
         // Read-only PROFILE provenance snapshots; never grant coverage.
         profileMainGridRootIds: new Set(),
         profileDomObservedRootIds: new Set(),
+        // Verified roots actually seen on the independent REELS DOM tab.
+        // Diagnostic only, never evidence of an exhaustive server end.
+        reelsTabObservedRootIds: new Set(),
         verifiedProfileDomApiRootIds: new Set(), // strict same-owner POST media-info, never DOM alone
         rootCatalog: new Map(),
         highlightCatalog: new Map(), // Instagram reel ID -> stable archive folder
@@ -9360,6 +9363,18 @@
             pages, edges:totalEdges, recovered, endReason, docId,
         };
     }
+    // Step through the rendered PROFILE grid instead of jumping over
+    // virtualized/intermediate DOM items. No Instagram request is generated
+    // by this helper; browser-native lazy loading remains authoritative.
+    function profileScrollTarget(currentY, documentHeight, viewportHeight) {
+        const current = Math.max(0, Number(currentY) || 0);
+        const height = Math.max(0, Number(documentHeight) || 0);
+        const viewport = Math.max(1, Number(viewportHeight) || 1);
+        const bottom = Math.max(0, height - viewport);
+        const stride = Math.max(1, Math.floor(viewport * 0.8));
+        return Math.min(bottom, current + stride);
+    }
+
     async function scanMainGrid() {
         log(
             'Scanning native main PROFILE grid (mixed POST + REEL)…'
@@ -9539,19 +9554,24 @@
 
                 const progressBaseline =
                     currentProfileGridProgress();
-
-                window.scrollTo({
-                    top:
-                        document.body
-                            .scrollHeight,
-
-                    behavior:
-                        'auto',
-                });
-
-                await waitForProfileGridProgress(
-                    progressBaseline
+                const documentHeight = progressBaseline.height;
+                const viewport = window.innerHeight;
+                const bottom = Math.max(0, documentHeight - viewport);
+                const nextY = profileScrollTarget(
+                    window.scrollY, documentHeight, viewport
                 );
+
+                window.scrollTo({top:nextY, behavior:'auto'});
+
+                // Mid-grid moves should not spend the full server-wait
+                // window on unchanged page height. At the actual bottom,
+                // retain the existing network/height wait and safety cap.
+                if (nextY < bottom - 20) {
+                    await sleep(APP.PROFILE_SCROLL_MIN);
+                }
+                else {
+                    await waitForProfileGridProgress(progressBaseline);
+                }
             }
 
             const map =
@@ -10160,6 +10180,12 @@
                     'REEL_DOM'
                 );
             }
+
+            // Store only independently visible AND resolved REEL roots.
+            // Untouched TAGGED/old receipts must not enter this set.
+            state.reelsTabObservedRootIds = new Set(
+                [...seenDom.keys()].filter(id => state.roots.REEL.has(id))
+            );
 
             const nativeRoots =
                 state.roots.REEL.size;
@@ -13168,6 +13194,7 @@
         // Fresh per-scan snapshots; resilient to older in-memory test fixtures.
         state.profileMainGridRootIds = new Set();
         state.profileDomObservedRootIds = new Set();
+        state.reelsTabObservedRootIds = new Set();
         state.verifiedProfileDomApiRootIds = new Set();
         state.profileDomHydrationFailures = [];
 
@@ -13382,6 +13409,7 @@
                 ', dom_candidates=' + c.domCandidates +
                 ', main_outside_public_native=' + c.mainOutsidePublicNative +
                 ', independent_reels=' + c.independentNativeReels +
+                ', reels_dom_verified=' + c.independentReelsDom +
                 ', main_reels_overlap=' + c.mainAlsoInIndependentReels +
                 '. DOM/reels never grant PROFILE completeness.',
                 c.gapMainVsCounter ? 'warn' : 'info'
@@ -15128,7 +15156,10 @@
         return reconcileHistoricalProfileRoots({
             ledger:loadDb()?.profiles?.[state.userId]?.media || {},
             main:[...(state.profileMainGridRootIds || [])],
-            reels:reels instanceof Map ? [...reels.keys()] : [],
+            reels:[...new Set([
+                ...(reels instanceof Map ? reels.keys() : []),
+                ...(state.reelsTabObservedRootIds || []),
+            ])],
             native:native instanceof Map ? [...native.keys()] : [],
             dom:[...(state.profileDomObservedRootIds || [])],
             currentMediaIds:[...state.queue.keys()],
@@ -15154,6 +15185,8 @@
         const reelMap = net.reelsByUserId?.get(String(state.userId || ''));
         const reelRoots = reelMap instanceof Map
             ? new Set(reelMap.keys()) : new Set();
+        const reelDomRoots = state.reelsTabObservedRootIds instanceof Set
+            ? state.reelsTabObservedRootIds : new Set();
         const valid = id => /^\d+$/.test(String(id));
         const list = xs => [...xs].map(String).filter(valid).sort();
         const pub = new Set(list(publicRoots));
@@ -15161,6 +15194,7 @@
         const dom = new Set(list(domCandidates));
         const main = new Set(list(mainRoots));
         const reels = new Set(list(reelRoots));
+        const reelDom = new Set(list(reelDomRoots));
         const publicNative = new Set([...pub, ...nat]);
         const withDom = new Set([...publicNative, ...dom]);
         const expected = Number(state.profileInfo?.media_count);
@@ -15200,6 +15234,7 @@
                 domCandidates:dom.size,
                 mainGridSnapshot:main.size,
                 independentNativeReels:reels.size,
+                independentReelsDom:reelDom.size,
                 publicNativeUnion:publicNative.size,
                 publicNativeOverlap:overlap(pub,nat),
                 mainOutsidePublicNative:
@@ -15218,6 +15253,7 @@
                 domCandidates:list(dom),
                 mainGridSnapshot:list(main),
                 independentNativeReels:list(reels),
+                independentReelsDom:list(reelDom),
             },
             warning:'Diagnostic only: DOM candidates, independent REELS ' +
                 'and Instagram counters do not establish missing PROFILE ' +
