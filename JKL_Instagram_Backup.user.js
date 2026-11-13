@@ -12031,7 +12031,17 @@
                     [...m.rootIds].some(rootId =>
                         state.verifiedPassiveProfilePostRootIds.has(String(rootId))
                     );
-                return publicProven || nativeIndividualProven;
+                // Preserve download eligibility via a CURRENT completed
+                // TAGGED collection for a previously native-verified POST.
+                // Historical filenames do not grant current PROFILE proof.
+                const taggedPresent = m.historicalPostArchiveContinuity === true &&
+                    state.scanPlan?.tagged === true &&
+                    state.coverage.tagged === true &&
+                    m.sources.has('TAGGED') &&
+                    [...m.rootIds].some(rootId =>
+                        state.roots.TAGGED.has(String(rootId))
+                    );
+                return publicProven || nativeIndividualProven || taggedPresent;
             }
 
             if (m.type === 'REEL') {
